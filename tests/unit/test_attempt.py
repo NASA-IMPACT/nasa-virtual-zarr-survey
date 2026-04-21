@@ -314,3 +314,95 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
     n = run_attempt(tmp_db_path, tmp_results_dir, timeout_s=5, shard_size=500)
     assert n == 1
     assert attempts == ["G2"]
+
+
+def test_run_attempt_aborts_on_consecutive_forbidden(tmp_db_path: Path, tmp_results_dir: Path, monkeypatch):
+    """Direct mode should abort after 5 consecutive 403 failures with an actionable error."""
+    import pytest
+
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute("""
+        INSERT INTO collections VALUES
+        ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',10,
+         NULL, NULL, 'L3', NULL, now())
+    """)
+    for i in range(10):
+        con.execute(
+            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',{i},100,now(),TRUE)"
+        )
+    con.close()
+
+    def fake_attempt_one(**kwargs):
+        return _make_attempt_result(
+            collection_concept_id=kwargs["collection_concept_id"],
+            granule_concept_id=kwargs["granule_concept_id"],
+            daac=kwargs["daac"],
+            format_family=kwargs["family"].value,
+            parse_success=False,
+            dataset_success=None,
+            success=False,
+            parse_error_type="ClientError",
+            parse_error_message="403 Forbidden",
+        )
+
+    monkeypatch.setattr("nasa_virtual_zarr_survey.attempt.attempt_one", fake_attempt_one)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.attempt.StoreCache.get_store",
+        lambda self, *, provider, url: object(),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        run_attempt(tmp_db_path, tmp_results_dir, timeout_s=5, shard_size=500, access="direct")
+
+    assert "consecutive direct-S3 requests returned 403" in str(exc_info.value)
+    assert "--access external" in str(exc_info.value)
+
+
+def test_run_attempt_does_not_abort_on_mixed_failures(tmp_db_path: Path, tmp_results_dir: Path, monkeypatch):
+    """A single FORBIDDEN among other failures should not trigger the abort."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute("""
+        INSERT INTO collections VALUES
+        ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',10,
+         NULL, NULL, 'L3', NULL, now())
+    """)
+    for i in range(10):
+        con.execute(
+            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',{i},100,now(),TRUE)"
+        )
+    con.close()
+
+    call_count = {"n": 0}
+
+    def fake_attempt_one(**kwargs):
+        call_count["n"] += 1
+        # Only every other call is FORBIDDEN
+        if call_count["n"] % 2 == 0:
+            return _make_attempt_result(
+                collection_concept_id=kwargs["collection_concept_id"],
+                granule_concept_id=kwargs["granule_concept_id"],
+                daac=kwargs["daac"],
+                format_family=kwargs["family"].value,
+                parse_success=False, dataset_success=None, success=False,
+                parse_error_type="ClientError",
+                parse_error_message="403 Forbidden",
+            )
+        return _make_attempt_result(
+            collection_concept_id=kwargs["collection_concept_id"],
+            granule_concept_id=kwargs["granule_concept_id"],
+            daac=kwargs["daac"],
+            format_family=kwargs["family"].value,
+            parse_success=False, dataset_success=None, success=False,
+            parse_error_type="ValueError", parse_error_message="some other error",
+        )
+
+    monkeypatch.setattr("nasa_virtual_zarr_survey.attempt.attempt_one", fake_attempt_one)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.attempt.StoreCache.get_store",
+        lambda self, *, provider, url: object(),
+    )
+
+    n = run_attempt(tmp_db_path, tmp_results_dir, timeout_s=5, shard_size=500, access="direct")
+    assert n == 10

@@ -367,6 +367,11 @@ def run_attempt(
 
     signal.signal(signal.SIGINT, _sigint)
 
+    from nasa_virtual_zarr_survey.taxonomy import Bucket, classify
+
+    consecutive_forbidden = 0
+    FORBIDDEN_ABORT_THRESHOLD = 5
+
     n = 0
     for i, row in enumerate(pending, 1):
         family_str = row["format_family"]
@@ -407,6 +412,28 @@ def run_attempt(
                 )
         writer.append(result)
         n += 1
+
+        if access == "direct" and not result.success:
+            parse_bucket = classify(result.parse_error_type, result.parse_error_message)
+            dataset_bucket = classify(result.dataset_error_type, result.dataset_error_message)
+            if parse_bucket is Bucket.FORBIDDEN or dataset_bucket is Bucket.FORBIDDEN:
+                consecutive_forbidden += 1
+            else:
+                consecutive_forbidden = 0
+        else:
+            consecutive_forbidden = 0
+
+        if consecutive_forbidden >= FORBIDDEN_ABORT_THRESHOLD:
+            writer.close()
+            raise SystemExit(
+                f"\nERROR: {consecutive_forbidden} consecutive direct-S3 requests returned 403/Forbidden.\n"
+                "This usually means you are running outside AWS us-west-2. NASA S3\n"
+                "buckets only permit direct access from in-region compute.\n\n"
+                "Try re-running with: --access external\n"
+                f"(First delete output/survey.duckdb and output/results/ since sampled\n"
+                "URLs differ between access modes.)\n"
+            )
+
         if i % 500 == 0:
             print(f"[heartbeat] attempted {i}/{len(pending)}", file=sys.stderr)
 
