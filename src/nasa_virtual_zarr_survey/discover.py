@@ -1,0 +1,110 @@
+"""Phase 1: enumerate cloud-hosted EOSDIS collections into DuckDB."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable
+
+import earthaccess
+
+from nasa_virtual_zarr_survey.db import connect, init_schema
+from nasa_virtual_zarr_survey.formats import classify_format
+from nasa_virtual_zarr_survey.providers import get_eosdis_providers
+
+
+def _parse_iso(s: str | None) -> datetime | None:
+    if not s:
+        return None
+    s = s.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def _first_format(umm: dict[str, Any]) -> str | None:
+    infos = (
+        umm.get("umm", {})
+        .get("ArchiveAndDistributionInformation", {})
+        .get("FileDistributionInformation", [])
+    )
+    for info in infos:
+        fmt = info.get("Format")
+        if fmt:
+            return fmt
+    return None
+
+
+def _first_temporal(umm: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
+    extents = umm.get("umm", {}).get("TemporalExtents", [])
+    for ex in extents:
+        rdts = ex.get("RangeDateTimes", [])
+        for rdt in rdts:
+            return _parse_iso(rdt.get("BeginningDateTime")), _parse_iso(rdt.get("EndingDateTime"))
+    return None, None
+
+
+def collection_row_from_umm(coll: dict[str, Any]) -> dict[str, Any]:
+    """Extract a DuckDB-ready row from a CMR UMM-JSON dict."""
+    meta = coll.get("meta", {})
+    umm = coll.get("umm", {})
+    concept_id = meta.get("concept-id")
+    provider = meta.get("provider-id")
+    daac = provider
+    centers = umm.get("DataCenters", [])
+    if centers and isinstance(centers, list):
+        daac = centers[0].get("ShortName", provider)
+    declared = _first_format(coll)
+    family = classify_format(declared, None)
+    time_start, time_end = _first_temporal(coll)
+    return {
+        "concept_id": concept_id,
+        "short_name": umm.get("ShortName"),
+        "version": umm.get("Version"),
+        "daac": daac,
+        "provider": provider,
+        "format_family": family.value if family else None,
+        "format_declared": declared,
+        "num_granules": None,
+        "time_start": time_start,
+        "time_end": time_end,
+        "processing_level": (umm.get("ProcessingLevel") or {}).get("Id"),
+        "skip_reason": None if family else "non_array_format",
+        "discovered_at": datetime.now(timezone.utc),
+    }
+
+
+def persist_collections(con, rows: Iterable[dict[str, Any]]) -> None:
+    """Upsert collection rows into DuckDB."""
+    init_schema(con)
+    stmt = """
+        INSERT OR REPLACE INTO collections
+        (concept_id, short_name, version, daac, provider, format_family, format_declared,
+         num_granules, time_start, time_end, processing_level, skip_reason, discovered_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    for coll in rows:
+        row = collection_row_from_umm(coll) if "meta" in coll else coll
+        con.execute(
+            stmt,
+            [
+                row["concept_id"], row["short_name"], row["version"], row["daac"],
+                row["provider"], row["format_family"], row["format_declared"],
+                row["num_granules"], row["time_start"], row["time_end"],
+                row["processing_level"], row["skip_reason"], row["discovered_at"],
+            ],
+        )
+
+
+def run_discover(db_path: Path | str, limit: int | None = None) -> int:
+    """Enumerate EOSDIS cloud-hosted collections and persist to DuckDB. Returns count."""
+    con = connect(db_path)
+    init_schema(con)
+    providers = get_eosdis_providers()
+    count = -1 if limit is None else limit
+    results = earthaccess.search_datasets(
+        cloud_hosted=True, provider=providers, count=count
+    )
+    dicts = [c.render_dict() if hasattr(c, "render_dict") else c for c in results]
+    persist_collections(con, dicts)
+    return len(dicts)
