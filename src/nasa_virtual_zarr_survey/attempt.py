@@ -16,7 +16,16 @@ from virtualizarr.parsers.netcdf3 import NetCDF3Parser
 from virtualizarr.parsers.zarr import ZarrParser
 
 from nasa_virtual_zarr_survey.formats import FormatFamily
+import signal
+import sys
+from pathlib import Path
+from typing import Literal
 
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+from nasa_virtual_zarr_survey.auth import AuthUnavailable, StoreCache
+from nasa_virtual_zarr_survey.db import connect, init_schema
 
 @dataclass
 class AttemptResult:
@@ -33,6 +42,7 @@ class AttemptResult:
     timed_out: bool = False
     attempted_at: datetime | None = None
     stratified: bool | None = None
+    fingerprint: str | None = None
 
 
 def dispatch_parser(family: FormatFamily) -> Any | None:
@@ -96,8 +106,11 @@ def attempt_one(
     result.parser = type(parser).__name__
     registry = _build_registry(store, url)
 
+    dataset_ref: list = []
+
     def _call() -> None:
-        open_virtual_dataset(url=url, registry=registry, parser=parser)
+        ds = open_virtual_dataset(url=url, registry=registry, parser=parser)
+        dataset_ref.append(ds)
 
     t0 = time.monotonic()
     try:
@@ -105,6 +118,16 @@ def attempt_one(
             fut = ex.submit(_call)
             fut.result(timeout=timeout_s)
         result.success = True
+        if dataset_ref:
+            try:
+                from nasa_virtual_zarr_survey.cubability import (
+                    extract_fingerprint,
+                    fingerprint_to_json,
+                )
+                result.fingerprint = fingerprint_to_json(extract_fingerprint(dataset_ref[0]))
+            except Exception:
+                # Fingerprint extraction is best-effort; never fail the attempt.
+                pass
     except FuturesTimeoutError:
         result.timed_out = True
         result.error_type = "TimeoutError"
@@ -119,16 +142,7 @@ def attempt_one(
     return result
 
 
-import signal
-import sys
-from pathlib import Path
-from typing import Literal
 
-import pyarrow as pa
-import pyarrow.parquet as pq
-
-from nasa_virtual_zarr_survey.auth import AuthUnavailable, StoreCache
-from nasa_virtual_zarr_survey.db import connect, init_schema
 
 
 _SCHEMA = pa.schema([
@@ -145,6 +159,7 @@ _SCHEMA = pa.schema([
     ("timed_out", pa.bool_()),
     ("attempted_at", pa.timestamp("us", tz="UTC")),
     ("stratified", pa.bool_()),
+    ("fingerprint", pa.string()),
 ])
 
 
@@ -191,6 +206,7 @@ class ResultWriter:
             cols["timed_out"].append(r.timed_out)
             cols["attempted_at"].append(r.attempted_at)
             cols["stratified"].append(r.stratified)
+            cols["fingerprint"].append(r.fingerprint)
         pq.write_table(pa.table(cols, schema=_SCHEMA), self._shard_path(daac))
         self._shard_index[daac] = self._shard_index.get(daac, 0) + 1
         self._buffers[daac] = []

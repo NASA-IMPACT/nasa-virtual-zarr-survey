@@ -10,6 +10,10 @@ from nasa_virtual_zarr_survey.attempt import (
     dispatch_parser,
 )
 from nasa_virtual_zarr_survey.formats import FormatFamily
+from pathlib import Path
+
+from nasa_virtual_zarr_survey.attempt import ResultWriter, run_attempt
+from nasa_virtual_zarr_survey.db import connect, init_schema
 
 
 def test_dispatch_parser_maps_known_families():
@@ -114,12 +118,6 @@ def test_attempt_one_timeout(monkeypatch):
     assert result.error_type == "TimeoutError"
 
 
-from pathlib import Path
-
-from nasa_virtual_zarr_survey.attempt import ResultWriter, run_attempt
-from nasa_virtual_zarr_survey.db import connect, init_schema
-
-
 def test_result_writer_rotates_shards(tmp_results_dir: Path):
     w = ResultWriter(tmp_results_dir, shard_size=2)
     for i in range(5):
@@ -167,6 +165,7 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
         "success": [True], "error_type": [None], "error_message": [None],
         "error_traceback": [None], "duration_s": [0.1], "timed_out": [False],
         "attempted_at": [datetime.now(timezone.utc)], "stratified": [True],
+        "fingerprint": [None],
     })
     pq.write_table(already, shard_dir / "part-0000.parquet")
 
