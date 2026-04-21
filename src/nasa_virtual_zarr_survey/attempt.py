@@ -126,7 +126,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from nasa_virtual_zarr_survey.auth import DAACStoreCache
+from nasa_virtual_zarr_survey.auth import AuthUnavailable, DAACStoreCache
 from nasa_virtual_zarr_survey.db import connect, init_schema
 
 
@@ -207,6 +207,7 @@ def _pending_granules(con, results_dir: Path, only_daac: str | None) -> list[dic
                g.granule_concept_id,
                g.data_url,
                c.daac,
+               c.provider,
                c.format_family,
                g.stratified
         FROM granules g
@@ -229,8 +230,8 @@ def _pending_granules(con, results_dir: Path, only_daac: str | None) -> list[dic
     except Exception:
         # No Parquet files yet -- read_parquet fails; fall back to "all granules".
         fallback = """
-            SELECT c.concept_id, g.granule_concept_id, g.data_url, c.daac, c.format_family,
-                   g.stratified
+            SELECT c.concept_id, g.granule_concept_id, g.data_url, c.daac, c.provider,
+                   c.format_family, g.stratified
             FROM granules g JOIN collections c ON c.concept_id = g.collection_concept_id
             WHERE c.skip_reason IS NULL
         """
@@ -243,7 +244,8 @@ def _pending_granules(con, results_dir: Path, only_daac: str | None) -> list[dic
 
     return [
         {"collection_concept_id": r[0], "granule_concept_id": r[1],
-         "data_url": r[2], "daac": r[3], "format_family": r[4], "stratified": r[5]}
+         "data_url": r[2], "daac": r[3], "provider": r[4],
+         "format_family": r[5], "stratified": r[6]}
         for r in rows
     ]
 
@@ -281,23 +283,35 @@ def run_attempt(
                 collection_concept_id=row["collection_concept_id"],
                 granule_concept_id=row["granule_concept_id"],
                 daac=row["daac"], format_family=family_str,
+                stratified=row["stratified"],
                 error_type="SampleInvalid",
                 error_message="missing format family or data URL",
                 attempted_at=datetime.now(timezone.utc),
-                stratified=row["stratified"],
             )
         else:
-            store = cache.get_store(row["daac"])
-            result = attempt_one(
-                url=row["data_url"],
-                family=family,
-                store=store,
-                timeout_s=timeout_s,
-                collection_concept_id=row["collection_concept_id"],
-                granule_concept_id=row["granule_concept_id"],
-                daac=row["daac"],
-                stratified=row["stratified"],
-            )
+            try:
+                store = cache.get_store(row["provider"])
+            except AuthUnavailable as e:
+                result = AttemptResult(
+                    collection_concept_id=row["collection_concept_id"],
+                    granule_concept_id=row["granule_concept_id"],
+                    daac=row["daac"], format_family=family_str,
+                    stratified=row["stratified"],
+                    error_type="AuthUnavailable",
+                    error_message=str(e),
+                    attempted_at=datetime.now(timezone.utc),
+                )
+            else:
+                result = attempt_one(
+                    url=row["data_url"],
+                    family=family,
+                    store=store,
+                    timeout_s=timeout_s,
+                    collection_concept_id=row["collection_concept_id"],
+                    granule_concept_id=row["granule_concept_id"],
+                    daac=row["daac"],
+                    stratified=row["stratified"],
+                )
         writer.append(result)
         n += 1
         if i % 500 == 0:

@@ -27,12 +27,14 @@ class Bucket(StrEnum):
     STRING_DTYPE = "STRING_DTYPE"
     NETWORK_ERROR = "NETWORK_ERROR"
     SAMPLE_INVALID = "SAMPLE_INVALID"
+    AUTH_UNAVAILABLE = "AUTH_UNAVAILABLE"
     OTHER = "OTHER"
 
 
 # Ordered rules: first match wins. Each is (error_type_regex, message_regex, bucket).
 # Pass None for a field to skip matching it.
 _RULES: list[tuple[re.Pattern | None, re.Pattern | None, Bucket]] = [
+    (re.compile(r"AuthUnavailable"), None, Bucket.AUTH_UNAVAILABLE),
     (re.compile(r"NoParserAvailable"), None, Bucket.NO_PARSER),
     (re.compile(r"SampleInvalid"), None, Bucket.SAMPLE_INVALID),
     (re.compile(r"TimeoutError"), None, Bucket.TIMEOUT),

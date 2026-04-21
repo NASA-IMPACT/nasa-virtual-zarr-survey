@@ -17,6 +17,7 @@ from nasa_virtual_zarr_survey.taxonomy import Bucket, classify
         ("NotImplementedError", "filter pipeline element not supported", Bucket.UNSUPPORTED_FILTER),
         ("KeyError", "'compound' dtype", Bucket.COMPOUND_DTYPE),
         ("TypeError", "dtype not supported: string", Bucket.STRING_DTYPE),
+        ("AuthUnavailable", "earthaccess returned no S3 credentials", Bucket.AUTH_UNAVAILABLE),
         ("Exception", "who knows", Bucket.OTHER),
         (None, None, Bucket.SUCCESS),
     ],

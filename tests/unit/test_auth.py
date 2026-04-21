@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from nasa_virtual_zarr_survey.auth import DAACStoreCache
 
 
 def test_cache_fetches_once(monkeypatch):
     calls = {"n": 0}
 
-    def fake_get_creds(daac):
+    def fake_get_creds(provider):
         calls["n"] += 1
         return {"accessKeyId": "AK", "secretAccessKey": "SK", "sessionToken": "TK"}
 
@@ -19,7 +21,7 @@ def test_cache_fetches_once(monkeypatch):
         "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
     )
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth._build_store", lambda creds, daac: object()
+        "nasa_virtual_zarr_survey.auth._build_store", lambda creds, provider: object()
     )
 
     cache = DAACStoreCache()
@@ -33,10 +35,10 @@ def test_cache_refreshes_after_ttl(monkeypatch):
     calls = {"n": 0}
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials",
-        lambda daac: (calls.__setitem__("n", calls["n"] + 1), {"accessKeyId": "AK", "secretAccessKey": "SK", "sessionToken": "TK"})[1],
+        lambda provider: (calls.__setitem__("n", calls["n"] + 1), {"accessKeyId": "AK", "secretAccessKey": "SK", "sessionToken": "TK"})[1],
     )
     monkeypatch.setattr("nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None)
-    monkeypatch.setattr("nasa_virtual_zarr_survey.auth._build_store", lambda creds, daac: object())
+    monkeypatch.setattr("nasa_virtual_zarr_survey.auth._build_store", lambda creds, provider: object())
 
     cache = DAACStoreCache(ttl=timedelta(minutes=50))
     cache.get_store("PODAAC")
@@ -56,11 +58,25 @@ def test_login_called_once_across_multiple_daacs(monkeypatch):
     )
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials",
-        lambda daac: {"accessKeyId": "AK", "secretAccessKey": "SK", "sessionToken": "TK"},
+        lambda provider: {"accessKeyId": "AK", "secretAccessKey": "SK", "sessionToken": "TK"},
     )
-    monkeypatch.setattr("nasa_virtual_zarr_survey.auth._build_store", lambda creds, daac: object())
+    monkeypatch.setattr("nasa_virtual_zarr_survey.auth._build_store", lambda creds, provider: object())
 
     cache = DAACStoreCache()
     cache.get_store("PODAAC")
     cache.get_store("NSIDC_ECS")
     assert login_calls["n"] == 1
+
+
+def test_cache_raises_on_empty_creds(monkeypatch):
+    monkeypatch.setattr("nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials",
+        lambda provider: {},
+    )
+
+    from nasa_virtual_zarr_survey.auth import AuthUnavailable
+
+    cache = DAACStoreCache()
+    with pytest.raises(AuthUnavailable):
+        cache.get_store("UNKNOWN_PROVIDER")
