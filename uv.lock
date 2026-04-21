@@ -227,6 +227,25 @@ wheels = [
 ]
 
 [[package]]
+name = "async-tiff"
+version = "0.7.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "obspec" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b5/e4/5d5d9067f7a6fac09e75e4fdc012af106b96a650d1c48852907f22786534/async_tiff-0.7.1.tar.gz", hash = "sha256:dbef87b2696bea06161c5fd0d9546700b8a30c04d3033c9b68b4b162c4cfa2dc", size = 5245929, upload-time = "2026-03-11T16:13:46.919Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a5/15/f644623da0662c74aa47bc7d0e4a9c86bb3e23cf99fab405f0268ea4aedb/async_tiff-0.7.1-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:a91b3eb8edabad8a8005a4895c2e6080e77bc7a4f941746edef12ccc5923a9e4", size = 4068748, upload-time = "2026-03-11T16:13:24.67Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/72/b63d3c6dd6e8b0e9458d3aa2679b1406bd75d719d687aa3c02f97c01aa6f/async_tiff-0.7.1-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:2a917a57bf1e801cc84219079a1b85d6399a22589f094ccc1283c53459719fa9", size = 3773977, upload-time = "2026-03-11T16:13:26Z" },
+    { url = "https://files.pythonhosted.org/packages/11/05/9db7809c9c584ecda29b567b4d2d2f72f8f266bd4febff43c98c22fae96e/async_tiff-0.7.1-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:bf471a4f56a7d863adb35a27f33d4c75fd0d78a1a56943c64aa92115109a01a6", size = 4026176, upload-time = "2026-03-11T16:13:27.781Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/17/49f886ba749a4decc040174284e7046ff74eb2c66e09e4da9c4b5af98fa6/async_tiff-0.7.1-cp311-abi3-manylinux_2_28_i686.whl", hash = "sha256:740f3c9a1026b07ccf00e9de846920dbbdc0a7af8d08f5d1a0413ebb7d7fac68", size = 4120619, upload-time = "2026-03-11T16:13:29.079Z" },
+    { url = "https://files.pythonhosted.org/packages/26/65/2a31b86cadfa03121f33680465408c27296a0fc83c26f29619a311d07dd8/async_tiff-0.7.1-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:6e8472cc9b31e3c3a9603df406906392171ec402df844b977f8ed1d65f270eb1", size = 4284184, upload-time = "2026-03-11T16:13:30.738Z" },
+    { url = "https://files.pythonhosted.org/packages/92/68/7335e6fa10ce935b8c9ef5d8776ea196b7bb0cc4a15e4b9f0365b6ea6524/async_tiff-0.7.1-cp311-abi3-musllinux_1_2_i686.whl", hash = "sha256:147e4b14406cfc0fc94d4524309277d84110dc116a1ac4e2efcacda64a7ad01a", size = 4144530, upload-time = "2026-03-11T16:13:32.313Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/0a/5add7bfb25569ab77f58db96f838b83cf7144b7288f62ff5c9e6b0470df1/async_tiff-0.7.1-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:a4bca32e2ae256c1fa2a16a596baf3b6e0df0ebda1ab8457be0d3692e81189eb", size = 4418523, upload-time = "2026-03-11T16:13:33.824Z" },
+    { url = "https://files.pythonhosted.org/packages/27/90/9ab98dcf4928d93c7197e8462a73af24dc12e8bff5f0bcdd01d0227ab790/async_tiff-0.7.1-cp311-abi3-win_amd64.whl", hash = "sha256:1eda1afeee69be77d3fb57792af3fdb03ba7d31b0fb783acec250d111794227c", size = 4046573, upload-time = "2026-03-11T16:13:35.502Z" },
+]
+
+[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1165,7 +1184,7 @@ dependencies = [
     { name = "obspec-utils" },
     { name = "obstore" },
     { name = "pyarrow" },
-    { name = "virtualizarr", extra = ["fits", "hdf", "icechunk", "kerchunk", "netcdf3", "remote", "zarr"] },
+    { name = "virtualizarr", extra = ["fits", "hdf", "icechunk", "kerchunk", "netcdf3", "remote", "tiff", "zarr"] },
 ]
 
 [package.dev-dependencies]
@@ -1185,7 +1204,7 @@ requires-dist = [
     { name = "obspec-utils", specifier = ">=0.2" },
     { name = "obstore", specifier = ">=0.5" },
     { name = "pyarrow", specifier = ">=17" },
-    { name = "virtualizarr", extras = ["fits", "hdf", "icechunk", "kerchunk", "netcdf3", "remote", "zarr"], specifier = ">=1.3" },
+    { name = "virtualizarr", extras = ["fits", "hdf", "icechunk", "kerchunk", "netcdf3", "remote", "tiff", "zarr"], specifier = ">=1.3" },
 ]
 
 [package.metadata.requires-dev]
@@ -1979,6 +1998,24 @@ wheels = [
 ]
 
 [[package]]
+name = "virtual-tiff"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "async-tiff" },
+    { name = "imagecodecs" },
+    { name = "imagecodecs-numcodecs" },
+    { name = "obspec-utils" },
+    { name = "obstore" },
+    { name = "virtualizarr" },
+    { name = "zarr" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d1/65/a5ee9741a00f26b9fa454092d672aeba0ee5d2b2d02668f50e93d9b19f11/virtual_tiff-0.4.0.tar.gz", hash = "sha256:65b094fefae1564217328dd9828bb2085b1a1942cc895b024c9f2aa8e89e79de", size = 138180, upload-time = "2026-04-09T00:48:31.399Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/13/c07f8278761893ebac1d11eb1dc7f3d5534785fca66559975044e945cb33/virtual_tiff-0.4.0-py3-none-any.whl", hash = "sha256:730638600a06f621fe5682859ab4f76449a9c86fc2521345a2f247bf2032c90c", size = 18724, upload-time = "2026-04-09T00:48:29.905Z" },
+]
+
+[[package]]
 name = "virtualizarr"
 version = "2.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2033,6 +2070,9 @@ remote = [
     { name = "fsspec" },
     { name = "requests" },
     { name = "s3fs" },
+]
+tiff = [
+    { name = "virtual-tiff" },
 ]
 zarr = [
     { name = "arro3-core" },

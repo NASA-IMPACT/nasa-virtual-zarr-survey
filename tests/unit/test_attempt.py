@@ -49,10 +49,13 @@ def test_dispatch_parser_maps_known_families():
     assert dispatch_parser(FormatFamily.FITS) is not None
     assert dispatch_parser(FormatFamily.ZARR) is not None
 
+    geotiff_parser = dispatch_parser(FormatFamily.GEOTIFF)
+    assert geotiff_parser is not None
+    assert type(geotiff_parser).__name__ == "VirtualTIFF"
+
 
 def test_dispatch_parser_returns_none_for_unsupported():
     assert dispatch_parser(FormatFamily.HDF4) is None
-    assert dispatch_parser(FormatFamily.GEOTIFF) is None
 
 
 def test_attempt_one_records_no_parser():

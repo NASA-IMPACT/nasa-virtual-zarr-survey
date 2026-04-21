@@ -14,6 +14,7 @@ from typing import Any, Literal
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from virtual_tiff import VirtualTIFF
 from virtualizarr.parsers.dmrpp import DMRPPParser
 from virtualizarr.parsers.fits import FITSParser
 from virtualizarr.parsers.hdf import HDFParser
@@ -69,6 +70,8 @@ def dispatch_parser(family: FormatFamily) -> Any | None:
         return FITSParser()
     if family is FormatFamily.ZARR:
         return ZarrParser()
+    if family is FormatFamily.GEOTIFF:
+        return VirtualTIFF()
     return None
 
 
