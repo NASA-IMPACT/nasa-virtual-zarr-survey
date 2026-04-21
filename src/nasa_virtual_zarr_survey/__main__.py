@@ -70,5 +70,35 @@ def report(db_path: Path, results_dir: Path, out_path: Path) -> None:
     click.echo(f"Wrote {out_path}")
 
 
+@cli.command()
+@click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
+@click.option("--results", "results_dir", type=click.Path(path_type=Path), default=DEFAULT_RESULTS)
+@click.option("--out", "out_path", type=click.Path(path_type=Path), default=DEFAULT_REPORT)
+@click.option("--sample", "sample_size", type=int, default=50)
+@click.option("--n-bins", type=int, default=5)
+@click.option("--timeout", "timeout_s", type=int, default=60)
+def pilot(
+    db_path: Path, results_dir: Path, out_path: Path,
+    sample_size: int, n_bins: int, timeout_s: int,
+) -> None:
+    """Run discover, sample, attempt, report on a small sample for taxonomy review."""
+    from nasa_virtual_zarr_survey.discover import run_discover
+    from nasa_virtual_zarr_survey.sample import run_sample
+    from nasa_virtual_zarr_survey.attempt import run_attempt
+    from nasa_virtual_zarr_survey.report import run_report
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    n_coll = run_discover(db_path, limit=sample_size)
+    click.echo(f"discover: {n_coll} collections")
+    n_gran = run_sample(db_path, n_bins=n_bins)
+    click.echo(f"sample: {n_gran} granules")
+    n_att = run_attempt(db_path, results_dir, timeout_s=timeout_s)
+    click.echo(f"attempt: {n_att} attempts")
+    run_report(db_path, results_dir, out_path)
+    click.echo(f"Pilot complete. Review errors in {results_dir}, refine taxonomy.py, then run full pipeline.")
+
+
 if __name__ == "__main__":
     cli()
