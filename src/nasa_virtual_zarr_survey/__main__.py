@@ -1,11 +1,24 @@
 """CLI entry point."""
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import click
 
 from nasa_virtual_zarr_survey import __version__
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"As of version 1\.0, `DataGranule\.size` will be accessed as an attribute",
+    category=FutureWarning,
+    module=r"earthaccess\..*",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"Numcodecs codecs are not in the Zarr version 3 specification",
+    category=UserWarning,
+)
 
 DEFAULT_DB = Path("output/survey.duckdb")
 DEFAULT_RESULTS = Path("output/results")
