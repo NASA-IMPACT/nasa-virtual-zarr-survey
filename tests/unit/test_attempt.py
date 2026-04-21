@@ -133,6 +133,7 @@ def test_result_writer_rotates_shards(tmp_results_dir: Path):
             success=True,
             duration_s=0.1,
             attempted_at=datetime.now(timezone.utc),
+            stratified=True,
         ))
     w.close()
     shards = sorted((tmp_results_dir / "DAAC=PODAAC").glob("*.parquet"))
@@ -149,10 +150,10 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
          NULL, NULL, 'L3', NULL, now())
     """)
     con.execute(
-        "INSERT INTO granules VALUES ('C1','G1','s3://b/a.nc',0,100,now())"
+        "INSERT INTO granules VALUES ('C1','G1','s3://b/a.nc',0,100,now(),TRUE)"
     )
     con.execute(
-        "INSERT INTO granules VALUES ('C1','G2','s3://b/b.nc',1,100,now())"
+        "INSERT INTO granules VALUES ('C1','G2','s3://b/b.nc',1,100,now(),TRUE)"
     )
     con.close()
 
@@ -166,7 +167,7 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
         "daac": ["PODAAC"], "format_family": ["NetCDF4"], "parser": ["HDFParser"],
         "success": [True], "error_type": [None], "error_message": [None],
         "error_traceback": [None], "duration_s": [0.1], "timed_out": [False],
-        "attempted_at": [datetime.now(timezone.utc)],
+        "attempted_at": [datetime.now(timezone.utc)], "stratified": [True],
     })
     pq.write_table(already, shard_dir / "part-0000.parquet")
 

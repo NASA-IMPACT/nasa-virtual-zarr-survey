@@ -71,6 +71,8 @@ def test_collection_verdicts_classifies_all_three(tmp_db_path, tmp_results_dir):
     assert by_id["C_PART"]["verdict"] == "partial_pass"
     assert by_id["C_NONE"]["verdict"] == "all_fail"
     assert by_id["C_SKIP"]["verdict"] == "skipped_format"
+    # stratified is None because no granule rows were inserted into the DB
+    assert by_id["C_ALL"]["stratified"] is None
 
 
 def test_render_report_contains_counts(tmp_db_path, tmp_results_dir, tmp_path):
@@ -95,3 +97,4 @@ def test_render_report_contains_counts(tmp_db_path, tmp_results_dir, tmp_path):
     assert "all_pass" in text
     assert "PODAAC" in text
     assert "NetCDF4" in text
+    assert "Stratification" in text

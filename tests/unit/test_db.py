@@ -29,16 +29,25 @@ def test_collections_columns(tmp_db_path: Path):
         assert expected in cols, f"missing column {expected}"
 
 
+def test_granules_columns(tmp_db_path: Path):
+    con = connect(tmp_db_path)
+    init_schema(con)
+    cols = {r[1] for r in con.execute("PRAGMA table_info('granules')").fetchall()}
+    for expected in ["collection_concept_id", "granule_concept_id", "data_url",
+                     "temporal_bin", "size_bytes", "sampled_at", "stratified"]:
+        assert expected in cols, f"missing column {expected}"
+
+
 def test_granules_primary_key_prevents_duplicates(tmp_db_path: Path):
     con = connect(tmp_db_path)
     init_schema(con)
     con.execute(
-        "INSERT INTO granules VALUES ('C1', 'G1', 's3://x', 0, 100, now())"
+        "INSERT INTO granules VALUES ('C1', 'G1', 's3://x', 0, 100, now(), TRUE)"
     )
     # Second insert with same PK should fail (or OR-REPLACE via INSERT OR IGNORE)
     try:
         con.execute(
-            "INSERT INTO granules VALUES ('C1', 'G1', 's3://y', 1, 200, now())"
+            "INSERT INTO granules VALUES ('C1', 'G1', 's3://y', 1, 200, now(), TRUE)"
         )
     except duckdb.ConstraintException:
         pass

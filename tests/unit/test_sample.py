@@ -55,6 +55,7 @@ def test_sample_one_collection_uses_temporal_bins(monkeypatch):
     # each bin yielded exactly one search_data call
     assert call_count["n"] == 5
     assert {g["temporal_bin"] for g in gs} == {0, 1, 2, 3, 4}
+    assert all(g["stratified"] is True for g in gs)
 
 
 def test_run_sample_persists_granules(tmp_db_path: Path, monkeypatch):
@@ -81,9 +82,9 @@ def test_run_sample_persists_granules(tmp_db_path: Path, monkeypatch):
     n = run_sample(tmp_db_path, n_bins=3)
     assert n == 3
     rows = con.execute(
-        "SELECT collection_concept_id, temporal_bin FROM granules ORDER BY temporal_bin"
+        "SELECT collection_concept_id, temporal_bin, stratified FROM granules ORDER BY temporal_bin"
     ).fetchall()
-    assert rows == [("C1", 0), ("C1", 1), ("C1", 2)]
+    assert rows == [("C1", 0, True), ("C1", 1, True), ("C1", 2, True)]
 
 
 def test_sample_one_collection_no_temporal_extent(monkeypatch):
@@ -113,3 +114,4 @@ def test_sample_one_collection_no_temporal_extent(monkeypatch):
     # it should request count=n_bins in a single call
     assert captured.get("count") == 3
     assert captured.get("concept_id") == "C1"
+    assert all(g["stratified"] is False for g in gs)

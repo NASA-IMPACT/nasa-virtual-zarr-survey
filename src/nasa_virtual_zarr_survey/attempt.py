@@ -32,6 +32,7 @@ class AttemptResult:
     duration_s: float = 0.0
     timed_out: bool = False
     attempted_at: datetime | None = None
+    stratified: bool | None = None
 
 
 def dispatch_parser(family: FormatFamily) -> Any | None:
@@ -74,6 +75,7 @@ def attempt_one(
     collection_concept_id: str | None = None,
     granule_concept_id: str | None = None,
     daac: str | None = None,
+    stratified: bool | None = None,
 ) -> AttemptResult:
     """Try to open one granule. Always returns a result; never raises."""
     result = AttemptResult(
@@ -82,6 +84,7 @@ def attempt_one(
         daac=daac,
         format_family=family.value,
         attempted_at=datetime.now(timezone.utc),
+        stratified=stratified,
     )
 
     parser = dispatch_parser(family)
@@ -140,6 +143,7 @@ _SCHEMA = pa.schema([
     ("duration_s", pa.float64()),
     ("timed_out", pa.bool_()),
     ("attempted_at", pa.timestamp("us", tz="UTC")),
+    ("stratified", pa.bool_()),
 ])
 
 
@@ -185,6 +189,7 @@ class ResultWriter:
             cols["duration_s"].append(r.duration_s)
             cols["timed_out"].append(r.timed_out)
             cols["attempted_at"].append(r.attempted_at)
+            cols["stratified"].append(r.stratified)
         pq.write_table(pa.table(cols, schema=_SCHEMA), self._shard_path(daac))
         self._shard_index[daac] = self._shard_index.get(daac, 0) + 1
         self._buffers[daac] = []
@@ -202,7 +207,8 @@ def _pending_granules(con, results_dir: Path, only_daac: str | None) -> list[dic
                g.granule_concept_id,
                g.data_url,
                c.daac,
-               c.format_family
+               c.format_family,
+               g.stratified
         FROM granules g
         JOIN collections c ON c.concept_id = g.collection_concept_id
         WHERE c.skip_reason IS NULL
@@ -223,7 +229,8 @@ def _pending_granules(con, results_dir: Path, only_daac: str | None) -> list[dic
     except Exception:
         # No Parquet files yet -- read_parquet fails; fall back to "all granules".
         fallback = """
-            SELECT c.concept_id, g.granule_concept_id, g.data_url, c.daac, c.format_family
+            SELECT c.concept_id, g.granule_concept_id, g.data_url, c.daac, c.format_family,
+                   g.stratified
             FROM granules g JOIN collections c ON c.concept_id = g.collection_concept_id
             WHERE c.skip_reason IS NULL
         """
@@ -236,7 +243,7 @@ def _pending_granules(con, results_dir: Path, only_daac: str | None) -> list[dic
 
     return [
         {"collection_concept_id": r[0], "granule_concept_id": r[1],
-         "data_url": r[2], "daac": r[3], "format_family": r[4]}
+         "data_url": r[2], "daac": r[3], "format_family": r[4], "stratified": r[5]}
         for r in rows
     ]
 
@@ -277,6 +284,7 @@ def run_attempt(
                 error_type="SampleInvalid",
                 error_message="missing format family or data URL",
                 attempted_at=datetime.now(timezone.utc),
+                stratified=row["stratified"],
             )
         else:
             store = cache.get_store(row["daac"])
@@ -288,6 +296,7 @@ def run_attempt(
                 collection_concept_id=row["collection_concept_id"],
                 granule_concept_id=row["granule_concept_id"],
                 daac=row["daac"],
+                stratified=row["stratified"],
             )
         writer.append(result)
         n += 1

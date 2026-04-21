@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS granules (
     temporal_bin          INTEGER,
     size_bytes            BIGINT,
     sampled_at            TIMESTAMP,
+    stratified            BOOLEAN,
     PRIMARY KEY (collection_concept_id, granule_concept_id)
 );
 

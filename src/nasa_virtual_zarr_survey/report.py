@@ -37,16 +37,23 @@ def collection_verdicts(db_path: Path | str, results_dir: Path | str) -> list[di
                    sum(CASE WHEN NOT success THEN 1 ELSE 0 END) AS n_fail
             FROM results
             GROUP BY collection_concept_id
+        ),
+        strat AS (
+            SELECT collection_concept_id, MAX(stratified) AS stratified
+            FROM granules
+            GROUP BY collection_concept_id
         )
         SELECT c.concept_id, c.daac, c.format_family, c.skip_reason,
                COALESCE(a.n_pass, 0) AS n_pass,
-               COALESCE(a.n_fail, 0) AS n_fail
+               COALESCE(a.n_fail, 0) AS n_fail,
+               s.stratified
         FROM collections c
         LEFT JOIN agg a ON a.collection_concept_id = c.concept_id
+        LEFT JOIN strat s ON s.collection_concept_id = c.concept_id
     """
     rows = con.execute(q).fetchall()
     out = []
-    for concept_id, daac, family, skip, n_pass, n_fail in rows:
+    for concept_id, daac, family, skip, n_pass, n_fail, stratified in rows:
         if skip:
             verdict = "skipped_format"
         elif n_pass + n_fail == 0:
@@ -60,6 +67,7 @@ def collection_verdicts(db_path: Path | str, results_dir: Path | str) -> list[di
         out.append({
             "concept_id": concept_id, "daac": daac, "format_family": family,
             "verdict": verdict, "n_pass": n_pass, "n_fail": n_fail,
+            "stratified": stratified,
         })
     return out
 
@@ -114,6 +122,23 @@ def render_report(verdicts: list[dict[str, Any]], tax: Counter[str],
     for f in fams:
         cells = [str(by_family.get((f, v), 0)) for v in verdicts_ordered]
         lines.append(f"| {f} | " + " | ".join(cells) + " |")
+    lines.append("")
+
+    lines.append("## Stratification\n")
+    lines.append("| Sampling mode | Attempted | all_pass | partial_pass | all_fail |")
+    lines.append("|---|---:|---:|---:|---:|")
+    for mode_label, mode_filter in [
+        ("stratified", lambda v: v["stratified"] is True),
+        ("fallback", lambda v: v["stratified"] is False),
+        ("unsampled", lambda v: v["stratified"] is None),
+    ]:
+        mode_vs = [v for v in verdicts if mode_filter(v)]
+        attempted = len(mode_vs)
+        mc = Counter(v["verdict"] for v in mode_vs)
+        lines.append(
+            f"| {mode_label} | {attempted} | {mc.get('all_pass', 0)} | "
+            f"{mc.get('partial_pass', 0)} | {mc.get('all_fail', 0)} |"
+        )
     lines.append("")
 
     lines.append("## Top 20 Raw Errors in `OTHER`\n")

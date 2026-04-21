@@ -65,6 +65,7 @@ def sample_one_collection(coll: dict[str, Any], n_bins: int = 5) -> list[dict[st
                 "temporal_bin": i,
                 "size_bytes": _extract_size(g),
                 "sampled_at": now,
+                "stratified": False,
             })
         return rows
 
@@ -84,6 +85,7 @@ def sample_one_collection(coll: dict[str, Any], n_bins: int = 5) -> list[dict[st
             "temporal_bin": i,
             "size_bytes": _extract_size(g),
             "sampled_at": now,
+            "stratified": True,
         })
     return rows
 
@@ -115,9 +117,9 @@ def run_sample(
         rows = sample_one_collection(coll, n_bins=n_bins)
         for r in rows:
             con.execute(
-                """INSERT OR IGNORE INTO granules VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT OR IGNORE INTO granules VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 [r["collection_concept_id"], r["granule_concept_id"], r["data_url"],
-                 r["temporal_bin"], r["size_bytes"], r["sampled_at"]],
+                 r["temporal_bin"], r["size_bytes"], r["sampled_at"], r["stratified"]],
             )
             total += 1
     return total
