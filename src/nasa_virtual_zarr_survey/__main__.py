@@ -59,5 +59,16 @@ def attempt(db_path: Path, results_dir: Path, timeout_s: int, shard_size: int, d
     click.echo(f"Attempted {n} granules; wrote Parquet shards to {results_dir}")
 
 
+@cli.command()
+@click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
+@click.option("--results", "results_dir", type=click.Path(path_type=Path), default=DEFAULT_RESULTS)
+@click.option("--out", "out_path", type=click.Path(path_type=Path), default=DEFAULT_REPORT)
+def report(db_path: Path, results_dir: Path, out_path: Path) -> None:
+    """Phase 4: render report.md from DuckDB state + Parquet results."""
+    from nasa_virtual_zarr_survey.report import run_report
+    run_report(db_path, results_dir, out_path)
+    click.echo(f"Wrote {out_path}")
+
+
 if __name__ == "__main__":
     cli()
