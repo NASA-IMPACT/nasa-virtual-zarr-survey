@@ -372,8 +372,43 @@ def run_attempt(
     consecutive_forbidden = 0
     FORBIDDEN_ABORT_THRESHOLD = 5
 
+    # Per-collection progress: precompute how many distinct collections we'll touch
+    collection_order: list[str] = []
+    collection_size: dict[str, int] = {}
+    for row in pending:
+        cid = row["collection_concept_id"]
+        if cid not in collection_size:
+            collection_order.append(cid)
+            collection_size[cid] = 0
+        collection_size[cid] += 1
+    total_collections = len(collection_order)
+
+    current_collection: str | None = None
+    collection_idx = 0
+    collection_pass = 0
+    collection_fail = 0
+
+    def _flush_collection_progress() -> None:
+        if current_collection is None:
+            return
+        total = collection_pass + collection_fail
+        print(
+            f"[{collection_idx}/{total_collections}] {current_collection}: "
+            f"{collection_pass}/{total} passed",
+            file=sys.stderr,
+            flush=True,
+        )
+
     n = 0
     for i, row in enumerate(pending, 1):
+        cid = row["collection_concept_id"]
+        if cid != current_collection:
+            _flush_collection_progress()
+            current_collection = cid
+            collection_idx += 1
+            collection_pass = 0
+            collection_fail = 0
+
         family_str = row["format_family"]
         family = FormatFamily(family_str) if family_str else None
         if family is None or not row["data_url"]:
@@ -412,6 +447,10 @@ def run_attempt(
                 )
         writer.append(result)
         n += 1
+        if result.success:
+            collection_pass += 1
+        else:
+            collection_fail += 1
 
         if access == "direct" and not result.success:
             parse_bucket = classify(result.parse_error_type, result.parse_error_message)
@@ -434,8 +473,6 @@ def run_attempt(
                 "URLs differ between access modes.)\n"
             )
 
-        if i % 500 == 0:
-            print(f"[heartbeat] attempted {i}/{len(pending)}", file=sys.stderr)
-
+    _flush_collection_progress()
     writer.close()
     return n

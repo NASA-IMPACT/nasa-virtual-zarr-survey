@@ -87,3 +87,49 @@ def test_run_discover_uses_earthaccess(tmp_db_path: Path, monkeypatch):
     kwargs = fake_search.call_args.kwargs
     assert kwargs["cloud_hosted"] is True
     assert "provider" in kwargs
+
+
+def test_run_discover_top_per_provider_hydrates_ids(tmp_db_path: Path, monkeypatch):
+    from nasa_virtual_zarr_survey.discover import run_discover
+
+    # Mock the popularity module's entry point used by discover.
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.popularity.all_top_collection_ids",
+        lambda providers, num_per_provider=100: ["C1-PODAAC", "C2-PODAAC"],
+    )
+
+    class FakeColl:
+        def __init__(self, concept_id):
+            self.concept_id = concept_id
+            self.render_dict = {
+                "meta": {"concept-id": concept_id, "provider-id": "PODAAC"},
+                "umm": {
+                    "ShortName": "FOO",
+                    "Version": "1",
+                    "DataCenters": [{"ShortName": "PODAAC"}],
+                    "ArchiveAndDistributionInformation": {
+                        "FileDistributionInformation": [{"Format": "NetCDF-4"}]
+                    },
+                    "ProcessingLevel": {"Id": "L3"},
+                },
+            }
+
+    captured: list = []
+
+    def fake_search(**kwargs):
+        captured.append(kwargs)
+        return [FakeColl(cid) for cid in kwargs["concept_id"]]
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.discover.earthaccess.search_datasets", fake_search
+    )
+    run_discover(tmp_db_path, top_per_provider=2)
+
+    from nasa_virtual_zarr_survey.db import connect, init_schema
+    con = connect(tmp_db_path)
+    init_schema(con)
+    ids = sorted(r[0] for r in con.execute("SELECT concept_id FROM collections").fetchall())
+    assert ids == ["C1-PODAAC", "C2-PODAAC"]
+    # Verify earthaccess was called with concept_id= (not cloud_hosted= mode)
+    assert captured[0]["concept_id"] == ["C1-PODAAC", "C2-PODAAC"]
+    assert "cloud_hosted" not in captured[0]

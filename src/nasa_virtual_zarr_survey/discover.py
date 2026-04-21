@@ -96,15 +96,57 @@ def persist_collections(con, rows: Iterable[dict[str, Any]]) -> None:
         )
 
 
-def run_discover(db_path: Path | str, limit: int | None = None) -> int:
-    """Enumerate EOSDIS cloud-hosted collections and persist to DuckDB. Returns count."""
+def run_discover(
+    db_path: Path | str,
+    limit: int | None = None,
+    *,
+    top_per_provider: int | None = None,
+    top_total: int | None = None,
+) -> int:
+    """Enumerate EOSDIS collections and persist to DuckDB.
+
+    Modes (mutually exclusive):
+    - Default (no flags): enumerate all cloud-hosted EOSDIS collections,
+      optionally capped by `limit`.
+    - `top_per_provider=N`: fetch the top-N most-used collections PER provider
+      (ranked by CMR's `usage_score`), then hydrate their full UMM-JSON.
+    - `top_total=N`: fetch the top N most-used collections total, distributed
+      evenly across providers (earlier providers contribute first), then
+      truncated to exactly N after collection.
+    """
     con = connect(db_path)
     init_schema(con)
     providers = get_eosdis_providers()
-    count = -1 if limit is None else limit
-    results = earthaccess.search_datasets(
-        cloud_hosted=True, provider=providers, count=count
-    )
-    dicts = [c.render_dict if hasattr(c, "render_dict") else c for c in results]
+
+    if top_per_provider is not None and top_total is not None:
+        raise ValueError("top_per_provider and top_total are mutually exclusive")
+
+    if top_per_provider is not None or top_total is not None:
+        from nasa_virtual_zarr_survey.popularity import (
+            all_top_collection_ids,
+            top_collection_ids_total,
+        )
+        if top_per_provider is not None:
+            ids = all_top_collection_ids(providers, num_per_provider=top_per_provider)
+        else:
+            ids = top_collection_ids_total(providers, num_total=top_total)
+        if not ids:
+            return 0
+        # Hydrate in batches to avoid overly long URLs / request bodies.
+        dicts: list[dict] = []
+        BATCH = 100
+        for i in range(0, len(ids), BATCH):
+            batch = ids[i : i + BATCH]
+            results = earthaccess.search_datasets(concept_id=batch, count=len(batch))
+            dicts.extend(
+                c.render_dict if hasattr(c, "render_dict") else c for c in results
+            )
+    else:
+        count = -1 if limit is None else limit
+        results = earthaccess.search_datasets(
+            cloud_hosted=True, provider=providers, count=count
+        )
+        dicts = [c.render_dict if hasattr(c, "render_dict") else c for c in results]
+
     persist_collections(con, dicts)
     return len(dicts)
