@@ -35,5 +35,16 @@ def discover(db_path: Path, limit: int | None) -> None:
     click.echo(f"Discovered {n} collections into {db_path}")
 
 
+@cli.command()
+@click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
+@click.option("--n-bins", type=int, default=5, help="Granules per collection.")
+@click.option("--daac", type=str, default=None, help="Restrict to one DAAC.")
+def sample(db_path: Path, n_bins: int, daac: str | None) -> None:
+    """Phase 2: pick N granules stratified across each collection's temporal extent."""
+    from nasa_virtual_zarr_survey.sample import run_sample
+    n = run_sample(db_path, n_bins=n_bins, only_daac=daac)
+    click.echo(f"Sampled {n} granules into {db_path}")
+
+
 if __name__ == "__main__":
     cli()
