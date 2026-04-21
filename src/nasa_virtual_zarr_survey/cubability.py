@@ -60,7 +60,7 @@ def extract_fingerprint(ds: Any) -> dict[str, Any]:
         return repr(fv) if fv is not None else None
 
     fp: dict[str, Any] = {
-        "dims": {str(k): int(v) for k, v in ds.dims.items()},
+        "dims": {str(k): int(v) for k, v in ds.sizes.items()},
         "data_vars": {},
         "coords": {},
     }
