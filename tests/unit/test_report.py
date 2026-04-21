@@ -7,7 +7,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
-from nasa_virtual_zarr_survey.report import collection_verdicts, render_report, run_report
+from nasa_virtual_zarr_survey.report import collection_verdicts, run_report
 
 
 def _write_results(path: Path, rows: list[dict]) -> None:

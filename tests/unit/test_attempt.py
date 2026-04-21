@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-import pytest
 
 from nasa_virtual_zarr_survey.attempt import (
     AttemptResult,
