@@ -114,3 +114,185 @@ def attempt_one(
         result.duration_s = time.monotonic() - t0
 
     return result
+
+
+import signal
+import sys
+from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+from nasa_virtual_zarr_survey.auth import DAACStoreCache
+from nasa_virtual_zarr_survey.db import connect, init_schema
+
+
+_SCHEMA = pa.schema([
+    ("collection_concept_id", pa.string()),
+    ("granule_concept_id", pa.string()),
+    ("daac", pa.string()),
+    ("format_family", pa.string()),
+    ("parser", pa.string()),
+    ("success", pa.bool_()),
+    ("error_type", pa.string()),
+    ("error_message", pa.string()),
+    ("error_traceback", pa.string()),
+    ("duration_s", pa.float64()),
+    ("timed_out", pa.bool_()),
+    ("attempted_at", pa.timestamp("us", tz="UTC")),
+])
+
+
+class ResultWriter:
+    """Append-only, DAAC-partitioned Parquet writer. Rotates shards every `shard_size` rows."""
+
+    def __init__(self, base_dir: Path, shard_size: int = 500):
+        self.base_dir = Path(base_dir)
+        self.shard_size = shard_size
+        self._buffers: dict[str, list[AttemptResult]] = {}
+        self._shard_index: dict[str, int] = {}
+
+    def _shard_path(self, daac: str) -> Path:
+        idx = self._shard_index.get(daac, 0)
+        d = self.base_dir / f"DAAC={daac}"
+        d.mkdir(parents=True, exist_ok=True)
+        while (d / f"part-{idx:04d}.parquet").exists():
+            idx += 1
+        self._shard_index[daac] = idx
+        return d / f"part-{idx:04d}.parquet"
+
+    def append(self, r: AttemptResult) -> None:
+        daac = r.daac or "UNKNOWN"
+        self._buffers.setdefault(daac, []).append(r)
+        if len(self._buffers[daac]) >= self.shard_size:
+            self._flush(daac)
+
+    def _flush(self, daac: str) -> None:
+        buf = self._buffers.get(daac)
+        if not buf:
+            return
+        cols = {field.name: [] for field in _SCHEMA}
+        for r in buf:
+            cols["collection_concept_id"].append(r.collection_concept_id)
+            cols["granule_concept_id"].append(r.granule_concept_id)
+            cols["daac"].append(r.daac)
+            cols["format_family"].append(r.format_family)
+            cols["parser"].append(r.parser)
+            cols["success"].append(r.success)
+            cols["error_type"].append(r.error_type)
+            cols["error_message"].append(r.error_message)
+            cols["error_traceback"].append(r.error_traceback)
+            cols["duration_s"].append(r.duration_s)
+            cols["timed_out"].append(r.timed_out)
+            cols["attempted_at"].append(r.attempted_at)
+        pq.write_table(pa.table(cols, schema=_SCHEMA), self._shard_path(daac))
+        self._shard_index[daac] = self._shard_index.get(daac, 0) + 1
+        self._buffers[daac] = []
+
+    def close(self) -> None:
+        for daac in list(self._buffers.keys()):
+            self._flush(daac)
+
+
+def _pending_granules(con, results_dir: Path, only_daac: str | None) -> list[dict]:
+    """Return granule rows for which no Parquet row exists yet."""
+    results_glob = str(results_dir / "**" / "*.parquet")
+    q = """
+        SELECT c.concept_id AS collection_concept_id,
+               g.granule_concept_id,
+               g.data_url,
+               c.daac,
+               c.format_family
+        FROM granules g
+        JOIN collections c ON c.concept_id = g.collection_concept_id
+        WHERE c.skip_reason IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM read_parquet(?, union_by_name=true, hive_partitioning=true) r
+            WHERE r.collection_concept_id = g.collection_concept_id
+              AND r.granule_concept_id   = g.granule_concept_id
+          )
+    """
+    params: list = [results_glob]
+    if only_daac:
+        q += " AND c.daac = ?"
+        params.append(only_daac)
+    q += " ORDER BY c.daac, c.concept_id, g.temporal_bin"
+
+    try:
+        rows = con.execute(q, params).fetchall()
+    except Exception:
+        # No Parquet files yet -- read_parquet fails; fall back to "all granules".
+        fallback = """
+            SELECT c.concept_id, g.granule_concept_id, g.data_url, c.daac, c.format_family
+            FROM granules g JOIN collections c ON c.concept_id = g.collection_concept_id
+            WHERE c.skip_reason IS NULL
+        """
+        params2: list = []
+        if only_daac:
+            fallback += " AND c.daac = ?"
+            params2.append(only_daac)
+        fallback += " ORDER BY c.daac, c.concept_id, g.temporal_bin"
+        rows = con.execute(fallback, params2).fetchall()
+
+    return [
+        {"collection_concept_id": r[0], "granule_concept_id": r[1],
+         "data_url": r[2], "daac": r[3], "format_family": r[4]}
+        for r in rows
+    ]
+
+
+def run_attempt(
+    db_path: Path | str,
+    results_dir: Path | str,
+    *,
+    timeout_s: int = 60,
+    shard_size: int = 500,
+    only_daac: str | None = None,
+) -> int:
+    """Attempt every pending granule. Returns count attempted in this call."""
+    con = connect(db_path)
+    init_schema(con)
+    results_dir = Path(results_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    pending = _pending_granules(con, results_dir, only_daac)
+    writer = ResultWriter(results_dir, shard_size=shard_size)
+    cache = DAACStoreCache()
+
+    def _sigint(_sig, _frm):
+        writer.close()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _sigint)
+
+    n = 0
+    for i, row in enumerate(pending, 1):
+        family_str = row["format_family"]
+        family = FormatFamily(family_str) if family_str else None
+        if family is None or not row["data_url"]:
+            result = AttemptResult(
+                collection_concept_id=row["collection_concept_id"],
+                granule_concept_id=row["granule_concept_id"],
+                daac=row["daac"], format_family=family_str,
+                error_type="SampleInvalid",
+                error_message="missing format family or data URL",
+                attempted_at=datetime.now(timezone.utc),
+            )
+        else:
+            store = cache.get_store(row["daac"])
+            result = attempt_one(
+                url=row["data_url"],
+                family=family,
+                store=store,
+                timeout_s=timeout_s,
+                collection_concept_id=row["collection_concept_id"],
+                granule_concept_id=row["granule_concept_id"],
+                daac=row["daac"],
+            )
+        writer.append(result)
+        n += 1
+        if i % 500 == 0:
+            print(f"[heartbeat] attempted {i}/{len(pending)}", file=sys.stderr)
+
+    writer.close()
+    return n

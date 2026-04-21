@@ -46,5 +46,18 @@ def sample(db_path: Path, n_bins: int, daac: str | None) -> None:
     click.echo(f"Sampled {n} granules into {db_path}")
 
 
+@cli.command()
+@click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
+@click.option("--results", "results_dir", type=click.Path(path_type=Path), default=DEFAULT_RESULTS)
+@click.option("--timeout", "timeout_s", type=int, default=60)
+@click.option("--shard-size", type=int, default=500)
+@click.option("--daac", type=str, default=None, help="Restrict to one DAAC.")
+def attempt(db_path: Path, results_dir: Path, timeout_s: int, shard_size: int, daac: str | None) -> None:
+    """Phase 3: open_virtual_dataset each pending granule, write Parquet rows."""
+    from nasa_virtual_zarr_survey.attempt import run_attempt
+    n = run_attempt(db_path, results_dir, timeout_s=timeout_s, shard_size=shard_size, only_daac=daac)
+    click.echo(f"Attempted {n} granules; wrote Parquet shards to {results_dir}")
+
+
 if __name__ == "__main__":
     cli()
