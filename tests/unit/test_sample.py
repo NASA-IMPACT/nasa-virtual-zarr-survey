@@ -84,3 +84,32 @@ def test_run_sample_persists_granules(tmp_db_path: Path, monkeypatch):
         "SELECT collection_concept_id, temporal_bin FROM granules ORDER BY temporal_bin"
     ).fetchall()
     assert rows == [("C1", 0), ("C1", 1), ("C1", 2)]
+
+
+def test_sample_one_collection_no_temporal_extent(monkeypatch):
+    class G:
+        def __init__(self, gid: str): self.gid = gid
+        def __getitem__(self, k):
+            return {"meta": {"concept-id": self.gid}}[k]
+        def data_links(self, access="direct"):
+            return [f"s3://b/{self.gid}.nc"]
+
+    captured: dict = {}
+
+    def fake_search_data(**kwargs):
+        captured.update(kwargs)
+        return [G(f"G{i}") for i in range(3)]
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data", fake_search_data
+    )
+
+    coll = {"concept_id": "C1", "time_start": None, "time_end": None, "num_granules": 1000}
+    gs = sample_one_collection(coll, n_bins=3)
+    assert len(gs) == 3
+    assert {g["temporal_bin"] for g in gs} == {0, 1, 2}
+    # fallback should NOT pass `offset` (earthaccess rejects it)
+    assert "offset" not in captured
+    # it should request count=n_bins in a single call
+    assert captured.get("count") == 3
+    assert captured.get("concept_id") == "C1"

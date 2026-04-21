@@ -52,18 +52,12 @@ def sample_one_collection(coll: dict[str, Any], n_bins: int = 5) -> list[dict[st
     now = datetime.now(timezone.utc)
 
     if bins is None:
-        # offset-based fallback
-        num = int(coll.get("num_granules") or 0)
-        step = max(1, num // n_bins) if num else 1
-        for i in range(n_bins):
-            results = earthaccess.search_data(
-                concept_id=coll["concept_id"],
-                offset=i * step,
-                count=1,
-            )
-            if not results:
-                continue
-            g = results[0]
+        # No temporal extent: take the first `n_bins` granules with synthetic bin indices.
+        results = earthaccess.search_data(
+            concept_id=coll["concept_id"],
+            count=n_bins,
+        )
+        for i, g in enumerate(results[:n_bins]):
             rows.append({
                 "collection_concept_id": coll["concept_id"],
                 "granule_concept_id": g["meta"]["concept-id"],
