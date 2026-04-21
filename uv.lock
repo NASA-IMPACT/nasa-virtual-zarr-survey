@@ -11,7 +11,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-13T15:00:08Z"
+exclude-newer = "2026-04-14T19:27:11Z"
 
 [[package]]
 name = "aiobotocore"

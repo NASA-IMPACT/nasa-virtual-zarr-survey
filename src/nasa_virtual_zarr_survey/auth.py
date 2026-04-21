@@ -1,4 +1,4 @@
-"""EDL login + per-provider/per-hostname store cache (S3 or HTTPS)."""
+"""EDL login + per-provider credential cache + per-bucket S3 store + per-hostname HTTPS store."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -13,46 +13,72 @@ class AuthUnavailable(Exception):
     """Raised when credentials cannot be minted for a given provider."""
 
 
-class _Entry(NamedTuple):
-    store: Any
+class _Creds(NamedTuple):
+    creds: dict[str, str]
     minted_at: datetime
 
 
 @dataclass
 class DAACStoreCache:
-    """Caches an obstore S3Store per CMR provider. Refreshes after TTL."""
+    """Caches EDL-minted S3 credentials per CMR provider and builds per-bucket obstore S3Stores lazily.
+
+    Credentials are cached per provider with a TTL (defaults to 50 minutes, below
+    earthaccess's 1-hour expiry). A distinct S3Store is constructed for each
+    distinct bucket the caller asks for, sharing the underlying credentials.
+    """
 
     ttl: timedelta = timedelta(minutes=50)
     _logged_in: bool = False
-    _entries: dict[str, _Entry] = field(default_factory=dict)
+    _creds: dict[str, _Creds] = field(default_factory=dict)
+    _stores: dict[tuple[str, str], Any] = field(default_factory=dict)
 
     def _login(self) -> None:
         if not self._logged_in:
             earthaccess.login(strategy="netrc")
             self._logged_in = True
 
-    def get_store(self, provider: str) -> Any:
-        """Return a cached (or freshly-minted) obstore S3Store for this CMR provider."""
+    def _get_creds(self, provider: str) -> dict[str, str]:
         now = datetime.now(timezone.utc)
-        entry = self._entries.get(provider)
+        entry = self._creds.get(provider)
         if entry and now - entry.minted_at < self.ttl:
-            return entry.store
+            return entry.creds
         self._login()
-        creds = earthaccess.get_s3_credentials(provider=provider)
-        if not creds or "accessKeyId" not in creds:
+        fresh = earthaccess.get_s3_credentials(provider=provider)
+        if not fresh or "accessKeyId" not in fresh:
             raise AuthUnavailable(
                 f"earthaccess returned no S3 credentials for provider {provider!r}"
             )
-        store = _build_s3_store(creds, provider)
-        self._entries[provider] = _Entry(store=store, minted_at=now)
+        self._creds[provider] = _Creds(creds=fresh, minted_at=now)
+        # Invalidate any cached stores for this provider since they hold stale creds.
+        self._stores = {k: v for k, v in self._stores.items() if k[0] != provider}
+        return fresh
+
+    def get_store(self, *, provider: str, bucket: str) -> Any:
+        """Return an obstore S3Store for (provider, bucket), building it on demand.
+
+        Credentials are checked for freshness first; if they have expired, any
+        previously cached stores for this provider are discarded before a new
+        store is built with fresh credentials.
+        """
+        # Always go through _get_creds so that expired credentials cause cached
+        # stores to be purged (via the invalidation in _get_creds) before we
+        # attempt to look up a cached store.
+        creds = self._get_creds(provider)
+        key = (provider, bucket)
+        store = self._stores.get(key)
+        if store is not None:
+            return store
+        store = _build_s3_store(creds, bucket)
+        self._stores[key] = store
         return store
 
 
-def _build_s3_store(creds: dict[str, str], provider: str) -> Any:
+def _build_s3_store(creds: dict[str, str], bucket: str) -> Any:
+    """Construct an obstore S3Store for the given bucket using the given credentials."""
     from obstore.store import S3Store
 
     return S3Store(
-        bucket="",
+        bucket=bucket,
         access_key_id=creds["accessKeyId"],
         secret_access_key=creds["secretAccessKey"],
         session_token=creds["sessionToken"],
@@ -60,13 +86,9 @@ def _build_s3_store(creds: dict[str, str], provider: str) -> Any:
     )
 
 
-# Keep old name for backwards compat with any existing monkeypatches in tests.
-_build_store = _build_s3_store
-
-
 @dataclass
 class StoreCache:
-    """Unified cache that dispatches on access mode ('direct' for S3, 'external' for HTTPS)."""
+    """Unified dispatcher for 'direct' (S3) and 'external' (HTTPS) access modes."""
 
     access: Literal["direct", "external"] = "direct"
     _s3: DAACStoreCache = field(default_factory=DAACStoreCache)
@@ -87,10 +109,15 @@ class StoreCache:
 
     def get_store(self, *, provider: str, url: str) -> Any:
         """Return a store capable of reading `url` for the given CMR `provider`."""
-        if self.access == "direct":
-            return self._s3.get_store(provider)
-
         parsed = urlparse(url)
+        if self.access == "direct":
+            # For S3 URLs the bucket is the netloc.
+            bucket = parsed.netloc
+            if not bucket:
+                raise AuthUnavailable(f"cannot extract S3 bucket from url {url!r}")
+            return self._s3.get_store(provider=provider, bucket=bucket)
+
+        # external: one AiohttpStore per hostname.
         key = f"{parsed.scheme}://{parsed.netloc}"
         store = self._http.get(key)
         if store is not None:
