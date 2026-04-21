@@ -183,8 +183,8 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
         )
     monkeypatch.setattr("nasa_virtual_zarr_survey.attempt.attempt_one", fake_attempt_one)
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.DAACStoreCache.get_store",
-        lambda self, daac: object(),
+        "nasa_virtual_zarr_survey.attempt.StoreCache.get_store",
+        lambda self, *, provider, url: object(),
     )
 
     n = run_attempt(tmp_db_path, tmp_results_dir, timeout_s=5, shard_size=500)

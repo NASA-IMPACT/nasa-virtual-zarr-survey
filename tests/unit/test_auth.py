@@ -80,3 +80,60 @@ def test_cache_raises_on_empty_creds(monkeypatch):
     cache = DAACStoreCache()
     with pytest.raises(AuthUnavailable):
         cache.get_store("UNKNOWN_PROVIDER")
+
+
+def test_store_cache_external_mode(monkeypatch):
+    from nasa_virtual_zarr_survey.auth import StoreCache
+
+    class FakeAuth:
+        token = {"access_token": "BEARER_XYZ"}
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
+    )
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.__auth__", FakeAuth, raising=False
+    )
+
+    created: list[dict] = []
+
+    class FakeAiohttpStore:
+        def __init__(self, base_url, headers=None):
+            created.append({"base_url": base_url, "headers": headers})
+            self.base_url = base_url
+            self.headers = headers
+
+    monkeypatch.setattr(
+        "obspec_utils.stores.AiohttpStore", FakeAiohttpStore
+    )
+
+    cache = StoreCache(access="external")
+    s1 = cache.get_store(provider="PODAAC", url="https://host-a.example/path/one.nc")
+    s2 = cache.get_store(provider="PODAAC", url="https://host-a.example/path/two.nc")
+    s3 = cache.get_store(provider="PODAAC", url="https://host-b.example/path/x.nc")
+
+    assert s1 is s2            # same host => same store
+    assert s3 is not s1         # different host => different store
+    assert len(created) == 2
+    assert created[0]["base_url"] == "https://host-a.example"
+    assert created[0]["headers"] == {"Authorization": "Bearer BEARER_XYZ"}
+    assert created[1]["base_url"] == "https://host-b.example"
+
+
+def test_store_cache_direct_delegates_to_daac_cache(monkeypatch):
+    from nasa_virtual_zarr_survey.auth import StoreCache
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
+    )
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials",
+        lambda provider: {"accessKeyId": "AK", "secretAccessKey": "SK", "sessionToken": "TK"},
+    )
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth._build_s3_store", lambda creds, provider: f"S3({provider})"
+    )
+
+    cache = StoreCache(access="direct")
+    s = cache.get_store(provider="PODAAC", url="s3://podaac-bucket/x.nc")
+    assert s == "S3(PODAAC)"

@@ -22,10 +22,8 @@ def temporal_bins(
     return list(zip(edges[:-1], edges[1:]))
 
 
-def _extract_url(g: Any) -> str | None:
-    for link in g.data_links(access="direct") or []:
-        return link
-    for link in g.data_links() or []:
+def _extract_url(g: Any, access: str = "direct") -> str | None:
+    for link in g.data_links(access=access) or []:
         return link
     return None
 
@@ -42,7 +40,9 @@ def _extract_size(g: Any) -> int | None:
     return None
 
 
-def sample_one_collection(coll: dict[str, Any], n_bins: int = 5) -> list[dict[str, Any]]:
+def sample_one_collection(
+    coll: dict[str, Any], n_bins: int = 5, *, access: str = "direct"
+) -> list[dict[str, Any]]:
     """Return up to `n_bins` granule rows for a collection, stratified over temporal bins.
 
     If temporal extent is missing, fall back to `n_bins` evenly-spaced offsets.
@@ -61,7 +61,7 @@ def sample_one_collection(coll: dict[str, Any], n_bins: int = 5) -> list[dict[st
             rows.append({
                 "collection_concept_id": coll["concept_id"],
                 "granule_concept_id": g["meta"]["concept-id"],
-                "data_url": _extract_url(g),
+                "data_url": _extract_url(g, access=access),
                 "temporal_bin": i,
                 "size_bytes": _extract_size(g),
                 "sampled_at": now,
@@ -81,7 +81,7 @@ def sample_one_collection(coll: dict[str, Any], n_bins: int = 5) -> list[dict[st
         rows.append({
             "collection_concept_id": coll["concept_id"],
             "granule_concept_id": g["meta"]["concept-id"],
-            "data_url": _extract_url(g),
+            "data_url": _extract_url(g, access=access),
             "temporal_bin": i,
             "size_bytes": _extract_size(g),
             "sampled_at": now,
@@ -91,7 +91,8 @@ def sample_one_collection(coll: dict[str, Any], n_bins: int = 5) -> list[dict[st
 
 
 def run_sample(
-    db_path: Path | str, n_bins: int = 5, only_daac: str | None = None
+    db_path: Path | str, n_bins: int = 5, only_daac: str | None = None,
+    *, access: str = "direct"
 ) -> int:
     """Sample granules for every pending collection. Returns total granules written."""
     con = connect(db_path)
@@ -114,7 +115,7 @@ def run_sample(
 
     total = 0
     for coll in colls:
-        rows = sample_one_collection(coll, n_bins=n_bins)
+        rows = sample_one_collection(coll, n_bins=n_bins, access=access)
         for r in rows:
             con.execute(
                 """INSERT OR IGNORE INTO granules VALUES (?, ?, ?, ?, ?, ?, ?)""",

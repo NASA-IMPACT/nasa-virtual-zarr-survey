@@ -39,10 +39,13 @@ def discover(db_path: Path, limit: int | None) -> None:
 @click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
 @click.option("--n-bins", type=int, default=5, help="Granules per collection.")
 @click.option("--daac", type=str, default=None, help="Restrict to one DAAC.")
-def sample(db_path: Path, n_bins: int, daac: str | None) -> None:
+@click.option("--access", type=click.Choice(["direct", "external"]), default="direct",
+              help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
+                   "'external' uses HTTPS URLs with EDL bearer token.")
+def sample(db_path: Path, n_bins: int, daac: str | None, access: str) -> None:
     """Phase 2: pick N granules stratified across each collection's temporal extent."""
     from nasa_virtual_zarr_survey.sample import run_sample
-    n = run_sample(db_path, n_bins=n_bins, only_daac=daac)
+    n = run_sample(db_path, n_bins=n_bins, only_daac=daac, access=access)
     click.echo(f"Sampled {n} granules into {db_path}")
 
 
@@ -52,10 +55,15 @@ def sample(db_path: Path, n_bins: int, daac: str | None) -> None:
 @click.option("--timeout", "timeout_s", type=int, default=60)
 @click.option("--shard-size", type=int, default=500)
 @click.option("--daac", type=str, default=None, help="Restrict to one DAAC.")
-def attempt(db_path: Path, results_dir: Path, timeout_s: int, shard_size: int, daac: str | None) -> None:
+@click.option("--access", type=click.Choice(["direct", "external"]), default="direct",
+              help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
+                   "'external' uses HTTPS URLs with EDL bearer token.")
+def attempt(db_path: Path, results_dir: Path, timeout_s: int, shard_size: int,
+            daac: str | None, access: str) -> None:
     """Phase 3: open_virtual_dataset each pending granule, write Parquet rows."""
     from nasa_virtual_zarr_survey.attempt import run_attempt
-    n = run_attempt(db_path, results_dir, timeout_s=timeout_s, shard_size=shard_size, only_daac=daac)
+    n = run_attempt(db_path, results_dir, timeout_s=timeout_s, shard_size=shard_size,
+                    only_daac=daac, access=access)
     click.echo(f"Attempted {n} granules; wrote Parquet shards to {results_dir}")
 
 
@@ -77,9 +85,12 @@ def report(db_path: Path, results_dir: Path, out_path: Path) -> None:
 @click.option("--sample", "sample_size", type=int, default=50)
 @click.option("--n-bins", type=int, default=5)
 @click.option("--timeout", "timeout_s", type=int, default=60)
+@click.option("--access", type=click.Choice(["direct", "external"]), default="direct",
+              help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
+                   "'external' uses HTTPS URLs with EDL bearer token.")
 def pilot(
     db_path: Path, results_dir: Path, out_path: Path,
-    sample_size: int, n_bins: int, timeout_s: int,
+    sample_size: int, n_bins: int, timeout_s: int, access: str,
 ) -> None:
     """Run discover, sample, attempt, report on a small sample for taxonomy review."""
     from nasa_virtual_zarr_survey.discover import run_discover
@@ -92,9 +103,9 @@ def pilot(
 
     n_coll = run_discover(db_path, limit=sample_size)
     click.echo(f"discover: {n_coll} collections")
-    n_gran = run_sample(db_path, n_bins=n_bins)
+    n_gran = run_sample(db_path, n_bins=n_bins, access=access)
     click.echo(f"sample: {n_gran} granules")
-    n_att = run_attempt(db_path, results_dir, timeout_s=timeout_s)
+    n_att = run_attempt(db_path, results_dir, timeout_s=timeout_s, access=access)
     click.echo(f"attempt: {n_att} attempts")
     run_report(db_path, results_dir, out_path)
     click.echo(f"Pilot complete. Review errors in {results_dir}, refine taxonomy.py, then run full pipeline.")

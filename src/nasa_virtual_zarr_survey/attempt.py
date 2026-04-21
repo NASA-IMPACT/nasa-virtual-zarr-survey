@@ -122,11 +122,12 @@ def attempt_one(
 import signal
 import sys
 from pathlib import Path
+from typing import Literal
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from nasa_virtual_zarr_survey.auth import AuthUnavailable, DAACStoreCache
+from nasa_virtual_zarr_survey.auth import AuthUnavailable, StoreCache
 from nasa_virtual_zarr_survey.db import connect, init_schema
 
 
@@ -257,6 +258,7 @@ def run_attempt(
     timeout_s: int = 60,
     shard_size: int = 500,
     only_daac: str | None = None,
+    access: Literal["direct", "external"] = "direct",
 ) -> int:
     """Attempt every pending granule. Returns count attempted in this call."""
     con = connect(db_path)
@@ -266,7 +268,7 @@ def run_attempt(
 
     pending = _pending_granules(con, results_dir, only_daac)
     writer = ResultWriter(results_dir, shard_size=shard_size)
-    cache = DAACStoreCache()
+    cache = StoreCache(access=access)
 
     def _sigint(_sig, _frm):
         writer.close()
@@ -290,7 +292,7 @@ def run_attempt(
             )
         else:
             try:
-                store = cache.get_store(row["provider"])
+                store = cache.get_store(provider=row["provider"], url=row["data_url"])
             except AuthUnavailable as e:
                 result = AttemptResult(
                     collection_concept_id=row["collection_concept_id"],

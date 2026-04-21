@@ -115,3 +115,24 @@ def test_sample_one_collection_no_temporal_extent(monkeypatch):
     assert captured.get("count") == 3
     assert captured.get("concept_id") == "C1"
     assert all(g["stratified"] is False for g in gs)
+
+
+def test_sample_one_collection_external_access(monkeypatch):
+    captured_accesses = []
+
+    class G:
+        def __init__(self, gid): self.gid = gid
+        def __getitem__(self, k): return {"meta": {"concept-id": self.gid}}[k]
+        def data_links(self, access="direct"):
+            captured_accesses.append(access)
+            return [f"https://ex/{self.gid}.nc"]
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data",
+        lambda **_: [G("G1")],
+    )
+
+    coll = {"concept_id": "C1", "time_start": None, "time_end": None, "num_granules": 1}
+    gs = sample_one_collection(coll, n_bins=1, access="external")
+    assert gs[0]["data_url"] == "https://ex/G1.nc"
+    assert "external" in captured_accesses
