@@ -66,10 +66,9 @@ def test_persist_collections_upserts(tmp_db_path: Path):
 def test_run_discover_uses_earthaccess(tmp_db_path: Path, monkeypatch):
     fake_results = [_fake_umm("C1-PODAAC", "NetCDF-4"), _fake_umm("C2-PODAAC", "PDF")]
 
-    # earthaccess returns DataCollection objects; we only need .render_dict()
+    # earthaccess returns DataCollection objects; render_dict is an attribute, not a method
     class FakeColl:
-        def __init__(self, d): self._d = d
-        def render_dict(self): return self._d
+        def __init__(self, d): self.render_dict = d
 
     fake_search = MagicMock(return_value=[FakeColl(d) for d in fake_results])
     monkeypatch.setattr(

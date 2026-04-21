@@ -105,6 +105,6 @@ def run_discover(db_path: Path | str, limit: int | None = None) -> int:
     results = earthaccess.search_datasets(
         cloud_hosted=True, provider=providers, count=count
     )
-    dicts = [c.render_dict() if hasattr(c, "render_dict") else c for c in results]
+    dicts = [c.render_dict if hasattr(c, "render_dict") else c for c in results]
     persist_collections(con, dicts)
     return len(dicts)
