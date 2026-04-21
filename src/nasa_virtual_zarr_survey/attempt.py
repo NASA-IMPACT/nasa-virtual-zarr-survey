@@ -1,31 +1,29 @@
-"""Phase 3 core: dispatch a parser and call open_virtual_dataset with a timeout."""
+"""Attempt pipeline: Phase 1 (Parsability) and Phase 2 (Datasetability)."""
 from __future__ import annotations
 
+import signal
+import sys
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
-from virtualizarr import open_virtual_dataset
+import pyarrow as pa
+import pyarrow.parquet as pq
+
 from virtualizarr.parsers.dmrpp import DMRPPParser
 from virtualizarr.parsers.fits import FITSParser
 from virtualizarr.parsers.hdf import HDFParser
 from virtualizarr.parsers.netcdf3 import NetCDF3Parser
 from virtualizarr.parsers.zarr import ZarrParser
 
-from nasa_virtual_zarr_survey.formats import FormatFamily
-import signal
-import sys
-from pathlib import Path
-from typing import Literal
-
-import pyarrow as pa
-import pyarrow.parquet as pq
-
 from nasa_virtual_zarr_survey.auth import AuthUnavailable, StoreCache
 from nasa_virtual_zarr_survey.db import connect, init_schema
+from nasa_virtual_zarr_survey.formats import FormatFamily
+
 
 @dataclass
 class AttemptResult:
@@ -34,14 +32,28 @@ class AttemptResult:
     daac: str | None = None
     format_family: str | None = None
     parser: str | None = None
-    success: bool = False
-    error_type: str | None = None
-    error_message: str | None = None
-    error_traceback: str | None = None
-    duration_s: float = 0.0
-    timed_out: bool = False
-    attempted_at: datetime | None = None
     stratified: bool | None = None
+    attempted_at: datetime | None = None
+
+    # Phase 1: Parsability
+    parse_success: bool = False
+    parse_error_type: str | None = None
+    parse_error_message: str | None = None
+    parse_error_traceback: str | None = None
+    parse_duration_s: float = 0.0
+
+    # Phase 2: Datasetability (None = not attempted because parse failed)
+    dataset_success: bool | None = None
+    dataset_error_type: str | None = None
+    dataset_error_message: str | None = None
+    dataset_error_traceback: str | None = None
+    dataset_duration_s: float = 0.0
+
+    # Overall
+    success: bool = False          # parse_success AND (dataset_success == True)
+    timed_out: bool = False
+    timed_out_phase: str | None = None   # "parse" or "dataset"
+    duration_s: float = 0.0
     fingerprint: str | None = None
 
 
@@ -87,7 +99,7 @@ def attempt_one(
     daac: str | None = None,
     stratified: bool | None = None,
 ) -> AttemptResult:
-    """Try to open one granule. Always returns a result; never raises."""
+    """Try to open one granule through both phases. Always returns a result; never raises."""
     result = AttemptResult(
         collection_concept_id=collection_concept_id,
         granule_concept_id=granule_concept_id,
@@ -99,25 +111,82 @@ def attempt_one(
 
     parser = dispatch_parser(family)
     if parser is None:
-        result.error_type = "NoParserAvailable"
-        result.error_message = f"No VirtualiZarr parser registered for {family.value}"
+        result.parse_error_type = "NoParserAvailable"
+        result.parse_error_message = f"No VirtualiZarr parser registered for {family.value}"
         return result
 
     result.parser = type(parser).__name__
     registry = _build_registry(store, url)
 
+    # Shared state between worker thread and main; only the worker writes phase_ref.
+    phase_ref = ["parse"]
+    manifest_ref: list = []
     dataset_ref: list = []
 
     def _call() -> None:
-        ds = open_virtual_dataset(url=url, registry=registry, parser=parser)
+        t_parse = time.monotonic()
+        ms = parser(url=url, registry=registry)
+        result.parse_duration_s = time.monotonic() - t_parse
+        manifest_ref.append(ms)
+        result.parse_success = True
+
+        phase_ref[0] = "dataset"
+        t_ds = time.monotonic()
+        ds = ms.to_virtual_dataset()
+        result.dataset_duration_s = time.monotonic() - t_ds
         dataset_ref.append(ds)
+        result.dataset_success = True
 
     t0 = time.monotonic()
+    timed_out_phase: str | None = None
+    timed_out_flag = False
+    exc_info: tuple | None = None
+
+    ex = ThreadPoolExecutor(max_workers=1)
     try:
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_call)
+        fut = ex.submit(_call)
+        try:
             fut.result(timeout=timeout_s)
-        result.success = True
+        except FuturesTimeoutError:
+            # Capture phase NOW, before shutdown lets the thread advance further.
+            timed_out_flag = True
+            timed_out_phase = phase_ref[0]
+        except Exception as e:
+            import sys
+            exc_info = (type(e), e, sys.exc_info()[2])
+    finally:
+        # Shut down without waiting so a sleeping thread doesn't block us here.
+        ex.shutdown(wait=False, cancel_futures=True)
+        result.duration_s = time.monotonic() - t0
+
+    if timed_out_flag:
+        result.timed_out = True
+        result.timed_out_phase = timed_out_phase
+        if timed_out_phase == "parse":
+            result.parse_error_type = "TimeoutError"
+            result.parse_error_message = f"parse timed out after {timeout_s}s"
+        else:
+            # Parse succeeded inside worker but dataset construction hung
+            result.dataset_success = False
+            result.dataset_error_type = "TimeoutError"
+            result.dataset_error_message = f"dataset timed out after {timeout_s}s"
+    elif exc_info is not None:
+        e = exc_info[1]
+        tb_str = _truncate("".join(traceback.format_exception(*exc_info)), 4096)
+        if manifest_ref:
+            # Parse completed; dataset construction raised
+            result.dataset_success = False
+            result.dataset_error_type = type(e).__name__
+            result.dataset_error_message = _truncate(str(e), 2048)
+            result.dataset_error_traceback = tb_str
+        else:
+            # Parser raised
+            result.parse_error_type = type(e).__name__
+            result.parse_error_message = _truncate(str(e), 2048)
+            result.parse_error_traceback = tb_str
+    else:
+        # Both phases completed without raising
+        result.success = bool(result.parse_success and result.dataset_success)
         if dataset_ref:
             try:
                 from nasa_virtual_zarr_survey.cubability import (
@@ -128,21 +197,8 @@ def attempt_one(
             except Exception:
                 # Fingerprint extraction is best-effort; never fail the attempt.
                 pass
-    except FuturesTimeoutError:
-        result.timed_out = True
-        result.error_type = "TimeoutError"
-        result.error_message = f"timed out after {timeout_s}s"
-    except Exception as e:
-        result.error_type = type(e).__name__
-        result.error_message = _truncate(str(e), 2048)
-        result.error_traceback = _truncate(traceback.format_exc(), 4096)
-    finally:
-        result.duration_s = time.monotonic() - t0
 
     return result
-
-
-
 
 
 _SCHEMA = pa.schema([
@@ -151,14 +207,22 @@ _SCHEMA = pa.schema([
     ("daac", pa.string()),
     ("format_family", pa.string()),
     ("parser", pa.string()),
-    ("success", pa.bool_()),
-    ("error_type", pa.string()),
-    ("error_message", pa.string()),
-    ("error_traceback", pa.string()),
-    ("duration_s", pa.float64()),
-    ("timed_out", pa.bool_()),
-    ("attempted_at", pa.timestamp("us", tz="UTC")),
     ("stratified", pa.bool_()),
+    ("attempted_at", pa.timestamp("us", tz="UTC")),
+    ("parse_success", pa.bool_()),
+    ("parse_error_type", pa.string()),
+    ("parse_error_message", pa.string()),
+    ("parse_error_traceback", pa.string()),
+    ("parse_duration_s", pa.float64()),
+    ("dataset_success", pa.bool_()),           # nullable
+    ("dataset_error_type", pa.string()),
+    ("dataset_error_message", pa.string()),
+    ("dataset_error_traceback", pa.string()),
+    ("dataset_duration_s", pa.float64()),
+    ("success", pa.bool_()),
+    ("timed_out", pa.bool_()),
+    ("timed_out_phase", pa.string()),
+    ("duration_s", pa.float64()),
     ("fingerprint", pa.string()),
 ])
 
@@ -198,14 +262,22 @@ class ResultWriter:
             cols["daac"].append(r.daac)
             cols["format_family"].append(r.format_family)
             cols["parser"].append(r.parser)
-            cols["success"].append(r.success)
-            cols["error_type"].append(r.error_type)
-            cols["error_message"].append(r.error_message)
-            cols["error_traceback"].append(r.error_traceback)
-            cols["duration_s"].append(r.duration_s)
-            cols["timed_out"].append(r.timed_out)
-            cols["attempted_at"].append(r.attempted_at)
             cols["stratified"].append(r.stratified)
+            cols["attempted_at"].append(r.attempted_at)
+            cols["parse_success"].append(r.parse_success)
+            cols["parse_error_type"].append(r.parse_error_type)
+            cols["parse_error_message"].append(r.parse_error_message)
+            cols["parse_error_traceback"].append(r.parse_error_traceback)
+            cols["parse_duration_s"].append(r.parse_duration_s)
+            cols["dataset_success"].append(r.dataset_success)
+            cols["dataset_error_type"].append(r.dataset_error_type)
+            cols["dataset_error_message"].append(r.dataset_error_message)
+            cols["dataset_error_traceback"].append(r.dataset_error_traceback)
+            cols["dataset_duration_s"].append(r.dataset_duration_s)
+            cols["success"].append(r.success)
+            cols["timed_out"].append(r.timed_out)
+            cols["timed_out_phase"].append(r.timed_out_phase)
+            cols["duration_s"].append(r.duration_s)
             cols["fingerprint"].append(r.fingerprint)
         pq.write_table(pa.table(cols, schema=_SCHEMA), self._shard_path(daac))
         self._shard_index[daac] = self._shard_index.get(daac, 0) + 1
@@ -302,8 +374,8 @@ def run_attempt(
                 granule_concept_id=row["granule_concept_id"],
                 daac=row["daac"], format_family=family_str,
                 stratified=row["stratified"],
-                error_type="SampleInvalid",
-                error_message="missing format family or data URL",
+                parse_error_type="SampleInvalid",
+                parse_error_message="missing format family or data URL",
                 attempted_at=datetime.now(timezone.utc),
             )
         else:
@@ -315,8 +387,8 @@ def run_attempt(
                     granule_concept_id=row["granule_concept_id"],
                     daac=row["daac"], format_family=family_str,
                     stratified=row["stratified"],
-                    error_type="AuthUnavailable",
-                    error_message=str(e),
+                    parse_error_type="AuthUnavailable",
+                    parse_error_message=str(e),
                     attempted_at=datetime.now(timezone.utc),
                 )
             else:

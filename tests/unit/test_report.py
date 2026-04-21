@@ -10,26 +10,78 @@ from nasa_virtual_zarr_survey.cubability import fingerprint_to_json
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.report import collection_verdicts, run_report
 
+# New schema matching attempt._SCHEMA
+_RESULT_SCHEMA = pa.schema([
+    ("collection_concept_id", pa.string()),
+    ("granule_concept_id", pa.string()),
+    ("daac", pa.string()),
+    ("format_family", pa.string()),
+    ("parser", pa.string()),
+    ("stratified", pa.bool_()),
+    ("attempted_at", pa.timestamp("us", tz="UTC")),
+    ("parse_success", pa.bool_()),
+    ("parse_error_type", pa.string()),
+    ("parse_error_message", pa.string()),
+    ("parse_error_traceback", pa.string()),
+    ("parse_duration_s", pa.float64()),
+    ("dataset_success", pa.bool_()),
+    ("dataset_error_type", pa.string()),
+    ("dataset_error_message", pa.string()),
+    ("dataset_error_traceback", pa.string()),
+    ("dataset_duration_s", pa.float64()),
+    ("success", pa.bool_()),
+    ("timed_out", pa.bool_()),
+    ("timed_out_phase", pa.string()),
+    ("duration_s", pa.float64()),
+    ("fingerprint", pa.string()),
+])
+
 
 def _write_results(path: Path, rows: list[dict]) -> None:
-    schema = pa.schema([
-        ("collection_concept_id", pa.string()),
-        ("granule_concept_id", pa.string()),
-        ("daac", pa.string()),
-        ("format_family", pa.string()),
-        ("parser", pa.string()),
-        ("success", pa.bool_()),
-        ("error_type", pa.string()),
-        ("error_message", pa.string()),
-        ("error_traceback", pa.string()),
-        ("duration_s", pa.float64()),
-        ("timed_out", pa.bool_()),
-        ("attempted_at", pa.timestamp("us", tz="UTC")),
-        ("fingerprint", pa.string()),
-    ])
     path.parent.mkdir(parents=True, exist_ok=True)
-    cols = {f.name: [r.get(f.name) for r in rows] for f in schema}
-    pq.write_table(pa.table(cols, schema=schema), path)
+    cols = {f.name: [r.get(f.name) for r in rows] for f in _RESULT_SCHEMA}
+    pq.write_table(pa.table(cols, schema=_RESULT_SCHEMA), path)
+
+
+def _row(
+    cid: str,
+    gid: str,
+    *,
+    parse_success: bool = True,
+    dataset_success: bool | None = True,
+    parse_error_type: str | None = None,
+    parse_error_message: str | None = None,
+    dataset_error_type: str | None = None,
+    dataset_error_message: str | None = None,
+    fingerprint: str | None = None,
+    now: datetime | None = None,
+) -> dict:
+    if now is None:
+        now = datetime.now(timezone.utc)
+    return {
+        "collection_concept_id": cid,
+        "granule_concept_id": gid,
+        "daac": "PODAAC",
+        "format_family": "NetCDF4",
+        "parser": "HDFParser",
+        "stratified": True,
+        "attempted_at": now,
+        "parse_success": parse_success,
+        "parse_error_type": parse_error_type,
+        "parse_error_message": parse_error_message,
+        "parse_error_traceback": None,
+        "parse_duration_s": 0.1,
+        "dataset_success": dataset_success,
+        "dataset_error_type": dataset_error_type,
+        "dataset_error_message": dataset_error_message,
+        "dataset_error_traceback": None,
+        "dataset_duration_s": 0.1 if dataset_success is not None else 0.0,
+        "success": bool(parse_success and dataset_success),
+        "timed_out": False,
+        "timed_out_phase": None,
+        "duration_s": 0.2,
+        "fingerprint": fingerprint,
+    }
 
 
 def test_collection_verdicts_classifies_all_three(tmp_db_path, tmp_results_dir):
@@ -46,35 +98,58 @@ def test_collection_verdicts_classifies_all_three(tmp_db_path, tmp_results_dir):
 
     now = datetime.now(timezone.utc)
     rows = []
+    # C_ALL: all parse and dataset succeed
     for i in range(3):
-        rows.append({"collection_concept_id": "C_ALL", "granule_concept_id": f"G{i}",
-                     "daac": "PODAAC", "format_family": "NetCDF4", "parser": "HDFParser",
-                     "success": True, "error_type": None, "error_message": None,
-                     "error_traceback": None, "duration_s": 0.1, "timed_out": False,
-                     "attempted_at": now})
+        rows.append(_row("C_ALL", f"G{i}", parse_success=True, dataset_success=True, now=now))
+    # C_PART: first granule fully succeeds, others fail dataset
+    rows.append(_row("C_PART", "G0", parse_success=True, dataset_success=True, now=now))
+    rows.append(_row("C_PART", "G1", parse_success=True, dataset_success=False,
+                     dataset_error_type="ValueError", dataset_error_message="codec not found", now=now))
+    rows.append(_row("C_PART", "G2", parse_success=True, dataset_success=False,
+                     dataset_error_type="ValueError", dataset_error_message="codec not found", now=now))
+    # C_NONE: all fail to parse
     for i in range(3):
-        rows.append({"collection_concept_id": "C_PART", "granule_concept_id": f"G{i}",
-                     "daac": "PODAAC", "format_family": "NetCDF4", "parser": "HDFParser",
-                     "success": i == 0, "error_type": None if i == 0 else "ValueError",
-                     "error_message": None if i == 0 else "codec foo not supported",
-                     "error_traceback": None, "duration_s": 0.1, "timed_out": False,
-                     "attempted_at": now})
-    for i in range(3):
-        rows.append({"collection_concept_id": "C_NONE", "granule_concept_id": f"G{i}",
-                     "daac": "PODAAC", "format_family": "NetCDF4", "parser": "HDFParser",
-                     "success": False, "error_type": "PermissionError",
-                     "error_message": "403 Forbidden", "error_traceback": None,
-                     "duration_s": 0.1, "timed_out": False, "attempted_at": now})
+        rows.append(_row("C_NONE", f"G{i}", parse_success=False, dataset_success=None,
+                         parse_error_type="PermissionError", parse_error_message="403 Forbidden", now=now))
     _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", rows)
 
     verdicts = collection_verdicts(tmp_db_path, tmp_results_dir)
     by_id = {v["concept_id"]: v for v in verdicts}
-    assert by_id["C_ALL"]["verdict"] == "all_pass"
-    assert by_id["C_PART"]["verdict"] == "partial_pass"
-    assert by_id["C_NONE"]["verdict"] == "all_fail"
-    assert by_id["C_SKIP"]["verdict"] == "skipped_format"
+
+    assert by_id["C_ALL"]["parse_verdict"] == "all_pass"
+    assert by_id["C_ALL"]["dataset_verdict"] == "all_pass"
+    assert by_id["C_PART"]["parse_verdict"] == "all_pass"
+    assert by_id["C_PART"]["dataset_verdict"] == "partial_pass"
+    assert by_id["C_NONE"]["parse_verdict"] == "all_fail"
+    assert by_id["C_NONE"]["dataset_verdict"] == "not_attempted"
+    assert by_id["C_SKIP"]["parse_verdict"] == "skipped"
+    assert by_id["C_SKIP"]["dataset_verdict"] == "skipped"
     # stratified is None because no granule rows were inserted into the DB
     assert by_id["C_ALL"]["stratified"] is None
+
+
+def test_parse_fail_means_dataset_not_attempted(tmp_db_path, tmp_results_dir):
+    """When parse fails for all granules, dataset should show not_attempted."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute(
+        "INSERT INTO collections VALUES ('C_FAIL','s','1','PODAAC','PODAAC','HDF4','HDF',2,NULL,NULL,'L3',NULL,now())"
+    )
+    con.close()
+
+    now = datetime.now(timezone.utc)
+    rows = [
+        _row("C_FAIL", "G0", parse_success=False, dataset_success=None,
+             parse_error_type="NoParserAvailable", parse_error_message="no parser for HDF4", now=now),
+        _row("C_FAIL", "G1", parse_success=False, dataset_success=None,
+             parse_error_type="NoParserAvailable", parse_error_message="no parser for HDF4", now=now),
+    ]
+    _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", rows)
+
+    verdicts = collection_verdicts(tmp_db_path, tmp_results_dir)
+    by_id = {v["concept_id"]: v for v in verdicts}
+    assert by_id["C_FAIL"]["parse_verdict"] == "all_fail"
+    assert by_id["C_FAIL"]["dataset_verdict"] == "not_attempted"
 
 
 def _make_fp(time_hash: str, time_min: int, time_max: int) -> str:
@@ -114,31 +189,21 @@ def test_render_report_contains_counts(tmp_db_path, tmp_results_dir, tmp_path):
     fp1 = _make_fp("hash_a", 0, 9)
     fp2 = _make_fp("hash_b", 10, 19)
     _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", [
-        {"collection_concept_id": "C1", "granule_concept_id": "G1", "daac": "PODAAC",
-         "format_family": "NetCDF4", "parser": "HDFParser", "success": True,
-         "error_type": None, "error_message": None, "error_traceback": None,
-         "duration_s": 0.1, "timed_out": False, "attempted_at": now,
-         "fingerprint": fp1},
-        {"collection_concept_id": "C2", "granule_concept_id": "G2a", "daac": "PODAAC",
-         "format_family": "NetCDF4", "parser": "HDFParser", "success": True,
-         "error_type": None, "error_message": None, "error_traceback": None,
-         "duration_s": 0.1, "timed_out": False, "attempted_at": now,
-         "fingerprint": fp1},
-        {"collection_concept_id": "C2", "granule_concept_id": "G2b", "daac": "PODAAC",
-         "format_family": "NetCDF4", "parser": "HDFParser", "success": True,
-         "error_type": None, "error_message": None, "error_traceback": None,
-         "duration_s": 0.1, "timed_out": False, "attempted_at": now,
-         "fingerprint": fp2},
+        _row("C1", "G1", fingerprint=fp1, now=now),
+        _row("C2", "G2a", fingerprint=fp1, now=now),
+        _row("C2", "G2b", fingerprint=fp2, now=now),
     ])
 
     out = tmp_path / "report.md"
     run_report(tmp_db_path, tmp_results_dir, out)
     text = out.read_text()
+    assert "Phase 1: Parsability" in text
+    assert "Phase 2: Datasetability" in text
+    assert "Phase 3: Virtual Store Feasibility" in text
     assert "all_pass" in text
     assert "PODAAC" in text
     assert "NetCDF4" in text
     assert "Stratification" in text
-    assert "Virtual Store Feasibility" in text
     assert "FEASIBLE" in text
 
 
@@ -170,16 +235,8 @@ def test_render_report_incompatible_detection(tmp_db_path, tmp_results_dir, tmp_
         return fingerprint_to_json(fp)
 
     _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", [
-        {"collection_concept_id": "CINC", "granule_concept_id": "GA", "daac": "PODAAC",
-         "format_family": "NetCDF4", "parser": "HDFParser", "success": True,
-         "error_type": None, "error_message": None, "error_traceback": None,
-         "duration_s": 0.1, "timed_out": False, "attempted_at": now,
-         "fingerprint": _fp_incompatible("float32", "h1", "0", "9")},
-        {"collection_concept_id": "CINC", "granule_concept_id": "GB", "daac": "PODAAC",
-         "format_family": "NetCDF4", "parser": "HDFParser", "success": True,
-         "error_type": None, "error_message": None, "error_traceback": None,
-         "duration_s": 0.1, "timed_out": False, "attempted_at": now,
-         "fingerprint": _fp_incompatible("float64", "h2", "10", "19")},
+        _row("CINC", "GA", fingerprint=_fp_incompatible("float32", "h1", "0", "9"), now=now),
+        _row("CINC", "GB", fingerprint=_fp_incompatible("float64", "h2", "10", "19"), now=now),
     ])
 
     out = tmp_path / "report.md"
@@ -192,7 +249,6 @@ def test_render_report_incompatible_detection(tmp_db_path, tmp_results_dir, tmp_
 def test_taxonomy_counts_reports_granule_and_collection_counts(tmp_db_path, tmp_results_dir, tmp_path):
     con = connect(tmp_db_path)
     init_schema(con)
-    # Two collections, both failing with the same bucket (NO_PARSER)
     con.execute(
         "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','HDF4','HDF',1,NULL,NULL,'L3',NULL,now())"
     )
@@ -205,12 +261,14 @@ def test_taxonomy_counts_reports_granule_and_collection_counts(tmp_db_path, tmp_
     rows = []
     for cid in ["C1", "C2"]:
         for i in range(3):
-            rows.append({"collection_concept_id": cid, "granule_concept_id": f"{cid}-G{i}",
-                         "daac": "PODAAC", "format_family": "HDF4", "parser": None,
-                         "success": False, "error_type": "NoParserAvailable",
-                         "error_message": "No VirtualiZarr parser registered for HDF4",
-                         "error_traceback": None, "duration_s": 0.01, "timed_out": False,
-                         "attempted_at": now})
+            rows.append(_row(
+                cid, f"{cid}-G{i}",
+                parse_success=False,
+                dataset_success=None,
+                parse_error_type="NoParserAvailable",
+                parse_error_message="No VirtualiZarr parser registered for HDF4",
+                now=now,
+            ))
     _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", rows)
 
     out = tmp_path / "report.md"
@@ -218,5 +276,29 @@ def test_taxonomy_counts_reports_granule_and_collection_counts(tmp_db_path, tmp_
     text = out.read_text()
     # Expect "NO_PARSER | 6 | 2" (6 granules across 2 collections)
     assert "| NO_PARSER | 6 | 2 |" in text
-    # Header should have both columns
     assert "| Bucket | Granules | Collections |" in text
+
+
+def test_three_phase_daac_table_format(tmp_db_path, tmp_results_dir, tmp_path):
+    """The By DAAC table should show Parsable/Datasetable/Cubable columns."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute(
+        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now())"
+    )
+    con.close()
+
+    now = datetime.now(timezone.utc)
+    _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", [
+        _row("C1", "G1", now=now),
+    ])
+
+    out = tmp_path / "report.md"
+    run_report(tmp_db_path, tmp_results_dir, out)
+    text = out.read_text()
+    assert "By DAAC" in text
+    assert "Parsable" in text
+    assert "Datasetable" in text
+    assert "Cubable" in text
+    # PODAAC row should appear
+    assert "PODAAC" in text

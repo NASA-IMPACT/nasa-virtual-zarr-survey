@@ -1,4 +1,4 @@
-"""Phase 4: roll up per-collection verdicts, apply taxonomy, render report.md."""
+"""Roll up per-collection verdicts across three phases and render report.md."""
 from __future__ import annotations
 
 from collections import Counter
@@ -31,59 +31,91 @@ def _attach_results(con: duckdb.DuckDBPyConnection, results_dir: Path) -> bool:
     return True
 
 
+def _phase_verdicts(con: duckdb.DuckDBPyConnection, phase: str) -> dict[str, str]:
+    """Return {collection_id: verdict} for the given phase ('parse' or 'dataset').
+
+    Verdicts: 'all_pass', 'partial_pass', 'all_fail', 'not_attempted'.
+    """
+    success_col = f"{phase}_success"
+    try:
+        rows = con.execute(
+            f"SELECT collection_concept_id, {success_col} FROM results"
+        ).fetchall()
+    except Exception:
+        return {}
+
+    # Aggregate per collection
+    per_coll: dict[str, list[bool | None]] = {}
+    for cid, val in rows:
+        if cid is None:
+            continue
+        per_coll.setdefault(cid, []).append(val)
+
+    out: dict[str, str] = {}
+    for cid, vals in per_coll.items():
+        # For dataset phase, NULL means "not attempted" and doesn't count
+        attempted = [v for v in vals if v is not None]
+        if not attempted:
+            out[cid] = "not_attempted"
+        elif all(attempted):
+            out[cid] = "all_pass"
+        elif not any(attempted):
+            out[cid] = "all_fail"
+        else:
+            out[cid] = "partial_pass"
+    return out
+
+
 def collection_verdicts(db_path: Path | str, results_dir: Path | str) -> list[dict[str, Any]]:
     """Return one verdict row per collection in the DB."""
     con = connect(db_path)
     init_schema(con)
     _attach_results(con, Path(results_dir))
+
+    parse_phase = _phase_verdicts(con, "parse")
+    dataset_phase = _phase_verdicts(con, "dataset")
+
     q = """
-        WITH agg AS (
-            SELECT collection_concept_id,
-                   sum(CASE WHEN success THEN 1 ELSE 0 END) AS n_pass,
-                   sum(CASE WHEN NOT success THEN 1 ELSE 0 END) AS n_fail
-            FROM results
-            GROUP BY collection_concept_id
-        ),
-        strat AS (
+        WITH strat AS (
             SELECT collection_concept_id, MAX(stratified) AS stratified
             FROM granules
             GROUP BY collection_concept_id
         )
-        SELECT c.concept_id, c.daac, c.format_family, c.skip_reason,
-               COALESCE(a.n_pass, 0) AS n_pass,
-               COALESCE(a.n_fail, 0) AS n_fail,
-               s.stratified
+        SELECT c.concept_id, c.daac, c.format_family, c.skip_reason, s.stratified
         FROM collections c
-        LEFT JOIN agg a ON a.collection_concept_id = c.concept_id
         LEFT JOIN strat s ON s.collection_concept_id = c.concept_id
     """
     rows = con.execute(q).fetchall()
     out = []
-    for concept_id, daac, family, skip, n_pass, n_fail, stratified in rows:
+    for concept_id, daac, family, skip, stratified in rows:
         if skip:
-            verdict = "skipped_format"
-        elif n_pass + n_fail == 0:
-            verdict = "sample_failed"
-        elif n_fail == 0:
-            verdict = "all_pass"
-        elif n_pass == 0:
-            verdict = "all_fail"
+            parse_verdict = "skipped"
+            dataset_verdict = "skipped"
         else:
-            verdict = "partial_pass"
+            parse_verdict = parse_phase.get(concept_id, "not_attempted")
+            dataset_verdict = dataset_phase.get(concept_id, "not_attempted")
         out.append({
-            "concept_id": concept_id, "daac": daac, "format_family": family,
-            "verdict": verdict, "n_pass": n_pass, "n_fail": n_fail,
+            "concept_id": concept_id,
+            "daac": daac,
+            "format_family": family,
+            "skip_reason": skip,
             "stratified": stratified,
+            "parse_verdict": parse_verdict,
+            "dataset_verdict": dataset_verdict,
         })
     return out
 
 
-def _taxonomy_counts(con: duckdb.DuckDBPyConnection) -> dict[str, tuple[int, int]]:
-    """Per bucket, return (granule_count, distinct_collection_count)."""
-    rows = con.execute(
-        "SELECT collection_concept_id, error_type, error_message "
-        "FROM results WHERE NOT success"
-    ).fetchall()
+def _taxonomy_counts(con: duckdb.DuckDBPyConnection, phase: str) -> dict[str, tuple[int, int]]:
+    """For 'parse' or 'dataset' phase, return {bucket: (granule_count, distinct_collection_count)}."""
+    et_col = f"{phase}_error_type"
+    try:
+        rows = con.execute(
+            f"SELECT collection_concept_id, {et_col}, {phase}_error_message "
+            f"FROM results WHERE {et_col} IS NOT NULL"
+        ).fetchall()
+    except Exception:
+        return {}
     granules: Counter[str] = Counter()
     colls: dict[str, set[str]] = {}
     for cid, et, em in rows:
@@ -94,16 +126,16 @@ def _taxonomy_counts(con: duckdb.DuckDBPyConnection) -> dict[str, tuple[int, int
 
 
 def _collection_fingerprints(con: duckdb.DuckDBPyConnection, verdicts: list[dict]) -> dict[str, list[dict]]:
-    """Return {collection_concept_id: [fingerprint_dict, ...]} for all_pass collections."""
-    all_pass_ids = [v["concept_id"] for v in verdicts if v["verdict"] == "all_pass"]
-    if not all_pass_ids:
+    """Return {collection_concept_id: [fingerprint_dict, ...]} for dataset all_pass collections."""
+    eligible_ids = [v["concept_id"] for v in verdicts if v["dataset_verdict"] == "all_pass"]
+    if not eligible_ids:
         return {}
-    placeholders = ",".join(["?"] * len(all_pass_ids))
+    placeholders = ",".join(["?"] * len(eligible_ids))
     try:
         rows = con.execute(
             f"SELECT collection_concept_id, fingerprint FROM results "
-            f"WHERE success AND collection_concept_id IN ({placeholders})",
-            all_pass_ids,
+            f"WHERE dataset_success AND collection_concept_id IN ({placeholders})",
+            eligible_ids,
         ).fetchall()
     except Exception:
         return {}
@@ -121,7 +153,7 @@ def _cubability_results(con: duckdb.DuckDBPyConnection, verdicts: list[dict]) ->
     out: dict[str, CubabilityResult] = {}
     for v in verdicts:
         cid = v["concept_id"]
-        if v["verdict"] != "all_pass":
+        if v["dataset_verdict"] != "all_pass":
             out[cid] = CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)
             continue
         fps = fps_by_coll.get(cid, [])
@@ -129,78 +161,118 @@ def _cubability_results(con: duckdb.DuckDBPyConnection, verdicts: list[dict]) ->
     return out
 
 
-def render_report(verdicts: list[dict[str, Any]], tax: dict[str, tuple[int, int]],
-                  con: duckdb.DuckDBPyConnection) -> str:
-    total = len(verdicts)
-    by_verdict = Counter(v["verdict"] for v in verdicts)
-    by_daac = Counter((v["daac"], v["verdict"]) for v in verdicts)
-    by_family = Counter((v["format_family"] or "SKIPPED", v["verdict"]) for v in verdicts)
+def _render_verdict_counts(verdicts: list[dict], verdict_key: str) -> list[str]:
+    by_verdict = Counter(v[verdict_key] for v in verdicts)
+    lines = ["| Verdict | Count |\n|---|---:|"]
+    for k, n in sorted(by_verdict.items(), key=lambda kv: -kv[1]):
+        lines.append(f"| {k} | {n} |")
+    return lines
 
-    lines: list[str] = []
-    lines.append("# NASA VirtualiZarr Survey Report\n")
-    lines.append(f"Total collections: **{total}**\n")
-    lines.append("## Verdicts\n")
-    lines.append("| Verdict | Count |\n|---|---:|")
-    for k, v in sorted(by_verdict.items(), key=lambda kv: -kv[1]):
-        lines.append(f"| {k} | {v} |")
-    lines.append("")
 
-    lines.append("## Failure Taxonomy\n")
+def _render_taxonomy_table(tax: dict[str, tuple[int, int]], title: str) -> list[str]:
+    lines = [f"### {title}\n"]
+    if not tax:
+        lines.append("_No failures._")
+        return lines
     lines.append("| Bucket | Granules | Collections |\n|---|---:|---:|")
     for k, (n_gran, n_coll) in sorted(tax.items(), key=lambda kv: -kv[1][0]):
         lines.append(f"| {k} | {n_gran} | {n_coll} |")
-    lines.append("")
+    return lines
 
-    lines.append("## By DAAC\n")
-    daacs = sorted({d for d, _ in by_daac})
-    verdicts_ordered = ["all_pass", "partial_pass", "all_fail", "skipped_format", "sample_failed"]
-    header = "| DAAC | " + " | ".join(verdicts_ordered) + " |"
-    sep = "|---|" + "|".join(["---:"] * len(verdicts_ordered)) + "|"
-    lines += [header, sep]
-    for d in daacs:
-        cells = [str(by_daac.get((d, v), 0)) for v in verdicts_ordered]
-        lines.append(f"| {d} | " + " | ".join(cells) + " |")
-    lines.append("")
 
-    lines.append("## By Format Family\n")
-    fams = sorted({f for f, _ in by_family})
-    header = "| Format | " + " | ".join(verdicts_ordered) + " |"
-    lines += [header, sep]
-    for f in fams:
-        cells = [str(by_family.get((f, v), 0)) for v in verdicts_ordered]
-        lines.append(f"| {f} | " + " | ".join(cells) + " |")
-    lines.append("")
+def _pct(num: int, denom: int) -> str:
+    if denom == 0:
+        return "n/a"
+    p = round(100 * num / denom)
+    return f"{num}/{denom} ({p}%)"
 
-    lines.append("## Stratification\n")
-    lines.append("| Sampling mode | Attempted | all_pass | partial_pass | all_fail |")
-    lines.append("|---|---:|---:|---:|---:|")
-    for mode_label, mode_filter in [
-        ("stratified", lambda v: v["stratified"] is True),
-        ("fallback", lambda v: v["stratified"] is False),
-        ("unsampled", lambda v: v["stratified"] is None),
-    ]:
-        mode_vs = [v for v in verdicts if mode_filter(v)]
-        attempted = len(mode_vs)
-        mc = Counter(v["verdict"] for v in mode_vs)
+
+def _render_three_phase_table(
+    verdicts: list[dict],
+    cube_results: dict[str, CubabilityResult],
+    title: str,
+    key: str,
+) -> list[str]:
+    lines = [f"## {title}\n"]
+    lines.append("| Group | Parsable | Datasetable | Cubable |\n|---|---|---|---|")
+
+    groups = sorted({v[key] or "UNKNOWN" for v in verdicts})
+    for group in groups:
+        gv = [v for v in verdicts if (v[key] or "UNKNOWN") == group]
+        total = len(gv)
+        parsable = sum(1 for v in gv if v["parse_verdict"] == "all_pass")
+        datasetable = sum(1 for v in gv if v["dataset_verdict"] == "all_pass")
+        cubable = sum(
+            1 for v in gv
+            if cube_results.get(v["concept_id"], CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)).verdict
+            == CubabilityVerdict.FEASIBLE
+        )
         lines.append(
-            f"| {mode_label} | {attempted} | {mc.get('all_pass', 0)} | "
-            f"{mc.get('partial_pass', 0)} | {mc.get('all_fail', 0)} |"
+            f"| {group} | {_pct(parsable, total)} | {_pct(datasetable, parsable)} | {_pct(cubable, datasetable)} |"
         )
     lines.append("")
+    return lines
 
-    lines.append("## Virtual Store Feasibility\n")
-    comb = _cubability_results(con, verdicts)
-    by_comb_verdict: Counter[str] = Counter(r.verdict.value for r in comb.values())
+
+def render_report(
+    verdicts: list[dict[str, Any]],
+    parse_tax: dict[str, tuple[int, int]],
+    dataset_tax: dict[str, tuple[int, int]],
+    cube_results: dict[str, CubabilityResult],
+    con: duckdb.DuckDBPyConnection,
+) -> str:
+    total = len(verdicts)
+    lines: list[str] = []
+    lines.append("# NASA VirtualiZarr Survey Report\n")
+    lines.append(f"Total collections: **{total}**\n")
+
+    # Phase 1: Parsability
+    lines.append("## Phase 1: Parsability\n")
+    lines.append(
+        "Per-collection verdicts based on whether the VirtualiZarr parser "
+        "successfully produced a ManifestStore for each sampled granule.\n"
+    )
+    lines.extend(_render_verdict_counts(verdicts, "parse_verdict"))
+    lines.append("")
+    lines.extend(_render_taxonomy_table(parse_tax, "Parse Failure Taxonomy"))
+    lines.append("")
+
+    # Phase 2: Datasetability
+    parsable_count = sum(1 for v in verdicts if v["parse_verdict"] == "all_pass")
+    lines.append("## Phase 2: Datasetability\n")
+    lines.append(
+        f"Per-collection verdicts based on whether the ManifestStore converted to an "
+        f"xarray.Dataset. Denominator: {parsable_count} collections whose sampled "
+        f"granules all parsed successfully.\n"
+    )
+    parsable_verdicts = [v for v in verdicts if v["parse_verdict"] == "all_pass"]
+    lines.extend(_render_verdict_counts(parsable_verdicts, "dataset_verdict"))
+    lines.append("")
+    lines.extend(_render_taxonomy_table(dataset_tax, "Dataset Failure Taxonomy"))
+    lines.append("")
+
+    # Phase 3: Virtual Store Feasibility
+    datasetable_count = sum(
+        1 for v in verdicts
+        if v["parse_verdict"] == "all_pass" and v["dataset_verdict"] == "all_pass"
+    )
+    lines.append("## Phase 3: Virtual Store Feasibility\n")
+    lines.append(
+        f"For collections whose all sampled granules produced xarray.Datasets "
+        f"(denominator: {datasetable_count}), whether the granules can be combined "
+        f"into a coherent virtual store.\n"
+    )
+    by_cube_verdict: Counter[str] = Counter(r.verdict.value for r in cube_results.values())
     lines.append("| Verdict | Count |\n|---|---:|")
     for k in ["FEASIBLE", "INCOMPATIBLE", "INCONCLUSIVE", "NOT_ATTEMPTED"]:
-        if k in by_comb_verdict:
-            lines.append(f"| {k} | {by_comb_verdict[k]} |")
+        if k in by_cube_verdict:
+            lines.append(f"| {k} | {by_cube_verdict[k]} |")
     lines.append("")
 
     incompatible_reasons: Counter[str] = Counter()
     inconclusive_reasons: Counter[str] = Counter()
     examples_by_reason: dict[str, list[str]] = {}
-    for cid, r in comb.items():
+    for cid, r in cube_results.items():
         if r.verdict.value == "INCOMPATIBLE":
             incompatible_reasons[r.reason] += 1
             examples_by_reason.setdefault(r.reason, []).append(cid)
@@ -209,7 +281,7 @@ def render_report(verdicts: list[dict[str, Any]], tax: dict[str, tuple[int, int]
             examples_by_reason.setdefault(r.reason, []).append(cid)
 
     if incompatible_reasons or inconclusive_reasons:
-        lines.append("## Virtual Store Incompatibility Reasons\n")
+        lines.append("### Virtual Store Incompatibility Reasons\n")
         lines.append("| Verdict | Reason | Collections | Example IDs |\n|---|---|---:|---|")
         for reason, n in incompatible_reasons.most_common(10):
             ex = ", ".join(examples_by_reason[reason][:3])
@@ -219,21 +291,53 @@ def render_report(verdicts: list[dict[str, Any]], tax: dict[str, tuple[int, int]
             lines.append(f"| INCONCLUSIVE | {reason} | {n} | {ex} |")
         lines.append("")
 
-    lines.append("## Top 20 Raw Errors in `OTHER`\n")
-    rows = con.execute(
-        "SELECT error_type, error_message, count(*) c FROM results "
-        "WHERE NOT success GROUP BY 1,2 ORDER BY c DESC LIMIT 50"
-    ).fetchall()
-    shown = 0
-    for et, em, c in rows:
-        if classify(et, em) is Bucket.OTHER:
-            lines.append(f"- **{c}x** `{et}`: {em}")
-            shown += 1
-            if shown >= 20:
-                break
-    if shown == 0:
-        lines.append("_No uncategorized errors._")
+    # Three-phase summary by DAAC and Format Family
+    lines.extend(_render_three_phase_table(verdicts, cube_results, "By DAAC", "daac"))
+    lines.extend(_render_three_phase_table(verdicts, cube_results, "By Format Family", "format_family"))
+
+    # Stratification
+    lines.append("## Stratification\n")
+    lines.append("| Sampling mode | Attempted | parse_all_pass | dataset_all_pass |")
+    lines.append("|---|---:|---:|---:|")
+    for mode_label, mode_filter in [
+        ("stratified", lambda v: v["stratified"] is True),
+        ("fallback", lambda v: v["stratified"] is False),
+        ("unsampled", lambda v: v["stratified"] is None),
+    ]:
+        mode_vs = [v for v in verdicts if mode_filter(v)]
+        attempted = len(mode_vs)
+        mc_parse = Counter(v["parse_verdict"] for v in mode_vs)
+        mc_dataset = Counter(v["dataset_verdict"] for v in mode_vs)
+        lines.append(
+            f"| {mode_label} | {attempted} | {mc_parse.get('all_pass', 0)} | "
+            f"{mc_dataset.get('all_pass', 0)} |"
+        )
     lines.append("")
+
+    # Top 20 OTHER errors per phase
+    for phase_label, et_col, em_col, success_col in [
+        ("Parsability", "parse_error_type", "parse_error_message", "parse_success"),
+        ("Datasetability", "dataset_error_type", "dataset_error_message", "dataset_success"),
+    ]:
+        lines.append(f"## Top 20 Raw Errors in `OTHER` ({phase_label})\n")
+        try:
+            rows = con.execute(
+                f"SELECT {et_col}, {em_col}, count(*) c FROM results "
+                f"WHERE {success_col} = FALSE AND {et_col} IS NOT NULL "
+                f"GROUP BY 1,2 ORDER BY c DESC LIMIT 50"
+            ).fetchall()
+        except Exception:
+            rows = []
+        shown = 0
+        for et, em, c in rows:
+            if classify(et, em) is Bucket.OTHER:
+                lines.append(f"- **{c}x** `{et}`: {em}")
+                shown += 1
+                if shown >= 20:
+                    break
+        if shown == 0:
+            lines.append("_No uncategorized errors._")
+        lines.append("")
 
     return "\n".join(lines)
 
@@ -243,8 +347,10 @@ def run_report(db_path: Path | str, results_dir: Path | str, out_path: Path | st
     init_schema(con)
     _attach_results(con, Path(results_dir))
     verdicts = collection_verdicts(db_path, results_dir)
-    tax = _taxonomy_counts(con)
-    text = render_report(verdicts, tax, con)
+    parse_tax = _taxonomy_counts(con, "parse")
+    dataset_tax = _taxonomy_counts(con, "dataset")
+    cube_results = _cubability_results(con, verdicts)
+    text = render_report(verdicts, parse_tax, dataset_tax, cube_results, con)
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(text)
