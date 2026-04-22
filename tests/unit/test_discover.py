@@ -89,6 +89,57 @@ def test_run_discover_uses_earthaccess(tmp_db_path: Path, monkeypatch):
     assert "provider" in kwargs
 
 
+def test_collection_row_from_umm_uses_file_archive_information():
+    umm = {
+        "meta": {"concept-id": "C1", "provider-id": "PODAAC"},
+        "umm": {
+            "ShortName": "FOO", "Version": "1",
+            "DataCenters": [{"ShortName": "PODAAC"}],
+            "ArchiveAndDistributionInformation": {
+                # No FileDistributionInformation; format only in FileArchiveInformation.
+                "FileArchiveInformation": [{"Format": "NetCDF-4"}],
+            },
+            "ProcessingLevel": {"Id": "L3"},
+        },
+    }
+    row = collection_row_from_umm(umm)
+    assert row["format_family"] == "NetCDF4"
+    assert row["skip_reason"] is None
+
+
+def test_collection_row_from_umm_marks_null_format_as_unknown():
+    umm = {
+        "meta": {"concept-id": "C2", "provider-id": "PODAAC"},
+        "umm": {
+            "ShortName": "BAR", "Version": "1",
+            "DataCenters": [{"ShortName": "PODAAC"}],
+            "ArchiveAndDistributionInformation": {},
+            "ProcessingLevel": {"Id": "L3"},
+        },
+    }
+    row = collection_row_from_umm(umm)
+    assert row["format_family"] is None
+    assert row["format_declared"] is None
+    assert row["skip_reason"] == "format_unknown"
+
+
+def test_collection_row_from_umm_non_array_format_stays_non_array():
+    umm = {
+        "meta": {"concept-id": "C3", "provider-id": "PODAAC"},
+        "umm": {
+            "ShortName": "BAZ", "Version": "1",
+            "DataCenters": [{"ShortName": "PODAAC"}],
+            "ArchiveAndDistributionInformation": {
+                "FileDistributionInformation": [{"Format": "PDF"}],
+            },
+        },
+    }
+    row = collection_row_from_umm(umm)
+    assert row["format_family"] is None
+    assert row["format_declared"] == "PDF"
+    assert row["skip_reason"] == "non_array_format"
+
+
 def test_run_discover_top_per_provider_hydrates_ids(tmp_db_path: Path, monkeypatch):
     from nasa_virtual_zarr_survey.discover import run_discover
 

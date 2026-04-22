@@ -46,10 +46,12 @@ def _skipped_breakdown(db_path: Path, limit: int | None = None) -> str:
     init_schema(con)
 
     by_format = con.execute("""
-        SELECT COALESCE(format_declared, '(null)') AS fmt, count(*) AS n
+        SELECT COALESCE(format_declared, '(null)') AS fmt,
+               skip_reason,
+               count(*) AS n
         FROM collections
-        WHERE skip_reason = 'non_array_format'
-        GROUP BY fmt
+        WHERE skip_reason IS NOT NULL
+        GROUP BY fmt, skip_reason
         ORDER BY n DESC, fmt
     """).fetchall()
 
@@ -57,13 +59,13 @@ def _skipped_breakdown(db_path: Path, limit: int | None = None) -> str:
         return "Skipped collections: none."
 
     lines = ["Skipped collections by format:"]
-    for fmt, n in by_format:
-        lines.append(f"  {n:4d}  {fmt}")
+    for fmt, reason, n in by_format:
+        lines.append(f"  {n:4d}  {fmt}  ({reason})")
 
     q = """
         SELECT concept_id, daac, short_name, version, format_declared
         FROM collections
-        WHERE skip_reason = 'non_array_format'
+        WHERE skip_reason IS NOT NULL
         ORDER BY daac, short_name
     """
     if limit is not None:
@@ -173,13 +175,19 @@ def version() -> None:
               help="Fetch the top-N most-used collections PER provider (ranked by CMR usage_score).")
 @click.option("--skipped", "show_skipped", is_flag=True, default=False,
               help="After discover completes, print the non-array-format breakdown.")
+@click.option("--dry-run", "dry_run", is_flag=True, default=False,
+              help="Fetch and classify collections without writing to the DB.")
 def discover(
     db_path: Path, limit: int | None,
     top_total: int | None, top_per_provider: int | None,
-    show_skipped: bool,
+    show_skipped: bool, dry_run: bool,
 ) -> None:
     """Phase 1: enumerate CMR collections and write to DuckDB."""
-    from nasa_virtual_zarr_survey.discover import run_discover
+    from collections import Counter
+
+    from nasa_virtual_zarr_survey.discover import (
+        collection_row_from_umm, fetch_collection_dicts, run_discover,
+    )
 
     flags = [n for n, v in (("limit", limit), ("top", top_total),
                             ("top-per-provider", top_per_provider)) if v is not None]
@@ -187,6 +195,42 @@ def discover(
         raise click.UsageError(
             f"--{', --'.join(flags)} are mutually exclusive; pass only one"
         )
+
+    if dry_run:
+        dicts = fetch_collection_dicts(
+            limit=limit,
+            top_per_provider=top_per_provider,
+            top_total=top_total,
+        )
+        rows = [collection_row_from_umm(d) for d in dicts]
+        total = len(rows)
+        skipped = sum(1 for r in rows if r["skip_reason"])
+        array_like = total - skipped
+        click.echo(
+            f"discover (dry-run): {total} collections "
+            f"({array_like} array-like, {skipped} skipped as non-array format)"
+        )
+        if show_skipped:
+            by_fmt_reason: Counter = Counter(
+                ((r.get("format_declared") or "(null)"), r["skip_reason"])
+                for r in rows if r["skip_reason"]
+            )
+            click.echo("")
+            click.echo("Skipped collections by format:")
+            for (fmt, reason), n in by_fmt_reason.most_common():
+                click.echo(f"  {n:4d}  {fmt}  ({reason})")
+            click.echo("")
+            click.echo(f"Individual skipped collections ({skipped}):")
+            for r in rows:
+                if not r["skip_reason"]:
+                    continue
+                click.echo(
+                    f"  {(r['concept_id'] or '-'):30s}  "
+                    f"{(r['daac'] or '-'):14s}  "
+                    f"{(r['format_declared'] or '-'):24s}  "
+                    f"{r['short_name']} v{r['version']}"
+                )
+        return
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     run_discover(

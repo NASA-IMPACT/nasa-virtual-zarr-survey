@@ -28,6 +28,52 @@ def _extract_url(g: Any, access: str = "direct") -> str | None:
     return None
 
 
+def _granule_format(g: Any) -> str | None:
+    """Extract a file format string from granule UMM-JSON, or None."""
+    try:
+        info = g["umm"]["DataGranule"]["ArchiveAndDistributionInformation"]
+    except (KeyError, TypeError):
+        return None
+    if isinstance(info, list):
+        for entry in info:
+            if isinstance(entry, dict):
+                fmt = entry.get("Format")
+                if fmt:
+                    return fmt
+    elif isinstance(info, dict):
+        return info.get("Format")
+    return None
+
+
+def _update_collection_classification(
+    con, concept_id: str, format_declared: str | None
+) -> str | None:
+    """Re-classify a collection using a freshly-discovered format string.
+
+    Returns the resolved skip_reason (None if array-like, else a string).
+    """
+    from nasa_virtual_zarr_survey.formats import classify_format
+    family = classify_format(format_declared, None)
+    if family is not None:
+        skip_reason = None
+        family_str = family.value
+    elif format_declared is None:
+        skip_reason = "format_unknown"
+        family_str = None
+    else:
+        skip_reason = "non_array_format"
+        family_str = None
+    con.execute(
+        """
+        UPDATE collections
+        SET format_family = ?, format_declared = ?, skip_reason = ?
+        WHERE concept_id = ?
+        """,
+        [family_str, format_declared, skip_reason, concept_id],
+    )
+    return skip_reason
+
+
 def _extract_size(g: Any) -> int | None:
     try:
         info = g["umm"]["DataGranule"]["ArchiveAndDistributionInformation"]
@@ -98,9 +144,9 @@ def run_sample(
     con = connect(db_path)
     init_schema(con)
     q = """
-        SELECT concept_id, time_start, time_end, num_granules, daac
+        SELECT concept_id, time_start, time_end, num_granules, daac, skip_reason
         FROM collections
-        WHERE skip_reason IS NULL
+        WHERE (skip_reason IS NULL OR skip_reason = 'format_unknown')
           AND concept_id NOT IN (SELECT DISTINCT collection_concept_id FROM granules)
     """
     params: list[Any] = []
@@ -109,12 +155,20 @@ def run_sample(
         params.append(only_daac)
     colls = [
         {"concept_id": r[0], "time_start": r[1], "time_end": r[2],
-         "num_granules": r[3], "daac": r[4]}
+         "num_granules": r[3], "daac": r[4], "skip_reason": r[5]}
         for r in con.execute(q, params).fetchall()
     ]
 
     total = 0
     for coll in colls:
+        if coll["skip_reason"] == "format_unknown":
+            # Probe one granule to infer the format.
+            probe = earthaccess.search_data(concept_id=coll["concept_id"], count=1)
+            fmt = _granule_format(probe[0]) if probe else None
+            resolved = _update_collection_classification(con, coll["concept_id"], fmt)
+            if resolved is not None:
+                continue  # Still unknown or non-array; skip.
+
         rows = sample_one_collection(coll, n_bins=n_bins, access=access)
         for r in rows:
             con.execute(

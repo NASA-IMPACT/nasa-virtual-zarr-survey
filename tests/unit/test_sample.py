@@ -8,6 +8,8 @@ from nasa_virtual_zarr_survey.sample import (
     temporal_bins,
     sample_one_collection,
     run_sample,
+    _granule_format,
+    _update_collection_classification,
 )
 
 
@@ -135,3 +137,171 @@ def test_sample_one_collection_external_access(monkeypatch):
     gs = sample_one_collection(coll, n_bins=1, access="external")
     assert gs[0]["data_url"] == "https://ex/G1.nc"
     assert "external" in captured_accesses
+
+
+# ---------------------------------------------------------------------------
+# _granule_format
+# ---------------------------------------------------------------------------
+
+def test_granule_format_list():
+    class G:
+        def __getitem__(self, k):
+            return {
+                "umm": {"DataGranule": {"ArchiveAndDistributionInformation": [{"Format": "NetCDF-4"}]}}
+            }[k]
+    assert _granule_format(G()) == "NetCDF-4"
+
+
+def test_granule_format_dict():
+    class G:
+        def __getitem__(self, k):
+            return {
+                "umm": {"DataGranule": {"ArchiveAndDistributionInformation": {"Format": "HDF5"}}}
+            }[k]
+    assert _granule_format(G()) == "HDF5"
+
+
+def test_granule_format_missing():
+    class G:
+        def __getitem__(self, k):
+            return {"umm": {}}[k]
+    assert _granule_format(G()) is None
+
+
+# ---------------------------------------------------------------------------
+# _update_collection_classification
+# ---------------------------------------------------------------------------
+
+def test_update_collection_classification_array(tmp_db_path: Path):
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute("""
+        INSERT INTO collections VALUES
+        ('C1','s','1','PODAAC','PODAAC',NULL,NULL,5,
+         TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
+         'L3', 'format_unknown', now())
+    """)
+    resolved = _update_collection_classification(con, "C1", "NetCDF-4")
+    assert resolved is None
+    row = con.execute(
+        "SELECT format_family, format_declared, skip_reason FROM collections WHERE concept_id='C1'"
+    ).fetchone()
+    assert row == ("NetCDF4", "NetCDF-4", None)
+
+
+def test_update_collection_classification_non_array(tmp_db_path: Path):
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute("""
+        INSERT INTO collections VALUES
+        ('C2','s','1','PODAAC','PODAAC',NULL,NULL,5,
+         TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
+         'L3', 'format_unknown', now())
+    """)
+    resolved = _update_collection_classification(con, "C2", "PDF")
+    assert resolved == "non_array_format"
+    row = con.execute(
+        "SELECT format_family, format_declared, skip_reason FROM collections WHERE concept_id='C2'"
+    ).fetchone()
+    assert row == (None, "PDF", "non_array_format")
+
+
+def test_update_collection_classification_still_unknown(tmp_db_path: Path):
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute("""
+        INSERT INTO collections VALUES
+        ('C3','s','1','PODAAC','PODAAC',NULL,NULL,5,
+         TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
+         'L3', 'format_unknown', now())
+    """)
+    resolved = _update_collection_classification(con, "C3", None)
+    assert resolved == "format_unknown"
+    row = con.execute(
+        "SELECT format_family, format_declared, skip_reason FROM collections WHERE concept_id='C3'"
+    ).fetchone()
+    assert row == (None, None, "format_unknown")
+
+
+# ---------------------------------------------------------------------------
+# run_sample re-classification path
+# ---------------------------------------------------------------------------
+
+def test_run_sample_reclassifies_format_unknown(tmp_db_path: Path, monkeypatch):
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute("""
+        INSERT INTO collections VALUES
+        ('C_UNKNOWN','shortname','1','PODAAC','PODAAC',NULL,NULL,5,
+         TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
+         'L3', 'format_unknown', now())
+    """)
+
+    class G:
+        def __init__(self, gid: str, granule_format: str | None = None):
+            self.gid = gid
+            self._fmt = granule_format
+
+        def __getitem__(self, k):
+            if k == "meta":
+                return {"concept-id": self.gid}
+            if k == "umm":
+                if self._fmt:
+                    return {"DataGranule": {"ArchiveAndDistributionInformation": [{"Format": self._fmt}]}}
+                return {}
+            raise KeyError(k)
+
+        def data_links(self, access="direct"):
+            return [f"s3://b/{self.gid}.nc"]
+
+    counter = iter(range(100))
+
+    def fake_search_data(**kwargs):
+        return [G(f"G{next(counter)}", granule_format="NetCDF-4")]
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data", fake_search_data
+    )
+
+    n = run_sample(tmp_db_path, n_bins=3)
+    assert n == 3
+
+    row = con.execute(
+        "SELECT format_family, format_declared, skip_reason FROM collections WHERE concept_id='C_UNKNOWN'"
+    ).fetchone()
+    assert row == ("NetCDF4", "NetCDF-4", None)
+
+
+def test_run_sample_skips_unresolvable_format_unknown(tmp_db_path: Path, monkeypatch):
+    """If probe yields a non-array format, collection is marked non_array_format and not sampled."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute("""
+        INSERT INTO collections VALUES
+        ('C_PDF','n','1','PODAAC','PODAAC',NULL,NULL,5,
+         TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
+         'L3', 'format_unknown', now())
+    """)
+
+    class G:
+        def __getitem__(self, k):
+            if k == "meta":
+                return {"concept-id": "GP"}
+            if k == "umm":
+                return {"DataGranule": {"ArchiveAndDistributionInformation": [{"Format": "PDF"}]}}
+            raise KeyError(k)
+
+        def data_links(self, access="direct"):
+            return ["s3://b/whatever.pdf"]
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data",
+        lambda **_: [G()],
+    )
+
+    n = run_sample(tmp_db_path, n_bins=3)
+    assert n == 0
+    row = con.execute(
+        "SELECT format_family, format_declared, skip_reason FROM collections WHERE concept_id='C_PDF'"
+    ).fetchone()
+    assert row == (None, "PDF", "non_array_format")
