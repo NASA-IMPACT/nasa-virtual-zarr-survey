@@ -23,6 +23,11 @@ warnings.filterwarnings(
     message=r"Numcodecs codecs are not in the Zarr version 3 specification",
     category=UserWarning,
 )
+warnings.filterwarnings(
+    "ignore",
+    message=r"Imagecodecs codecs are not in the Zarr version 3 specification",
+    category=UserWarning,
+)
 
 DEFAULT_DB = Path("output/survey.duckdb")
 DEFAULT_RESULTS = Path("output/results")
