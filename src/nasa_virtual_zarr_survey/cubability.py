@@ -11,6 +11,17 @@ import numpy as np
 
 
 class CubabilityVerdict(StrEnum):
+    """Outcome categories for a collection's cubability check.
+
+    - `FEASIBLE`: all per-granule fingerprints are compatible and a concat
+      dimension was identified.
+    - `INCOMPATIBLE`: at least one structural or coordinate check failed.
+    - `INCONCLUSIVE`: could not decide (e.g., ambiguous concat dim, too few
+      fingerprints, all granules identical).
+    - `NOT_ATTEMPTED`: the collection did not reach the cubability gate (usually
+      because Phase 4 was not `all_pass`).
+    """
+
     FEASIBLE = "FEASIBLE"
     INCOMPATIBLE = "INCOMPATIBLE"
     INCONCLUSIVE = "INCONCLUSIVE"
@@ -19,6 +30,13 @@ class CubabilityVerdict(StrEnum):
 
 @dataclass
 class CubabilityResult:
+    """Result of a cubability check for a single collection.
+
+    `concat_dim` is populated when the check successfully identified a concat
+    dimension; it may be set even when the verdict is `INCOMPATIBLE` (for
+    example, when the concat dim was identified but the coord ranges overlap).
+    """
+
     verdict: CubabilityVerdict
     reason: str = ""
     concat_dim: str | None = None
@@ -102,10 +120,12 @@ def extract_fingerprint(ds: Any) -> dict[str, Any]:
 
 
 def fingerprint_to_json(fp: dict[str, Any]) -> str:
+    """Serialize a fingerprint dict to a compact, sort-stable JSON string."""
     return json.dumps(fp, default=str, sort_keys=True)
 
 
 def fingerprint_from_json(s: str | None) -> dict[str, Any] | None:
+    """Parse a fingerprint JSON string back into a dict. Returns `None` on empty or malformed input."""
     if not s:
         return None
     try:

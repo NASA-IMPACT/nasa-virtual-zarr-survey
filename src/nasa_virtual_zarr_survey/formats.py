@@ -7,6 +7,14 @@ from urllib.parse import urlparse
 
 
 class FormatFamily(StrEnum):
+    """Array-like format families recognized by the survey.
+
+    The string value is what is stored in the DuckDB `collections.format_family`
+    column and used as a grouping key in reports. Collections whose declared
+    format maps to one of these families are attempted during Phases 3-4; others
+    are filtered out with `skip_reason="non_array_format"`.
+    """
+
     NETCDF4 = "NetCDF4"
     NETCDF3 = "NetCDF3"
     HDF5 = "HDF5"

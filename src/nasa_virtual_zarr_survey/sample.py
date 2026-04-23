@@ -1,4 +1,4 @@
-"""Phase 2: for each collection, pick N granules stratified across temporal extent."""
+"""Phase 2 (sample): for each collection, pick N granules stratified across temporal extent."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone

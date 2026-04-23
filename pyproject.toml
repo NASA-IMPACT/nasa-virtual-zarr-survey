@@ -32,6 +32,12 @@ dev = [
     "ruff>=0.7",
     "mypy>=1.11",
 ]
+docs = [
+    "mkdocs-material[imaging]>=9.6.14",
+    "mkdocs>=1.6.1",
+    "mkdocstrings>=0.29.1",
+    "mkdocstrings-python>=1.16.10",
+]
 
 [tool.hatch.version]
 source = "vcs"

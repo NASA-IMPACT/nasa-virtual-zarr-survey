@@ -11,6 +11,13 @@ from enum import StrEnum
 
 
 class Bucket(StrEnum):
+    """Failure-class buckets used by the report's taxonomy table.
+
+    Seeded from titiler-cmr-compatibility's `IncompatibilityReason` plus
+    hypothesized VirtualiZarr-specific failure modes. Refined after a pilot
+    run by reading raw error messages that land in `OTHER`.
+    """
+
     SUCCESS = "SUCCESS"
     NO_PARSER = "NO_PARSER"
     TIMEOUT = "TIMEOUT"

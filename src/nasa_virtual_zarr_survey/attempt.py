@@ -1,4 +1,4 @@
-"""Attempt pipeline: Phase 1 (Parsability) and Phase 2 (Datasetability)."""
+"""Attempt pipeline: Phase 3 (Parsability) and Phase 4 (Datasetability)."""
 from __future__ import annotations
 
 import signal
@@ -28,6 +28,17 @@ from nasa_virtual_zarr_survey.formats import FormatFamily
 
 @dataclass
 class AttemptResult:
+    """One row of the append-only per-attempt Parquet log.
+
+    Records independent outcomes for Phase 3 (Parsability) and Phase 4
+    (Datasetability) of a single granule attempt, plus identifying fields
+    (collection, granule, DAAC, format family) and, on success, the fingerprint
+    used by the Cubability phase.
+
+    `dataset_success` is `None` when Phase 4 was not attempted because parsing
+    failed. `success` is `True` only when both phases succeeded.
+    """
+
     collection_concept_id: str | None = None
     granule_concept_id: str | None = None
     daac: str | None = None
@@ -36,14 +47,14 @@ class AttemptResult:
     stratified: bool | None = None
     attempted_at: datetime | None = None
 
-    # Phase 1: Parsability
+    # Phase 3: Parsability
     parse_success: bool = False
     parse_error_type: str | None = None
     parse_error_message: str | None = None
     parse_error_traceback: str | None = None
     parse_duration_s: float = 0.0
 
-    # Phase 2: Datasetability (None = not attempted because parse failed)
+    # Phase 4: Datasetability (None = not attempted because parse failed)
     dataset_success: bool | None = None
     dataset_error_type: str | None = None
     dataset_error_message: str | None = None
@@ -249,6 +260,7 @@ class ResultWriter:
         return d / f"part-{idx:04d}.parquet"
 
     def append(self, r: AttemptResult) -> None:
+        """Buffer a result. Flushes a new shard once the buffer hits `shard_size`."""
         daac = r.daac or "UNKNOWN"
         self._buffers.setdefault(daac, []).append(r)
         if len(self._buffers[daac]) >= self.shard_size:
@@ -287,6 +299,7 @@ class ResultWriter:
         self._buffers[daac] = []
 
     def close(self) -> None:
+        """Flush every DAAC's remaining buffered rows to a final shard."""
         for daac in list(self._buffers.keys()):
             self._flush(daac)
 

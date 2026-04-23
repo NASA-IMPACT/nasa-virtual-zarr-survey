@@ -197,9 +197,9 @@ def test_render_report_contains_counts(tmp_db_path, tmp_results_dir, tmp_path):
     out = tmp_path / "report.md"
     run_report(tmp_db_path, tmp_results_dir, out)
     text = out.read_text()
-    assert "Phase 1: Parsability" in text
-    assert "Phase 2: Datasetability" in text
-    assert "Phase 3: Virtual Store Feasibility" in text
+    assert "Phase 3: Parsability" in text
+    assert "Phase 4: Datasetability" in text
+    assert "Phase 5: Virtual Store Feasibility" in text
     assert "all_pass" in text
     assert "PODAAC" in text
     assert "NetCDF4" in text

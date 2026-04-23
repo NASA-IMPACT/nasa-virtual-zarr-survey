@@ -182,7 +182,7 @@ def discover(
     top_total: int | None, top_per_provider: int | None,
     show_skipped: bool, dry_run: bool,
 ) -> None:
-    """Phase 1: enumerate CMR collections and write to DuckDB."""
+    """Phase 1 (discover): enumerate CMR collections and write to DuckDB."""
     from collections import Counter
 
     from nasa_virtual_zarr_survey.discover import (
@@ -251,7 +251,7 @@ def discover(
               help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
                    "'external' uses HTTPS URLs with EDL bearer token.")
 def sample(db_path: Path, n_bins: int, daac: str | None, access: str) -> None:
-    """Phase 2: pick N granules stratified across each collection's temporal extent."""
+    """Phase 2 (sample): pick N granules stratified across each collection's temporal extent."""
     from nasa_virtual_zarr_survey.sample import run_sample
     run_sample(db_path, n_bins=n_bins, only_daac=daac, access=access)
     click.echo(_sample_summary(db_path))
@@ -268,7 +268,7 @@ def sample(db_path: Path, n_bins: int, daac: str | None, access: str) -> None:
                    "'external' uses HTTPS URLs with EDL bearer token.")
 def attempt(db_path: Path, results_dir: Path, timeout_s: int, shard_size: int,
             daac: str | None, access: str) -> None:
-    """Phase 3: open_virtual_dataset each pending granule, write Parquet rows."""
+    """Phases 3 and 4 (attempt): parsability + datasetability per granule; write Parquet rows."""
     from nasa_virtual_zarr_survey.attempt import run_attempt
     n = run_attempt(db_path, results_dir, timeout_s=timeout_s, shard_size=shard_size,
                     only_daac=daac, access=access)
@@ -280,7 +280,7 @@ def attempt(db_path: Path, results_dir: Path, timeout_s: int, shard_size: int,
 @click.option("--results", "results_dir", type=click.Path(path_type=Path), default=DEFAULT_RESULTS)
 @click.option("--out", "out_path", type=click.Path(path_type=Path), default=DEFAULT_REPORT)
 def report(db_path: Path, results_dir: Path, out_path: Path) -> None:
-    """Phase 4: render report.md from DuckDB state + Parquet results."""
+    """Phase 5 and report render: cubability + Markdown output from DuckDB + Parquet."""
     from nasa_virtual_zarr_survey.report import run_report
     run_report(db_path, results_dir, out_path)
     click.echo(f"Wrote {out_path}")

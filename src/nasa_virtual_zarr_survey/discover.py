@@ -1,4 +1,4 @@
-"""Phase 1: enumerate cloud-hosted EOSDIS collections into DuckDB."""
+"""Phase 1 (discover): enumerate cloud-hosted EOSDIS collections into DuckDB."""
 from __future__ import annotations
 
 from datetime import datetime, timezone

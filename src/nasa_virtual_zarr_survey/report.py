@@ -221,13 +221,20 @@ def render_report(
     cube_results: dict[str, CubabilityResult],
     con: duckdb.DuckDBPyConnection,
 ) -> str:
+    """Render the full Markdown report from pre-computed phase verdicts and taxonomy counts.
+
+    Sections emitted, in order: totals, Phase 3 (Parsability), Phase 4
+    (Datasetability), Phase 5 (Virtual Store Feasibility), incompatibility
+    reasons drill-down, By DAAC table, By Format Family table, Stratification
+    breakdown, and raw-error drill-downs for each phase's `OTHER` bucket.
+    """
     total = len(verdicts)
     lines: list[str] = []
     lines.append("# NASA VirtualiZarr Survey Report\n")
     lines.append(f"Total collections: **{total}**\n")
 
-    # Phase 1: Parsability
-    lines.append("## Phase 1: Parsability\n")
+    # Phase 3: Parsability
+    lines.append("## Phase 3: Parsability\n")
     lines.append(
         "Per-collection verdicts based on whether the VirtualiZarr parser "
         "successfully produced a ManifestStore for each sampled granule.\n"
@@ -237,9 +244,9 @@ def render_report(
     lines.extend(_render_taxonomy_table(parse_tax, "Parse Failure Taxonomy"))
     lines.append("")
 
-    # Phase 2: Datasetability
+    # Phase 4: Datasetability
     parsable_count = sum(1 for v in verdicts if v["parse_verdict"] == "all_pass")
-    lines.append("## Phase 2: Datasetability\n")
+    lines.append("## Phase 4: Datasetability\n")
     lines.append(
         f"Per-collection verdicts based on whether the ManifestStore converted to an "
         f"xarray.Dataset. Denominator: {parsable_count} collections whose sampled "
@@ -251,12 +258,12 @@ def render_report(
     lines.extend(_render_taxonomy_table(dataset_tax, "Dataset Failure Taxonomy"))
     lines.append("")
 
-    # Phase 3: Virtual Store Feasibility
+    # Phase 5: Virtual Store Feasibility
     datasetable_count = sum(
         1 for v in verdicts
         if v["parse_verdict"] == "all_pass" and v["dataset_verdict"] == "all_pass"
     )
-    lines.append("## Phase 3: Virtual Store Feasibility\n")
+    lines.append("## Phase 5: Virtual Store Feasibility\n")
     lines.append(
         f"For collections whose all sampled granules produced xarray.Datasets "
         f"(denominator: {datasetable_count}), whether the granules can be combined "
@@ -343,6 +350,11 @@ def render_report(
 
 
 def run_report(db_path: Path | str, results_dir: Path | str, out_path: Path | str) -> None:
+    """Read DuckDB state plus Parquet results, compute verdicts, and write `report.md`.
+
+    Idempotent and cheap: re-run after refining `taxonomy.py` to update the
+    Markdown output without re-running `attempt`.
+    """
     con = connect(db_path)
     init_schema(con)
     _attach_results(con, Path(results_dir))
