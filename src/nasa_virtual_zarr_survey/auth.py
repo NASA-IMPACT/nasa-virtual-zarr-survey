@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple
 from urllib.parse import urlparse
 
 import earthaccess
+
+if TYPE_CHECKING:
+    from obspec_utils.stores import AiohttpStore
+    from obstore.store import S3Store
 
 
 class AuthUnavailable(Exception):
@@ -31,7 +35,7 @@ class DAACStoreCache:
     ttl: timedelta = timedelta(minutes=50)
     _logged_in: bool = False
     _creds: dict[str, _Creds] = field(default_factory=dict)
-    _stores: dict[tuple[str, str], Any] = field(default_factory=dict)
+    _stores: dict[tuple[str, str], S3Store] = field(default_factory=dict)
 
     def _login(self) -> None:
         if not self._logged_in:
@@ -54,7 +58,7 @@ class DAACStoreCache:
         self._stores = {k: v for k, v in self._stores.items() if k[0] != provider}
         return fresh
 
-    def get_store(self, *, provider: str, bucket: str) -> Any:
+    def get_store(self, *, provider: str, bucket: str) -> S3Store:
         """Return an obstore S3Store for (provider, bucket), building it on demand.
 
         Credentials are checked for freshness first; if they have expired, any
@@ -74,7 +78,7 @@ class DAACStoreCache:
         return store
 
 
-def _build_s3_store(creds: dict[str, str], bucket: str) -> Any:
+def _build_s3_store(creds: dict[str, str], bucket: str) -> S3Store:
     """Construct an obstore S3Store for the given bucket using the given credentials."""
     from obstore.store import S3Store
 
@@ -93,7 +97,7 @@ class StoreCache:
 
     access: Literal["direct", "external"] = "direct"
     _s3: DAACStoreCache = field(default_factory=DAACStoreCache)
-    _http: dict[str, Any] = field(default_factory=dict)
+    _http: dict[str, AiohttpStore] = field(default_factory=dict)
     _token: str | None = None
     _logged_in: bool = False
 
@@ -110,7 +114,7 @@ class StoreCache:
                     "earthaccess.login() did not produce a bearer token; check ~/.netrc"
                 )
 
-    def get_store(self, *, provider: str, url: str) -> Any:
+    def get_store(self, *, provider: str, url: str) -> S3Store | AiohttpStore:
         """Return a store capable of reading `url` for the given CMR `provider`."""
         parsed = urlparse(url)
         if self.access == "direct":

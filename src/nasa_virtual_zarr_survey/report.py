@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
-from typing import Any
-
+from typing import Literal
 import duckdb
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
@@ -16,6 +15,7 @@ from nasa_virtual_zarr_survey.cubability import (
     check_cubability,
     fingerprint_from_json,
 )
+from nasa_virtual_zarr_survey.types import Fingerprint, VerdictRow
 
 
 def _attach_results(con: duckdb.DuckDBPyConnection, results_dir: Path) -> bool:
@@ -71,7 +71,7 @@ def _phase_verdicts(con: duckdb.DuckDBPyConnection, phase: str) -> dict[str, str
 
 def collection_verdicts(
     db_path: Path | str, results_dir: Path | str
-) -> list[dict[str, Any]]:
+) -> list[VerdictRow]:
     """Return one verdict row per collection in the DB."""
     con = connect(db_path)
     init_schema(con)
@@ -81,17 +81,17 @@ def collection_verdicts(
     dataset_phase = _phase_verdicts(con, "dataset")
 
     q = """
-        WITH strat AS (
+        WITH stratification AS (
             SELECT collection_concept_id, MAX(stratified) AS stratified
             FROM granules
             GROUP BY collection_concept_id
         )
         SELECT c.concept_id, c.daac, c.format_family, c.skip_reason, s.stratified
         FROM collections c
-        LEFT JOIN strat s ON s.collection_concept_id = c.concept_id
+        LEFT JOIN stratification s ON s.collection_concept_id = c.concept_id
     """
     rows = con.execute(q).fetchall()
-    out = []
+    out: list[VerdictRow] = []
     for concept_id, daac, family, skip, stratified in rows:
         if skip:
             parse_verdict = "skipped"
@@ -100,15 +100,15 @@ def collection_verdicts(
             parse_verdict = parse_phase.get(concept_id, "not_attempted")
             dataset_verdict = dataset_phase.get(concept_id, "not_attempted")
         out.append(
-            {
-                "concept_id": concept_id,
-                "daac": daac,
-                "format_family": family,
-                "skip_reason": skip,
-                "stratified": stratified,
-                "parse_verdict": parse_verdict,
-                "dataset_verdict": dataset_verdict,
-            }
+            VerdictRow(
+                concept_id=concept_id,
+                daac=daac,
+                format_family=family,
+                skip_reason=skip,
+                stratified=stratified,
+                parse_verdict=parse_verdict,
+                dataset_verdict=dataset_verdict,
+            )
         )
     return out
 
@@ -135,8 +135,8 @@ def _taxonomy_counts(
 
 
 def _collection_fingerprints(
-    con: duckdb.DuckDBPyConnection, verdicts: list[dict]
-) -> dict[str, list[dict]]:
+    con: duckdb.DuckDBPyConnection, verdicts: list[VerdictRow]
+) -> dict[str, list[Fingerprint]]:
     """Return {collection_concept_id: [fingerprint_dict, ...]} for dataset all_pass collections."""
     eligible_ids = [
         v["concept_id"] for v in verdicts if v["dataset_verdict"] == "all_pass"
@@ -152,7 +152,7 @@ def _collection_fingerprints(
         ).fetchall()
     except Exception:
         return {}
-    out: dict[str, list[dict]] = {}
+    out: dict[str, list[Fingerprint]] = {}
     for cid, fp_json in rows:
         fp = fingerprint_from_json(fp_json)
         if fp is not None:
@@ -161,7 +161,7 @@ def _collection_fingerprints(
 
 
 def _cubability_results(
-    con: duckdb.DuckDBPyConnection, verdicts: list[dict]
+    con: duckdb.DuckDBPyConnection, verdicts: list[VerdictRow]
 ) -> dict[str, CubabilityResult]:
     """Return {concept_id: CubabilityResult} for every collection."""
     fps_by_coll = _collection_fingerprints(con, verdicts)
@@ -176,7 +176,10 @@ def _cubability_results(
     return out
 
 
-def _render_verdict_counts(verdicts: list[dict], verdict_key: str) -> list[str]:
+def _render_verdict_counts(
+    verdicts: list[VerdictRow],
+    verdict_key: Literal["parse_verdict", "dataset_verdict"],
+) -> list[str]:
     by_verdict = Counter(v[verdict_key] for v in verdicts)
     lines = ["| Verdict | Count |\n|---|---:|"]
     for k, n in sorted(by_verdict.items(), key=lambda kv: -kv[1]):
@@ -203,10 +206,10 @@ def _pct(num: int, denom: int) -> str:
 
 
 def _render_three_phase_table(
-    verdicts: list[dict],
+    verdicts: list[VerdictRow],
     cube_results: dict[str, CubabilityResult],
     title: str,
-    key: str,
+    key: Literal["daac", "format_family"],
 ) -> list[str]:
     lines = [f"## {title}\n"]
     lines.append("| Group | Parsable | Datasetable | Cubable |\n|---|---|---|---|")
@@ -233,7 +236,7 @@ def _render_three_phase_table(
 
 
 def render_report(
-    verdicts: list[dict[str, Any]],
+    verdicts: list[VerdictRow],
     parse_tax: dict[str, tuple[int, int]],
     dataset_tax: dict[str, tuple[int, int]],
     cube_results: dict[str, CubabilityResult],

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
+from typing import Literal, cast
 
 import click
 
 from nasa_virtual_zarr_survey import __version__
+
+AccessMode = Literal["direct", "external"]
 
 warnings.filterwarnings(
     "ignore",
@@ -31,10 +34,13 @@ def _discover_summary(db_path: Path) -> str:
 
     con = connect(db_path)
     init_schema(con)
-    total = con.execute("SELECT count(*) FROM collections").fetchone()[0]
-    skipped = con.execute(
-        "SELECT count(*) FROM collections WHERE skip_reason IS NOT NULL"
-    ).fetchone()[0]
+    total = (con.execute("SELECT count(*) FROM collections").fetchone() or (0,))[0]
+    skipped = (
+        con.execute(
+            "SELECT count(*) FROM collections WHERE skip_reason IS NOT NULL"
+        ).fetchone()
+        or (0,)
+    )[0]
     array_like = total - skipped
     return (
         f"discover: {total} collections "
@@ -90,10 +96,13 @@ def _sample_summary(db_path: Path) -> str:
 
     con = connect(db_path)
     init_schema(con)
-    n_gran = con.execute("SELECT count(*) FROM granules").fetchone()[0]
-    n_coll = con.execute(
-        "SELECT count(DISTINCT collection_concept_id) FROM granules"
-    ).fetchone()[0]
+    n_gran = (con.execute("SELECT count(*) FROM granules").fetchone() or (0,))[0]
+    n_coll = (
+        con.execute(
+            "SELECT count(DISTINCT collection_concept_id) FROM granules"
+        ).fetchone()
+        or (0,)
+    )[0]
     return f"sample: {n_gran} granules across {n_coll} collections"
 
 
@@ -102,7 +111,9 @@ def _attempt_summary(db_path: Path, results_dir: Path, this_run: int) -> str:
 
     con = connect(db_path)
     init_schema(con)
-    total_granules = con.execute("SELECT count(*) FROM granules").fetchone()[0]
+    total_granules = (con.execute("SELECT count(*) FROM granules").fetchone() or (0,))[
+        0
+    ]
 
     if total_granules == 0:
         return (
@@ -132,7 +143,7 @@ def _attempt_summary(db_path: Path, results_dir: Path, this_run: int) -> str:
             sum(CASE WHEN success THEN 1 ELSE 0 END) AS succeeded
         FROM read_parquet('{glob}', union_by_name=true, hive_partitioning=true)
     """
-    total, parsed, datasetable, succeeded = con.execute(q).fetchone()
+    total, parsed, datasetable, succeeded = con.execute(q).fetchone() or (0, 0, 0, 0)
     parsed = parsed or 0
     datasetable = datasetable or 0
     succeeded = succeeded or 0
@@ -302,7 +313,7 @@ def sample(db_path: Path, n_bins: int, daac: str | None, access: str) -> None:
     """Phase 2 (sample): pick N granules stratified across each collection's temporal extent."""
     from nasa_virtual_zarr_survey.sample import run_sample
 
-    run_sample(db_path, n_bins=n_bins, only_daac=daac, access=access)
+    run_sample(db_path, n_bins=n_bins, only_daac=daac, access=cast(AccessMode, access))
     click.echo(_sample_summary(db_path))
 
 
@@ -338,7 +349,7 @@ def attempt(
         timeout_s=timeout_s,
         shard_size=shard_size,
         only_daac=daac,
-        access=access,
+        access=cast(AccessMode, access),
     )
     click.echo(_attempt_summary(db_path, results_dir, n))
 
@@ -427,9 +438,10 @@ def pilot(
     else:
         run_discover(db_path, limit=sample_size)
     click.echo(_discover_summary(db_path))
-    run_sample(db_path, n_bins=n_bins, access=access)
+    access_mode = cast(AccessMode, access)
+    run_sample(db_path, n_bins=n_bins, access=access_mode)
     click.echo(_sample_summary(db_path))
-    n_att = run_attempt(db_path, results_dir, timeout_s=timeout_s, access=access)
+    n_att = run_attempt(db_path, results_dir, timeout_s=timeout_s, access=access_mode)
     click.echo(_attempt_summary(db_path, results_dir, n_att))
     run_report(db_path, results_dir, out_path)
     click.echo(

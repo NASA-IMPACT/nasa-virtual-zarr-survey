@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 import earthaccess
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.formats import classify_format
 from nasa_virtual_zarr_survey.providers import get_eosdis_providers
+from nasa_virtual_zarr_survey.types import CollectionRow
 
 
 def _parse_iso(s: str | None) -> datetime | None:
@@ -55,7 +56,7 @@ def _first_temporal(umm: dict[str, Any]) -> tuple[datetime | None, datetime | No
     return None, None
 
 
-def collection_row_from_umm(coll: dict[str, Any]) -> dict[str, Any]:
+def collection_row_from_umm(coll: dict[str, Any]) -> CollectionRow:
     """Extract a DuckDB-ready row from a CMR UMM-JSON dict."""
     meta = coll.get("meta", {})
     umm = coll.get("umm", {})
@@ -76,25 +77,29 @@ def collection_row_from_umm(coll: dict[str, Any]) -> dict[str, Any]:
     else:
         skip_reason = "non_array_format"
 
-    return {
-        "concept_id": concept_id,
-        "short_name": umm.get("ShortName"),
-        "version": umm.get("Version"),
-        "daac": daac,
-        "provider": provider,
-        "format_family": family.value if family else None,
-        "format_declared": declared,
-        "num_granules": None,
-        "time_start": time_start,
-        "time_end": time_end,
-        "processing_level": (umm.get("ProcessingLevel") or {}).get("Id"),
-        "skip_reason": skip_reason,
-        "discovered_at": datetime.now(timezone.utc),
-    }
+    return CollectionRow(
+        concept_id=concept_id,
+        short_name=umm.get("ShortName"),
+        version=umm.get("Version"),
+        daac=daac,
+        provider=provider,
+        format_family=family.value if family else None,
+        format_declared=declared,
+        num_granules=None,
+        time_start=time_start,
+        time_end=time_end,
+        processing_level=(umm.get("ProcessingLevel") or {}).get("Id"),
+        skip_reason=skip_reason,
+        discovered_at=datetime.now(timezone.utc),
+    )
 
 
 def persist_collections(con, rows: Iterable[dict[str, Any]]) -> None:
-    """Upsert collection rows into DuckDB."""
+    """Upsert collection rows into DuckDB.
+
+    Accepts either raw UMM-JSON dicts (which will be transformed via
+    ``collection_row_from_umm``) or already-built ``CollectionRow`` dicts.
+    """
     init_schema(con)
     stmt = """
         INSERT OR REPLACE INTO collections
@@ -103,7 +108,11 @@ def persist_collections(con, rows: Iterable[dict[str, Any]]) -> None:
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     for coll in rows:
-        row = collection_row_from_umm(coll) if "meta" in coll else coll
+        row: CollectionRow = (
+            collection_row_from_umm(coll)
+            if "meta" in coll
+            else cast(CollectionRow, coll)
+        )
         con.execute(
             stmt,
             [
@@ -132,6 +141,8 @@ def fetch_collection_dicts(
 ) -> list[dict[str, Any]]:
     """Fetch UMM-JSON dicts for CMR collections. No DB writes.
 
+    Returns raw UMM-JSON dicts; see ``collection_row_from_umm`` for the typed row shape.
+
     Modes (mutually exclusive):
     - Default: all cloud-hosted EOSDIS collections, optionally capped by `limit`.
     - `top_per_provider=N`: top-N per provider by usage_score.
@@ -151,6 +162,7 @@ def fetch_collection_dicts(
         if top_per_provider is not None:
             ids = all_top_collection_ids(providers, num_per_provider=top_per_provider)
         else:
+            assert top_total is not None  # guaranteed by the outer condition
             ids = top_collection_ids_total(providers, num_total=top_total)
         if not ids:
             return []

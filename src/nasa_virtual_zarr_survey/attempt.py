@@ -25,6 +25,7 @@ from virtualizarr.parsers.zarr import ZarrParser
 from nasa_virtual_zarr_survey.auth import AuthUnavailable, StoreCache
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.formats import FormatFamily
+from nasa_virtual_zarr_survey.types import PendingGranule
 
 
 @dataclass
@@ -189,18 +190,18 @@ def attempt_one(
             result.dataset_error_type = "TimeoutError"
             result.dataset_error_message = f"dataset timed out after {timeout_s}s"
     elif exc_info is not None:
-        e = exc_info[1]
+        exc = exc_info[1]
         tb_str = _truncate("".join(traceback.format_exception(*exc_info)), 4096)
         if manifest_ref:
             # Parse completed; dataset construction raised
             result.dataset_success = False
-            result.dataset_error_type = type(e).__name__
-            result.dataset_error_message = _truncate(str(e), 2048)
+            result.dataset_error_type = type(exc).__name__
+            result.dataset_error_message = _truncate(str(exc), 2048)
             result.dataset_error_traceback = tb_str
         else:
             # Parser raised
-            result.parse_error_type = type(e).__name__
-            result.parse_error_message = _truncate(str(e), 2048)
+            result.parse_error_type = type(exc).__name__
+            result.parse_error_message = _truncate(str(exc), 2048)
             result.parse_error_traceback = tb_str
     else:
         # Both phases completed without raising
@@ -222,32 +223,31 @@ def attempt_one(
     return result
 
 
-_SCHEMA = pa.schema(
-    [
-        ("collection_concept_id", pa.string()),
-        ("granule_concept_id", pa.string()),
-        ("daac", pa.string()),
-        ("format_family", pa.string()),
-        ("parser", pa.string()),
-        ("stratified", pa.bool_()),
-        ("attempted_at", pa.timestamp("us", tz="UTC")),
-        ("parse_success", pa.bool_()),
-        ("parse_error_type", pa.string()),
-        ("parse_error_message", pa.string()),
-        ("parse_error_traceback", pa.string()),
-        ("parse_duration_s", pa.float64()),
-        ("dataset_success", pa.bool_()),  # nullable
-        ("dataset_error_type", pa.string()),
-        ("dataset_error_message", pa.string()),
-        ("dataset_error_traceback", pa.string()),
-        ("dataset_duration_s", pa.float64()),
-        ("success", pa.bool_()),
-        ("timed_out", pa.bool_()),
-        ("timed_out_phase", pa.string()),
-        ("duration_s", pa.float64()),
-        ("fingerprint", pa.string()),
-    ]
-)
+_SCHEMA_FIELDS: dict[str, pa.DataType] = {
+    "collection_concept_id": pa.string(),
+    "granule_concept_id": pa.string(),
+    "daac": pa.string(),
+    "format_family": pa.string(),
+    "parser": pa.string(),
+    "stratified": pa.bool_(),
+    "attempted_at": pa.timestamp("us", tz="UTC"),
+    "parse_success": pa.bool_(),
+    "parse_error_type": pa.string(),
+    "parse_error_message": pa.string(),
+    "parse_error_traceback": pa.string(),
+    "parse_duration_s": pa.float64(),
+    "dataset_success": pa.bool_(),  # nullable
+    "dataset_error_type": pa.string(),
+    "dataset_error_message": pa.string(),
+    "dataset_error_traceback": pa.string(),
+    "dataset_duration_s": pa.float64(),
+    "success": pa.bool_(),
+    "timed_out": pa.bool_(),
+    "timed_out_phase": pa.string(),
+    "duration_s": pa.float64(),
+    "fingerprint": pa.string(),
+}
+_SCHEMA = pa.schema(_SCHEMA_FIELDS)
 
 
 class ResultWriter:
@@ -279,7 +279,7 @@ class ResultWriter:
         buf = self._buffers.get(daac)
         if not buf:
             return
-        cols = {field.name: [] for field in _SCHEMA}
+        cols: dict[str, list] = {field.name: [] for field in _SCHEMA}
         for r in buf:
             cols["collection_concept_id"].append(r.collection_concept_id)
             cols["granule_concept_id"].append(r.granule_concept_id)
@@ -313,7 +313,9 @@ class ResultWriter:
             self._flush(daac)
 
 
-def _pending_granules(con, results_dir: Path, only_daac: str | None) -> list[dict]:
+def _pending_granules(
+    con, results_dir: Path, only_daac: str | None
+) -> list[PendingGranule]:
     """Return granule rows for which no Parquet row exists yet."""
     results_glob = str(results_dir / "**" / "*.parquet")
     q = """
@@ -357,15 +359,15 @@ def _pending_granules(con, results_dir: Path, only_daac: str | None) -> list[dic
         rows = con.execute(fallback, params2).fetchall()
 
     return [
-        {
-            "collection_concept_id": r[0],
-            "granule_concept_id": r[1],
-            "data_url": r[2],
-            "daac": r[3],
-            "provider": r[4],
-            "format_family": r[5],
-            "stratified": r[6],
-        }
+        PendingGranule(
+            collection_concept_id=r[0],
+            granule_concept_id=r[1],
+            data_url=r[2],
+            daac=r[3],
+            provider=r[4],
+            format_family=r[5],
+            stratified=r[6],
+        )
         for r in rows
     ]
 
@@ -439,7 +441,7 @@ def run_attempt(
 
         family_str = row["format_family"]
         family = FormatFamily(family_str) if family_str else None
-        if family is None or not row["data_url"]:
+        if family is None or not row["data_url"] or not row["provider"]:
             result = AttemptResult(
                 collection_concept_id=row["collection_concept_id"],
                 granule_concept_id=row["granule_concept_id"],
@@ -447,7 +449,7 @@ def run_attempt(
                 format_family=family_str,
                 stratified=row["stratified"],
                 parse_error_type="SampleInvalid",
-                parse_error_message="missing format family or data URL",
+                parse_error_message="missing format family, data URL, or provider",
                 attempted_at=datetime.now(timezone.utc),
             )
         else:

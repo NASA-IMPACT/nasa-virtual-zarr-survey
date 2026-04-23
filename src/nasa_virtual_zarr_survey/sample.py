@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import earthaccess
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
+from nasa_virtual_zarr_survey.types import GranuleInfo, SampleCollection
+
+if TYPE_CHECKING:
+    from earthaccess.results import DataGranule
 
 
 def temporal_bins(
@@ -23,13 +27,13 @@ def temporal_bins(
     return list(zip(edges[:-1], edges[1:]))
 
 
-def _extract_url(g: Any, access: str = "direct") -> str | None:
+def _extract_url(g: DataGranule, access: str = "direct") -> str | None:
     for link in g.data_links(access=access) or []:
         return link
     return None
 
 
-def _granule_format(g: Any) -> str | None:
+def _granule_format(g: DataGranule) -> str | None:
     """Extract a file format string from granule UMM-JSON, or None."""
     try:
         info = g["umm"]["DataGranule"]["ArchiveAndDistributionInformation"]
@@ -76,7 +80,7 @@ def _update_collection_classification(
     return skip_reason
 
 
-def _extract_size(g: Any) -> int | None:
+def _extract_size(g: DataGranule) -> int | None:
     try:
         info = g["umm"]["DataGranule"]["ArchiveAndDistributionInformation"]
         for i in info:
@@ -89,14 +93,14 @@ def _extract_size(g: Any) -> int | None:
 
 
 def sample_one_collection(
-    coll: dict[str, Any], n_bins: int = 5, *, access: str = "direct"
-) -> list[dict[str, Any]]:
+    coll: SampleCollection, n_bins: int = 5, *, access: str = "direct"
+) -> list[GranuleInfo]:
     """Return up to `n_bins` granule rows for a collection, stratified over temporal bins.
 
     If temporal extent is missing, fall back to `n_bins` evenly-spaced offsets.
     """
     bins = temporal_bins(coll.get("time_start"), coll.get("time_end"), n=n_bins)
-    rows: list[dict[str, Any]] = []
+    rows: list[GranuleInfo] = []
     now = datetime.now(timezone.utc)
 
     if bins is None:
@@ -107,15 +111,15 @@ def sample_one_collection(
         )
         for i, g in enumerate(results[:n_bins]):
             rows.append(
-                {
-                    "collection_concept_id": coll["concept_id"],
-                    "granule_concept_id": g["meta"]["concept-id"],
-                    "data_url": _extract_url(g, access=access),
-                    "temporal_bin": i,
-                    "size_bytes": _extract_size(g),
-                    "sampled_at": now,
-                    "stratified": False,
-                }
+                GranuleInfo(
+                    collection_concept_id=coll["concept_id"],
+                    granule_concept_id=g["meta"]["concept-id"],
+                    data_url=_extract_url(g, access=access),
+                    temporal_bin=i,
+                    size_bytes=_extract_size(g),
+                    sampled_at=now,
+                    stratified=False,
+                )
             )
         return rows
 
@@ -129,15 +133,15 @@ def sample_one_collection(
             continue
         g = results[0]
         rows.append(
-            {
-                "collection_concept_id": coll["concept_id"],
-                "granule_concept_id": g["meta"]["concept-id"],
-                "data_url": _extract_url(g, access=access),
-                "temporal_bin": i,
-                "size_bytes": _extract_size(g),
-                "sampled_at": now,
-                "stratified": True,
-            }
+            GranuleInfo(
+                collection_concept_id=coll["concept_id"],
+                granule_concept_id=g["meta"]["concept-id"],
+                data_url=_extract_url(g, access=access),
+                temporal_bin=i,
+                size_bytes=_extract_size(g),
+                sampled_at=now,
+                stratified=True,
+            )
         )
     return rows
 
@@ -162,15 +166,15 @@ def run_sample(
     if only_daac:
         q += " AND daac = ?"
         params.append(only_daac)
-    colls = [
-        {
-            "concept_id": r[0],
-            "time_start": r[1],
-            "time_end": r[2],
-            "num_granules": r[3],
-            "daac": r[4],
-            "skip_reason": r[5],
-        }
+    colls: list[SampleCollection] = [
+        SampleCollection(
+            concept_id=r[0],
+            time_start=r[1],
+            time_end=r[2],
+            num_granules=r[3],
+            daac=r[4],
+            skip_reason=r[5],
+        )
         for r in con.execute(q, params).fetchall()
     ]
 

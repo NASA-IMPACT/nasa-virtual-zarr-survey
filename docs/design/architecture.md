@@ -221,7 +221,7 @@ Stratified sampling surfaces intra-collection heterogeneity: collections whose f
 ## Error Handling
 
 - **Per-attempt:** all exceptions caught and serialized. Timeouts produce `TimeoutError`-typed results. Auth failures produce `AuthUnavailable`-typed results.
-- **No retries.** Flakiness surfaces naturally as `partial_pass` across the 5 stratified granules; retrying inside `attempt_one` would conflate transient failure with genuine unsupport and muddy the taxonomy.
+- **No retries.** Flakiness surfaces naturally as `partial_pass` across the 5 stratified granules; retrying inside `attempt_one` would conflate transient failure with genuine lack of support and muddy the taxonomy.
 - **Process-level:** SIGINT flushes the active Parquet shard and exits cleanly. The next `attempt` run resumes from where it stopped.
 
 ## Testing Strategy
