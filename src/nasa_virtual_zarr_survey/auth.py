@@ -10,8 +10,7 @@ from urllib.parse import urlparse
 import earthaccess
 
 if TYPE_CHECKING:
-    from obspec_utils.stores import AiohttpStore
-    from obstore.store import S3Store
+    from obstore.store import HTTPStore, S3Store
 
 
 class AuthUnavailable(Exception):
@@ -97,7 +96,7 @@ class StoreCache:
 
     access: Literal["direct", "external"] = "direct"
     _s3: DAACStoreCache = field(default_factory=DAACStoreCache)
-    _http: dict[str, AiohttpStore] = field(default_factory=dict)
+    _http: dict[str, HTTPStore] = field(default_factory=dict)
     _token: str | None = None
     _logged_in: bool = False
 
@@ -114,7 +113,7 @@ class StoreCache:
                     "earthaccess.login() did not produce a bearer token; check ~/.netrc"
                 )
 
-    def get_store(self, *, provider: str, url: str) -> S3Store | AiohttpStore:
+    def get_store(self, *, provider: str, url: str) -> S3Store | HTTPStore:
         """Return a store capable of reading `url` for the given CMR `provider`."""
         parsed = urlparse(url)
         if self.access == "direct":
@@ -124,17 +123,19 @@ class StoreCache:
                 raise AuthUnavailable(f"cannot extract S3 bucket from url {url!r}")
             return self._s3.get_store(provider=provider, bucket=bucket)
 
-        # external: one AiohttpStore per hostname.
+        # external: one HTTPStore per hostname, with Authorization as a default header.
         key = f"{parsed.scheme}://{parsed.netloc}"
         store = self._http.get(key)
         if store is not None:
             return store
         self._ensure_login()
-        from obspec_utils.stores import AiohttpStore
+        from obstore.store import HTTPStore
 
-        store = AiohttpStore(
-            base_url=key,
-            headers={"Authorization": f"Bearer {self._token}"},
+        store = HTTPStore.from_url(
+            key,
+            client_options={
+                "default_headers": {"Authorization": f"Bearer {self._token}"},
+            },
         )
         self._http[key] = store
         return store

@@ -159,13 +159,19 @@ def test_store_cache_external_mode(monkeypatch):
 
     created: list[dict] = []
 
-    class FakeAiohttpStore:
-        def __init__(self, base_url, headers=None):
-            created.append({"base_url": base_url, "headers": headers})
-            self.base_url = base_url
-            self.headers = headers
+    class FakeHTTPStore:
+        def __init__(self, url: str, client_options: dict | None = None) -> None:
+            created.append({"url": url, "client_options": client_options})
+            self.url = url
+            self.client_options = client_options
 
-    monkeypatch.setattr("obspec_utils.stores.AiohttpStore", FakeAiohttpStore)
+        @classmethod
+        def from_url(
+            cls, url: str, *, client_options: dict | None = None, **_
+        ) -> "FakeHTTPStore":
+            return cls(url, client_options=client_options)
+
+    monkeypatch.setattr("obstore.store.HTTPStore", FakeHTTPStore)
 
     cache = StoreCache(access="external")
     s1 = cache.get_store(provider="PODAAC", url="https://host-a.example/path/one.nc")
@@ -175,6 +181,8 @@ def test_store_cache_external_mode(monkeypatch):
     assert s1 is s2
     assert s3 is not s1
     assert len(created) == 2
-    assert created[0]["base_url"] == "https://host-a.example"
-    assert created[0]["headers"] == {"Authorization": "Bearer BEARER_XYZ"}
-    assert created[1]["base_url"] == "https://host-b.example"
+    assert created[0]["url"] == "https://host-a.example"
+    assert created[0]["client_options"] == {
+        "default_headers": {"Authorization": "Bearer BEARER_XYZ"}
+    }
+    assert created[1]["url"] == "https://host-b.example"

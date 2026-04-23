@@ -31,6 +31,8 @@ dev = [
     "pytest-cov>=5",
     "ruff>=0.7",
     "mypy>=1.11",
+    "types-requests>=2.31",
+    "pyarrow-stubs>=17",
 ]
 docs = [
     "mkdocs-material[imaging]>=9.6.14",
@@ -50,3 +52,9 @@ markers = [
     "integration: requires EDL credentials and network",
 ]
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+
+[tool.codespell]
+ignore-words-list = "strat"
