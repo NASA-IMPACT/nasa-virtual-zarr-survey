@@ -449,5 +449,90 @@ def pilot(
     )
 
 
+@cli.command()
+@click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
+@click.option(
+    "--results",
+    "results_dir",
+    type=click.Path(path_type=Path),
+    default=DEFAULT_RESULTS,
+)
+@click.option(
+    "--bucket",
+    type=str,
+    default=None,
+    help="Filter by taxonomy bucket (e.g., UNSUPPORTED_CODEC).",
+)
+@click.option(
+    "--phase",
+    type=click.Choice(["parse", "dataset"]),
+    default=None,
+    help="Filter by which phase failed. Defaults to either.",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Max scripts to emit (default: 1 per CONCEPT_ID, 3 per --bucket).",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Directory to write .py files. Defaults to stdout.",
+)
+@click.argument("concept_id", required=False)
+def repro(
+    db_path: Path,
+    results_dir: Path,
+    bucket: str | None,
+    phase: str | None,
+    limit: int | None,
+    out_dir: Path | None,
+    concept_id: str | None,
+) -> None:
+    """Emit a self-contained reproducer Python script for a failing granule."""
+    from typing import Literal
+
+    from nasa_virtual_zarr_survey.repro import find_failures, generate_script
+
+    if (concept_id is None) == (bucket is None):
+        raise click.UsageError("Provide exactly one of CONCEPT_ID or --bucket.")
+
+    default_limit = 1 if concept_id else 3
+    effective_limit = limit if limit is not None else default_limit
+
+    # Disambiguate collection vs granule concept IDs by prefix (C vs G).
+    collection_id = concept_id if concept_id and concept_id.startswith("C") else None
+    granule_id = concept_id if concept_id and concept_id.startswith("G") else None
+
+    rows = find_failures(
+        db_path,
+        results_dir,
+        collection_concept_id=collection_id,
+        granule_concept_id=granule_id,
+        bucket=bucket,
+        phase=cast(Literal["parse", "dataset"] | None, phase),
+        limit=effective_limit,
+    )
+    if not rows:
+        raise click.UsageError("No matching failures found.")
+
+    if out_dir is None:
+        for i, row in enumerate(rows, 1):
+            if len(rows) > 1:
+                click.echo(
+                    f"# --- SCRIPT {i}/{len(rows)}: {row.granule_concept_id} ({row.bucket}) ---"
+                )
+            click.echo(generate_script(row))
+    else:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for row in rows:
+            path = out_dir / f"repro_{row.granule_concept_id}.py"
+            path.write_text(generate_script(row))
+            click.echo(f"wrote {path}")
+
+
 if __name__ == "__main__":
     cli()

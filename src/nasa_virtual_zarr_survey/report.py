@@ -205,6 +205,71 @@ def _pct(num: int, denom: int) -> str:
     return f"{num}/{denom} ({p}%)"
 
 
+def _top_buckets(con: duckdb.DuckDBPyConnection) -> dict[str, str]:
+    """Return {collection_concept_id: representative_bucket} from the Parquet log.
+
+    Chooses the first non-null parse_error first, falling back to dataset_error.
+    Collections with no failures map to an empty string.
+    """
+    try:
+        rows = con.execute(
+            """
+            SELECT collection_concept_id,
+                   any_value(parse_error_type)
+                       FILTER (WHERE parse_error_type IS NOT NULL),
+                   any_value(parse_error_message)
+                       FILTER (WHERE parse_error_type IS NOT NULL),
+                   any_value(dataset_error_type)
+                       FILTER (WHERE dataset_error_type IS NOT NULL),
+                   any_value(dataset_error_message)
+                       FILTER (WHERE dataset_error_type IS NOT NULL)
+            FROM results
+            GROUP BY collection_concept_id
+            """
+        ).fetchall()
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for cid, p_et, p_em, d_et, d_em in rows:
+        if p_et:
+            out[cid] = classify(p_et, p_em).value
+        elif d_et:
+            out[cid] = classify(d_et, d_em).value
+    return out
+
+
+def _render_collections_table(
+    verdicts: list[VerdictRow],
+    cube_results: dict[str, CubabilityResult],
+    top_buckets: dict[str, str],
+) -> list[str]:
+    """Render a full per-collection table near the end of the report."""
+    lines = ["## Collections\n"]
+    lines.append(
+        "One row per sampled collection. Top bucket is the representative "
+        "failure class for the collection (first parse failure if any, else "
+        "first dataset failure). The Parquet log at `output/results/` has the "
+        "full per-granule detail.\n"
+    )
+    lines.append("| concept_id | daac | format | parse | dataset | cube | top_bucket |")
+    lines.append("|---|---|---|---|---|---|---|")
+    for v in sorted(
+        verdicts,
+        key=lambda r: (r["daac"] or "", r["format_family"] or "", r["concept_id"]),
+    ):
+        cube = cube_results.get(
+            v["concept_id"], CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)
+        ).verdict.value
+        bucket = top_buckets.get(v["concept_id"], "")
+        lines.append(
+            f"| {v['concept_id']} | {v['daac'] or ''} | "
+            f"{v['format_family'] or ''} | {v['parse_verdict']} | "
+            f"{v['dataset_verdict']} | {cube} | {bucket or '-'} |"
+        )
+    lines.append("")
+    return lines
+
+
 def _render_three_phase_table(
     verdicts: list[VerdictRow],
     cube_results: dict[str, CubabilityResult],
@@ -380,6 +445,9 @@ def render_report(
         if shown == 0:
             lines.append("_No uncategorized errors._")
         lines.append("")
+
+    # Full per-collection listing at the end.
+    lines.extend(_render_collections_table(verdicts, cube_results, _top_buckets(con)))
 
     return "\n".join(lines)
 

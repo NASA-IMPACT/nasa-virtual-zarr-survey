@@ -274,6 +274,13 @@ def test_render_report_contains_counts(tmp_db_path, tmp_results_dir, tmp_path):
     assert "NetCDF4" in text
     assert "Stratification" in text
     assert "FEASIBLE" in text
+    # Collections table enumerates concept IDs
+    assert "## Collections" in text
+    assert (
+        "| concept_id | daac | format | parse | dataset | cube | top_bucket |" in text
+    )
+    assert "| C1 |" in text
+    assert "| C2 |" in text
 
 
 def test_render_report_incompatible_detection(tmp_db_path, tmp_results_dir, tmp_path):
