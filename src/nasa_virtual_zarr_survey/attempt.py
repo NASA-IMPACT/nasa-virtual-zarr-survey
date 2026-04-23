@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import signal
 import sys
+import threading
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -159,24 +159,31 @@ def attempt_one(
     timed_out_phase: str | None = None
     timed_out_flag = False
     exc_info: tuple | None = None
+    done = threading.Event()
+    exc_info_ref: list[tuple | None] = [None]
 
-    ex = ThreadPoolExecutor(max_workers=1)
-    try:
-        fut = ex.submit(_call)
+    def _runner() -> None:
         try:
-            fut.result(timeout=timeout_s)
-        except FuturesTimeoutError:
-            # Capture phase NOW, before shutdown lets the thread advance further.
-            timed_out_flag = True
-            timed_out_phase = phase_ref[0]
-        except Exception as e:
-            import sys
+            _call()
+        except BaseException as worker_exc:
+            exc_info_ref[0] = (type(worker_exc), worker_exc, worker_exc.__traceback__)
+        finally:
+            done.set()
 
-            exc_info = (type(e), e, sys.exc_info()[2])
-    finally:
-        # Shut down without waiting so a sleeping thread doesn't block us here.
-        ex.shutdown(wait=False, cancel_futures=True)
-        result.duration_s = time.monotonic() - t0
+    # Daemon thread: if the worker hangs on a blocking I/O call we still want
+    # the interpreter to exit cleanly once the outer process is done. Unlike
+    # ThreadPoolExecutor, daemon threads do not keep Python alive at shutdown.
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    completed = done.wait(timeout=timeout_s)
+    result.duration_s = time.monotonic() - t0
+
+    if not completed:
+        # Capture phase NOW; the worker may still be running and advance it.
+        timed_out_flag = True
+        timed_out_phase = phase_ref[0]
+    elif exc_info_ref[0] is not None:
+        exc_info = exc_info_ref[0]
 
     if timed_out_flag:
         result.timed_out = True
