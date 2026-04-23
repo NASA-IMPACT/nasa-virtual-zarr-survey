@@ -1,4 +1,5 @@
 """Phase 2 (sample): for each collection, pick N granules stratified across temporal extent."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -53,6 +54,7 @@ def _update_collection_classification(
     Returns the resolved skip_reason (None if array-like, else a string).
     """
     from nasa_virtual_zarr_survey.formats import classify_format
+
     family = classify_format(format_declared, None)
     if family is not None:
         skip_reason = None
@@ -104,15 +106,17 @@ def sample_one_collection(
             count=n_bins,
         )
         for i, g in enumerate(results[:n_bins]):
-            rows.append({
-                "collection_concept_id": coll["concept_id"],
-                "granule_concept_id": g["meta"]["concept-id"],
-                "data_url": _extract_url(g, access=access),
-                "temporal_bin": i,
-                "size_bytes": _extract_size(g),
-                "sampled_at": now,
-                "stratified": False,
-            })
+            rows.append(
+                {
+                    "collection_concept_id": coll["concept_id"],
+                    "granule_concept_id": g["meta"]["concept-id"],
+                    "data_url": _extract_url(g, access=access),
+                    "temporal_bin": i,
+                    "size_bytes": _extract_size(g),
+                    "sampled_at": now,
+                    "stratified": False,
+                }
+            )
         return rows
 
     for i, (a, b) in enumerate(bins):
@@ -124,21 +128,26 @@ def sample_one_collection(
         if not results:
             continue
         g = results[0]
-        rows.append({
-            "collection_concept_id": coll["concept_id"],
-            "granule_concept_id": g["meta"]["concept-id"],
-            "data_url": _extract_url(g, access=access),
-            "temporal_bin": i,
-            "size_bytes": _extract_size(g),
-            "sampled_at": now,
-            "stratified": True,
-        })
+        rows.append(
+            {
+                "collection_concept_id": coll["concept_id"],
+                "granule_concept_id": g["meta"]["concept-id"],
+                "data_url": _extract_url(g, access=access),
+                "temporal_bin": i,
+                "size_bytes": _extract_size(g),
+                "sampled_at": now,
+                "stratified": True,
+            }
+        )
     return rows
 
 
 def run_sample(
-    db_path: Path | str, n_bins: int = 5, only_daac: str | None = None,
-    *, access: str = "direct"
+    db_path: Path | str,
+    n_bins: int = 5,
+    only_daac: str | None = None,
+    *,
+    access: str = "direct",
 ) -> int:
     """Sample granules for every pending collection. Returns total granules written."""
     con = connect(db_path)
@@ -154,8 +163,14 @@ def run_sample(
         q += " AND daac = ?"
         params.append(only_daac)
     colls = [
-        {"concept_id": r[0], "time_start": r[1], "time_end": r[2],
-         "num_granules": r[3], "daac": r[4], "skip_reason": r[5]}
+        {
+            "concept_id": r[0],
+            "time_start": r[1],
+            "time_end": r[2],
+            "num_granules": r[3],
+            "daac": r[4],
+            "skip_reason": r[5],
+        }
         for r in con.execute(q, params).fetchall()
     ]
 
@@ -173,8 +188,15 @@ def run_sample(
         for r in rows:
             con.execute(
                 """INSERT OR IGNORE INTO granules VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                [r["collection_concept_id"], r["granule_concept_id"], r["data_url"],
-                 r["temporal_bin"], r["size_bytes"], r["sampled_at"], r["stratified"]],
+                [
+                    r["collection_concept_id"],
+                    r["granule_concept_id"],
+                    r["data_url"],
+                    r["temporal_bin"],
+                    r["size_bytes"],
+                    r["sampled_at"],
+                    r["stratified"],
+                ],
             )
             total += 1
     return total

@@ -14,8 +14,12 @@ def test_cache_fetches_creds_once_per_provider(monkeypatch):
         calls["n"] += 1
         return {"accessKeyId": "AK", "secretAccessKey": "SK", "sessionToken": "TK"}
 
-    monkeypatch.setattr("nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials", fake_get_creds)
-    monkeypatch.setattr("nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials", fake_get_creds
+    )
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
+    )
 
     built: list = []
 
@@ -23,12 +27,16 @@ def test_cache_fetches_creds_once_per_provider(monkeypatch):
         built.append((creds, bucket))
         return f"S3({bucket})"
 
-    monkeypatch.setattr("nasa_virtual_zarr_survey.auth._build_s3_store", fake_build_s3_store)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth._build_s3_store", fake_build_s3_store
+    )
 
     cache = DAACStoreCache()
     s1 = cache.get_store(provider="PODAAC", bucket="podaac-ops")
     s2 = cache.get_store(provider="PODAAC", bucket="podaac-ops")  # same bucket, cached
-    s3 = cache.get_store(provider="PODAAC", bucket="other-bucket")  # new bucket, new store
+    s3 = cache.get_store(
+        provider="PODAAC", bucket="other-bucket"
+    )  # new bucket, new store
     assert s1 == "S3(podaac-ops)"
     assert s1 is s2
     assert s3 == "S3(other-bucket)"
@@ -43,8 +51,12 @@ def test_cache_refreshes_creds_after_ttl(monkeypatch):
         calls["n"] += 1
         return {"accessKeyId": "AK", "secretAccessKey": "SK", "sessionToken": "TK"}
 
-    monkeypatch.setattr("nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials", fake_get_creds)
-    monkeypatch.setattr("nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials", fake_get_creds
+    )
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
+    )
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.auth._build_s3_store",
         lambda creds, bucket: f"S3({bucket})",
@@ -54,7 +66,9 @@ def test_cache_refreshes_creds_after_ttl(monkeypatch):
     cache.get_store(provider="PODAAC", bucket="podaac-ops")
     # Force expiry on the creds entry
     entry = cache._creds["PODAAC"]
-    cache._creds["PODAAC"] = entry._replace(minted_at=datetime.now(timezone.utc) - timedelta(hours=2))
+    cache._creds["PODAAC"] = entry._replace(
+        minted_at=datetime.now(timezone.utc) - timedelta(hours=2)
+    )
     cache.get_store(provider="PODAAC", bucket="podaac-ops")
     assert calls["n"] == 2
 
@@ -67,7 +81,11 @@ def test_login_called_once_across_multiple_providers(monkeypatch):
     )
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials",
-        lambda provider: {"accessKeyId": "AK", "secretAccessKey": "SK", "sessionToken": "TK"},
+        lambda provider: {
+            "accessKeyId": "AK",
+            "secretAccessKey": "SK",
+            "sessionToken": "TK",
+        },
     )
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.auth._build_s3_store",
@@ -81,7 +99,9 @@ def test_login_called_once_across_multiple_providers(monkeypatch):
 
 
 def test_cache_raises_on_empty_creds(monkeypatch):
-    monkeypatch.setattr("nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
+    )
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials",
         lambda provider: {},
@@ -106,9 +126,15 @@ def test_store_cache_direct_extracts_bucket_from_url(monkeypatch):
         calls.append(("build", bucket))
         return f"S3({bucket})"
 
-    monkeypatch.setattr("nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None)
-    monkeypatch.setattr("nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials", fake_get_creds)
-    monkeypatch.setattr("nasa_virtual_zarr_survey.auth._build_s3_store", fake_build_s3_store)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
+    )
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials", fake_get_creds
+    )
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth._build_s3_store", fake_build_s3_store
+    )
 
     cache = StoreCache(access="direct")
     s1 = cache.get_store(provider="PODAAC", url="s3://prod-lads/VNP02DNB/file.nc")
@@ -124,8 +150,12 @@ def test_store_cache_external_mode(monkeypatch):
     class FakeAuth:
         token = {"access_token": "BEARER_XYZ"}
 
-    monkeypatch.setattr("nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None)
-    monkeypatch.setattr("nasa_virtual_zarr_survey.auth.earthaccess.__auth__", FakeAuth, raising=False)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
+    )
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.__auth__", FakeAuth, raising=False
+    )
 
     created: list[dict] = []
 

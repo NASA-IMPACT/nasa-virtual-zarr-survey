@@ -1,4 +1,5 @@
 """Phase 1 (discover): enumerate cloud-hosted EOSDIS collections into DuckDB."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -48,7 +49,9 @@ def _first_temporal(umm: dict[str, Any]) -> tuple[datetime | None, datetime | No
     for ex in extents:
         rdts = ex.get("RangeDateTimes", [])
         for rdt in rdts:
-            return _parse_iso(rdt.get("BeginningDateTime")), _parse_iso(rdt.get("EndingDateTime"))
+            return _parse_iso(rdt.get("BeginningDateTime")), _parse_iso(
+                rdt.get("EndingDateTime")
+            )
     return None, None
 
 
@@ -104,10 +107,19 @@ def persist_collections(con, rows: Iterable[dict[str, Any]]) -> None:
         con.execute(
             stmt,
             [
-                row["concept_id"], row["short_name"], row["version"], row["daac"],
-                row["provider"], row["format_family"], row["format_declared"],
-                row["num_granules"], row["time_start"], row["time_end"],
-                row["processing_level"], row["skip_reason"], row["discovered_at"],
+                row["concept_id"],
+                row["short_name"],
+                row["version"],
+                row["daac"],
+                row["provider"],
+                row["format_family"],
+                row["format_declared"],
+                row["num_granules"],
+                row["time_start"],
+                row["time_end"],
+                row["processing_level"],
+                row["skip_reason"],
+                row["discovered_at"],
             ],
         )
 
@@ -135,6 +147,7 @@ def fetch_collection_dicts(
             all_top_collection_ids,
             top_collection_ids_total,
         )
+
         if top_per_provider is not None:
             ids = all_top_collection_ids(providers, num_per_provider=top_per_provider)
         else:

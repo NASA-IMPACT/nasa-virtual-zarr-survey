@@ -3,6 +3,7 @@
 Ported from titiler-cmr-compatibility. Re-check annually against
 https://cmr.earthdata.nasa.gov/search/providers.
 """
+
 from __future__ import annotations
 
 EOSDIS_PROVIDERS: list[str] = [

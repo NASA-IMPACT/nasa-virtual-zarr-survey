@@ -1,4 +1,5 @@
 """Map CMR-declared formats and file extensions to array-like format families."""
+
 from __future__ import annotations
 
 from enum import StrEnum
@@ -28,7 +29,14 @@ class FormatFamily(StrEnum):
 _DECLARED: dict[str, FormatFamily] = {
     s.lower(): family
     for family, strings in {
-        FormatFamily.NETCDF4: ["NetCDF", "NetCDF-4", "netCDF-4", "NetCDF4", "netCDF4", "netCDF-4 classic"],
+        FormatFamily.NETCDF4: [
+            "NetCDF",
+            "NetCDF-4",
+            "netCDF-4",
+            "NetCDF4",
+            "netCDF4",
+            "netCDF-4 classic",
+        ],
         FormatFamily.NETCDF3: ["NetCDF-3", "netCDF-3", "NetCDF3", "netCDF classic"],
         FormatFamily.HDF5: ["HDF5", "HDF-EOS5", "HDF5-EOS"],
         FormatFamily.HDF4: ["HDF", "HDF4", "HDF-EOS", "HDF-EOS2"],
@@ -67,7 +75,10 @@ def classify_format(declared: str | None, url: str | None) -> FormatFamily | Non
     if url:
         path = PurePosixPath(urlparse(url).path)
         # strip ".zarr" off group-like URLs too
-        for part in [path.suffix.lower(), *(f".{p}" for p in path.name.lower().split(".")[1:])]:
+        for part in [
+            path.suffix.lower(),
+            *(f".{p}" for p in path.name.lower().split(".")[1:]),
+        ]:
             if part in _EXT:
                 return _EXT[part]
     return None

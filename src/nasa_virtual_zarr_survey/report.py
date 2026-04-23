@@ -1,4 +1,5 @@
 """Roll up per-collection verdicts across three phases and render report.md."""
+
 from __future__ import annotations
 
 from collections import Counter
@@ -21,7 +22,9 @@ def _attach_results(con: duckdb.DuckDBPyConnection, results_dir: Path) -> bool:
     """Register a view `results` over all Parquet shards. Returns True if any exist."""
     shards = list(results_dir.glob("**/*.parquet"))
     if not shards:
-        con.execute("CREATE OR REPLACE VIEW results AS SELECT * FROM (VALUES (NULL)) WHERE false")
+        con.execute(
+            "CREATE OR REPLACE VIEW results AS SELECT * FROM (VALUES (NULL)) WHERE false"
+        )
         return False
     glob = str(results_dir / "**" / "*.parquet")
     con.execute(
@@ -66,7 +69,9 @@ def _phase_verdicts(con: duckdb.DuckDBPyConnection, phase: str) -> dict[str, str
     return out
 
 
-def collection_verdicts(db_path: Path | str, results_dir: Path | str) -> list[dict[str, Any]]:
+def collection_verdicts(
+    db_path: Path | str, results_dir: Path | str
+) -> list[dict[str, Any]]:
     """Return one verdict row per collection in the DB."""
     con = connect(db_path)
     init_schema(con)
@@ -94,19 +99,23 @@ def collection_verdicts(db_path: Path | str, results_dir: Path | str) -> list[di
         else:
             parse_verdict = parse_phase.get(concept_id, "not_attempted")
             dataset_verdict = dataset_phase.get(concept_id, "not_attempted")
-        out.append({
-            "concept_id": concept_id,
-            "daac": daac,
-            "format_family": family,
-            "skip_reason": skip,
-            "stratified": stratified,
-            "parse_verdict": parse_verdict,
-            "dataset_verdict": dataset_verdict,
-        })
+        out.append(
+            {
+                "concept_id": concept_id,
+                "daac": daac,
+                "format_family": family,
+                "skip_reason": skip,
+                "stratified": stratified,
+                "parse_verdict": parse_verdict,
+                "dataset_verdict": dataset_verdict,
+            }
+        )
     return out
 
 
-def _taxonomy_counts(con: duckdb.DuckDBPyConnection, phase: str) -> dict[str, tuple[int, int]]:
+def _taxonomy_counts(
+    con: duckdb.DuckDBPyConnection, phase: str
+) -> dict[str, tuple[int, int]]:
     """For 'parse' or 'dataset' phase, return {bucket: (granule_count, distinct_collection_count)}."""
     et_col = f"{phase}_error_type"
     try:
@@ -125,9 +134,13 @@ def _taxonomy_counts(con: duckdb.DuckDBPyConnection, phase: str) -> dict[str, tu
     return {b: (granules[b], len(colls.get(b, set()))) for b in granules}
 
 
-def _collection_fingerprints(con: duckdb.DuckDBPyConnection, verdicts: list[dict]) -> dict[str, list[dict]]:
+def _collection_fingerprints(
+    con: duckdb.DuckDBPyConnection, verdicts: list[dict]
+) -> dict[str, list[dict]]:
     """Return {collection_concept_id: [fingerprint_dict, ...]} for dataset all_pass collections."""
-    eligible_ids = [v["concept_id"] for v in verdicts if v["dataset_verdict"] == "all_pass"]
+    eligible_ids = [
+        v["concept_id"] for v in verdicts if v["dataset_verdict"] == "all_pass"
+    ]
     if not eligible_ids:
         return {}
     placeholders = ",".join(["?"] * len(eligible_ids))
@@ -147,7 +160,9 @@ def _collection_fingerprints(con: duckdb.DuckDBPyConnection, verdicts: list[dict
     return out
 
 
-def _cubability_results(con: duckdb.DuckDBPyConnection, verdicts: list[dict]) -> dict[str, CubabilityResult]:
+def _cubability_results(
+    con: duckdb.DuckDBPyConnection, verdicts: list[dict]
+) -> dict[str, CubabilityResult]:
     """Return {concept_id: CubabilityResult} for every collection."""
     fps_by_coll = _collection_fingerprints(con, verdicts)
     out: dict[str, CubabilityResult] = {}
@@ -203,8 +218,11 @@ def _render_three_phase_table(
         parsable = sum(1 for v in gv if v["parse_verdict"] == "all_pass")
         datasetable = sum(1 for v in gv if v["dataset_verdict"] == "all_pass")
         cubable = sum(
-            1 for v in gv
-            if cube_results.get(v["concept_id"], CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)).verdict
+            1
+            for v in gv
+            if cube_results.get(
+                v["concept_id"], CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)
+            ).verdict
             == CubabilityVerdict.FEASIBLE
         )
         lines.append(
@@ -260,7 +278,8 @@ def render_report(
 
     # Phase 5: Virtual Store Feasibility
     datasetable_count = sum(
-        1 for v in verdicts
+        1
+        for v in verdicts
         if v["parse_verdict"] == "all_pass" and v["dataset_verdict"] == "all_pass"
     )
     lines.append("## Phase 5: Virtual Store Feasibility\n")
@@ -269,7 +288,9 @@ def render_report(
         f"(denominator: {datasetable_count}), whether the granules can be combined "
         f"into a coherent virtual store.\n"
     )
-    by_cube_verdict: Counter[str] = Counter(r.verdict.value for r in cube_results.values())
+    by_cube_verdict: Counter[str] = Counter(
+        r.verdict.value for r in cube_results.values()
+    )
     lines.append("| Verdict | Count |\n|---|---:|")
     for k in ["FEASIBLE", "INCOMPATIBLE", "INCONCLUSIVE", "NOT_ATTEMPTED"]:
         if k in by_cube_verdict:
@@ -289,7 +310,9 @@ def render_report(
 
     if incompatible_reasons or inconclusive_reasons:
         lines.append("### Virtual Store Incompatibility Reasons\n")
-        lines.append("| Verdict | Reason | Collections | Example IDs |\n|---|---|---:|---|")
+        lines.append(
+            "| Verdict | Reason | Collections | Example IDs |\n|---|---|---:|---|"
+        )
         for reason, n in incompatible_reasons.most_common(10):
             ex = ", ".join(examples_by_reason[reason][:3])
             lines.append(f"| INCOMPATIBLE | {reason} | {n} | {ex} |")
@@ -300,7 +323,11 @@ def render_report(
 
     # Three-phase summary by DAAC and Format Family
     lines.extend(_render_three_phase_table(verdicts, cube_results, "By DAAC", "daac"))
-    lines.extend(_render_three_phase_table(verdicts, cube_results, "By Format Family", "format_family"))
+    lines.extend(
+        _render_three_phase_table(
+            verdicts, cube_results, "By Format Family", "format_family"
+        )
+    )
 
     # Stratification
     lines.append("## Stratification\n")
@@ -324,7 +351,12 @@ def render_report(
     # Top 20 OTHER errors per phase
     for phase_label, et_col, em_col, success_col in [
         ("Parsability", "parse_error_type", "parse_error_message", "parse_success"),
-        ("Datasetability", "dataset_error_type", "dataset_error_message", "dataset_success"),
+        (
+            "Datasetability",
+            "dataset_error_type",
+            "dataset_error_message",
+            "dataset_success",
+        ),
     ]:
         lines.append(f"## Top 20 Raw Errors in `OTHER` ({phase_label})\n")
         try:
@@ -349,7 +381,9 @@ def render_report(
     return "\n".join(lines)
 
 
-def run_report(db_path: Path | str, results_dir: Path | str, out_path: Path | str) -> None:
+def run_report(
+    db_path: Path | str, results_dir: Path | str, out_path: Path | str
+) -> None:
     """Read DuckDB state plus Parquet results, compute verdicts, and write `report.md`.
 
     Idempotent and cheap: re-run after refining `taxonomy.py` to update the

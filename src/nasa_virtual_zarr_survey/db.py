@@ -1,4 +1,5 @@
 """DuckDB schema and connection helpers."""
+
 from __future__ import annotations
 
 from pathlib import Path

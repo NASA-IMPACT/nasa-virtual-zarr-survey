@@ -23,8 +23,14 @@ def _fake_umm(concept_id: str, fmt: str, provider: str = "PODAAC") -> dict:
                 "FileDistributionInformation": [{"Format": fmt}]
             },
             "TemporalExtents": [
-                {"RangeDateTimes": [{"BeginningDateTime": "2020-01-01T00:00:00Z",
-                                     "EndingDateTime": "2024-01-01T00:00:00Z"}]}
+                {
+                    "RangeDateTimes": [
+                        {
+                            "BeginningDateTime": "2020-01-01T00:00:00Z",
+                            "EndingDateTime": "2024-01-01T00:00:00Z",
+                        }
+                    ]
+                }
             ],
             "ProcessingLevel": {"Id": "L3"},
         },
@@ -68,7 +74,8 @@ def test_run_discover_uses_earthaccess(tmp_db_path: Path, monkeypatch):
 
     # earthaccess returns DataCollection objects; render_dict is an attribute, not a method
     class FakeColl:
-        def __init__(self, d): self.render_dict = d
+        def __init__(self, d):
+            self.render_dict = d
 
     fake_search = MagicMock(return_value=[FakeColl(d) for d in fake_results])
     monkeypatch.setattr(
@@ -81,7 +88,10 @@ def test_run_discover_uses_earthaccess(tmp_db_path: Path, monkeypatch):
     rows = con.execute(
         "SELECT concept_id, format_family, skip_reason FROM collections ORDER BY concept_id"
     ).fetchall()
-    assert rows == [("C1-PODAAC", "NetCDF4", None), ("C2-PODAAC", None, "non_array_format")]
+    assert rows == [
+        ("C1-PODAAC", "NetCDF4", None),
+        ("C2-PODAAC", None, "non_array_format"),
+    ]
 
     fake_search.assert_called_once()
     kwargs = fake_search.call_args.kwargs
@@ -93,7 +103,8 @@ def test_collection_row_from_umm_uses_file_archive_information():
     umm = {
         "meta": {"concept-id": "C1", "provider-id": "PODAAC"},
         "umm": {
-            "ShortName": "FOO", "Version": "1",
+            "ShortName": "FOO",
+            "Version": "1",
             "DataCenters": [{"ShortName": "PODAAC"}],
             "ArchiveAndDistributionInformation": {
                 # No FileDistributionInformation; format only in FileArchiveInformation.
@@ -111,7 +122,8 @@ def test_collection_row_from_umm_marks_null_format_as_unknown():
     umm = {
         "meta": {"concept-id": "C2", "provider-id": "PODAAC"},
         "umm": {
-            "ShortName": "BAR", "Version": "1",
+            "ShortName": "BAR",
+            "Version": "1",
             "DataCenters": [{"ShortName": "PODAAC"}],
             "ArchiveAndDistributionInformation": {},
             "ProcessingLevel": {"Id": "L3"},
@@ -127,7 +139,8 @@ def test_collection_row_from_umm_non_array_format_stays_non_array():
     umm = {
         "meta": {"concept-id": "C3", "provider-id": "PODAAC"},
         "umm": {
-            "ShortName": "BAZ", "Version": "1",
+            "ShortName": "BAZ",
+            "Version": "1",
             "DataCenters": [{"ShortName": "PODAAC"}],
             "ArchiveAndDistributionInformation": {
                 "FileDistributionInformation": [{"Format": "PDF"}],
@@ -177,9 +190,12 @@ def test_run_discover_top_per_provider_hydrates_ids(tmp_db_path: Path, monkeypat
     run_discover(tmp_db_path, top_per_provider=2)
 
     from nasa_virtual_zarr_survey.db import connect, init_schema
+
     con = connect(tmp_db_path)
     init_schema(con)
-    ids = sorted(r[0] for r in con.execute("SELECT concept_id FROM collections").fetchall())
+    ids = sorted(
+        r[0] for r in con.execute("SELECT concept_id FROM collections").fetchall()
+    )
     assert ids == ["C1-PODAAC", "C2-PODAAC"]
     # Verify earthaccess was called with concept_id= (not cloud_hosted= mode)
     assert captured[0]["concept_id"] == ["C1-PODAAC", "C2-PODAAC"]

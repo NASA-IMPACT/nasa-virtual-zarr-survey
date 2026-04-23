@@ -24,8 +24,17 @@ def test_collections_columns(tmp_db_path: Path):
     con = connect(tmp_db_path)
     init_schema(con)
     cols = {r[1] for r in con.execute("PRAGMA table_info('collections')").fetchall()}
-    for expected in ["concept_id", "short_name", "version", "daac", "format_family",
-                     "num_granules", "time_start", "time_end", "skip_reason"]:
+    for expected in [
+        "concept_id",
+        "short_name",
+        "version",
+        "daac",
+        "format_family",
+        "num_granules",
+        "time_start",
+        "time_end",
+        "skip_reason",
+    ]:
         assert expected in cols, f"missing column {expected}"
 
 
@@ -33,8 +42,15 @@ def test_granules_columns(tmp_db_path: Path):
     con = connect(tmp_db_path)
     init_schema(con)
     cols = {r[1] for r in con.execute("PRAGMA table_info('granules')").fetchall()}
-    for expected in ["collection_concept_id", "granule_concept_id", "data_url",
-                     "temporal_bin", "size_bytes", "sampled_at", "stratified"]:
+    for expected in [
+        "collection_concept_id",
+        "granule_concept_id",
+        "data_url",
+        "temporal_bin",
+        "size_bytes",
+        "sampled_at",
+        "stratified",
+    ]:
         assert expected in cols, f"missing column {expected}"
 
 

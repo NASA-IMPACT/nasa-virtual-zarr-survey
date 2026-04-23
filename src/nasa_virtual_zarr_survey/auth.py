@@ -1,4 +1,5 @@
 """EDL login + per-provider credential cache + per-bucket S3 store + per-hostname HTTPS store."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -101,7 +102,9 @@ class StoreCache:
             earthaccess.login(strategy="netrc")
             self._logged_in = True
             token_dict = getattr(earthaccess.__auth__, "token", None) or {}
-            self._token = token_dict.get("access_token") if isinstance(token_dict, dict) else None
+            self._token = (
+                token_dict.get("access_token") if isinstance(token_dict, dict) else None
+            )
             if not self._token:
                 raise AuthUnavailable(
                     "earthaccess.login() did not produce a bearer token; check ~/.netrc"

@@ -2,6 +2,7 @@
 
 Run with: uv run pytest -m integration -v
 """
+
 from __future__ import annotations
 
 import os

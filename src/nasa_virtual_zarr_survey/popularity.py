@@ -1,4 +1,5 @@
 """Fetch the top-N most-used collection IDs per EOSDIS provider from CMR."""
+
 from __future__ import annotations
 
 import requests
@@ -32,7 +33,9 @@ def top_collection_ids(provider: str, num: int = 100) -> list[str]:
     return [entry["id"] for entry in response.json()["feed"]["entry"]]
 
 
-def all_top_collection_ids(providers: list[str], num_per_provider: int = 100) -> list[str]:
+def all_top_collection_ids(
+    providers: list[str], num_per_provider: int = 100
+) -> list[str]:
     """Fetch top-N per provider and concatenate. Preserves per-provider ordering."""
     ids: list[str] = []
     for provider in providers:
@@ -54,6 +57,7 @@ def top_collection_ids_total(providers: list[str], num_total: int) -> list[str]:
     if num_total <= 0 or not providers:
         return []
     import math
+
     per_provider = math.ceil(num_total / len(providers))
     ids = all_top_collection_ids(providers, num_per_provider=per_provider)
     return ids[:num_total]

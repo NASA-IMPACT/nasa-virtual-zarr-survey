@@ -13,7 +13,9 @@ def test_top_collection_ids_parses_response(monkeypatch):
     fake_response.json.return_value = {
         "feed": {
             "entry": [
-                {"id": "C1-PODAAC"}, {"id": "C2-PODAAC"}, {"id": "C3-PODAAC"},
+                {"id": "C1-PODAAC"},
+                {"id": "C2-PODAAC"},
+                {"id": "C3-PODAAC"},
             ]
         }
     }
@@ -32,6 +34,7 @@ def test_top_collection_ids_parses_response(monkeypatch):
 
 def test_top_collection_ids_rejects_over_max():
     import pytest
+
     with pytest.raises(ValueError):
         top_collection_ids("PODAAC", num=3000)
 

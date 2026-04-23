@@ -11,30 +11,32 @@ from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.report import collection_verdicts, run_report
 
 # New schema matching attempt._SCHEMA
-_RESULT_SCHEMA = pa.schema([
-    ("collection_concept_id", pa.string()),
-    ("granule_concept_id", pa.string()),
-    ("daac", pa.string()),
-    ("format_family", pa.string()),
-    ("parser", pa.string()),
-    ("stratified", pa.bool_()),
-    ("attempted_at", pa.timestamp("us", tz="UTC")),
-    ("parse_success", pa.bool_()),
-    ("parse_error_type", pa.string()),
-    ("parse_error_message", pa.string()),
-    ("parse_error_traceback", pa.string()),
-    ("parse_duration_s", pa.float64()),
-    ("dataset_success", pa.bool_()),
-    ("dataset_error_type", pa.string()),
-    ("dataset_error_message", pa.string()),
-    ("dataset_error_traceback", pa.string()),
-    ("dataset_duration_s", pa.float64()),
-    ("success", pa.bool_()),
-    ("timed_out", pa.bool_()),
-    ("timed_out_phase", pa.string()),
-    ("duration_s", pa.float64()),
-    ("fingerprint", pa.string()),
-])
+_RESULT_SCHEMA = pa.schema(
+    [
+        ("collection_concept_id", pa.string()),
+        ("granule_concept_id", pa.string()),
+        ("daac", pa.string()),
+        ("format_family", pa.string()),
+        ("parser", pa.string()),
+        ("stratified", pa.bool_()),
+        ("attempted_at", pa.timestamp("us", tz="UTC")),
+        ("parse_success", pa.bool_()),
+        ("parse_error_type", pa.string()),
+        ("parse_error_message", pa.string()),
+        ("parse_error_traceback", pa.string()),
+        ("parse_duration_s", pa.float64()),
+        ("dataset_success", pa.bool_()),
+        ("dataset_error_type", pa.string()),
+        ("dataset_error_message", pa.string()),
+        ("dataset_error_traceback", pa.string()),
+        ("dataset_duration_s", pa.float64()),
+        ("success", pa.bool_()),
+        ("timed_out", pa.bool_()),
+        ("timed_out_phase", pa.string()),
+        ("duration_s", pa.float64()),
+        ("fingerprint", pa.string()),
+    ]
+)
 
 
 def _write_results(path: Path, rows: list[dict]) -> None:
@@ -100,17 +102,46 @@ def test_collection_verdicts_classifies_all_three(tmp_db_path, tmp_results_dir):
     rows = []
     # C_ALL: all parse and dataset succeed
     for i in range(3):
-        rows.append(_row("C_ALL", f"G{i}", parse_success=True, dataset_success=True, now=now))
+        rows.append(
+            _row("C_ALL", f"G{i}", parse_success=True, dataset_success=True, now=now)
+        )
     # C_PART: first granule fully succeeds, others fail dataset
     rows.append(_row("C_PART", "G0", parse_success=True, dataset_success=True, now=now))
-    rows.append(_row("C_PART", "G1", parse_success=True, dataset_success=False,
-                     dataset_error_type="ValueError", dataset_error_message="codec not found", now=now))
-    rows.append(_row("C_PART", "G2", parse_success=True, dataset_success=False,
-                     dataset_error_type="ValueError", dataset_error_message="codec not found", now=now))
+    rows.append(
+        _row(
+            "C_PART",
+            "G1",
+            parse_success=True,
+            dataset_success=False,
+            dataset_error_type="ValueError",
+            dataset_error_message="codec not found",
+            now=now,
+        )
+    )
+    rows.append(
+        _row(
+            "C_PART",
+            "G2",
+            parse_success=True,
+            dataset_success=False,
+            dataset_error_type="ValueError",
+            dataset_error_message="codec not found",
+            now=now,
+        )
+    )
     # C_NONE: all fail to parse
     for i in range(3):
-        rows.append(_row("C_NONE", f"G{i}", parse_success=False, dataset_success=None,
-                         parse_error_type="PermissionError", parse_error_message="403 Forbidden", now=now))
+        rows.append(
+            _row(
+                "C_NONE",
+                f"G{i}",
+                parse_success=False,
+                dataset_success=None,
+                parse_error_type="PermissionError",
+                parse_error_message="403 Forbidden",
+                now=now,
+            )
+        )
     _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", rows)
 
     verdicts = collection_verdicts(tmp_db_path, tmp_results_dir)
@@ -139,10 +170,24 @@ def test_parse_fail_means_dataset_not_attempted(tmp_db_path, tmp_results_dir):
 
     now = datetime.now(timezone.utc)
     rows = [
-        _row("C_FAIL", "G0", parse_success=False, dataset_success=None,
-             parse_error_type="NoParserAvailable", parse_error_message="no parser for HDF4", now=now),
-        _row("C_FAIL", "G1", parse_success=False, dataset_success=None,
-             parse_error_type="NoParserAvailable", parse_error_message="no parser for HDF4", now=now),
+        _row(
+            "C_FAIL",
+            "G0",
+            parse_success=False,
+            dataset_success=None,
+            parse_error_type="NoParserAvailable",
+            parse_error_message="no parser for HDF4",
+            now=now,
+        ),
+        _row(
+            "C_FAIL",
+            "G1",
+            parse_success=False,
+            dataset_success=None,
+            parse_error_type="NoParserAvailable",
+            parse_error_message="no parser for HDF4",
+            now=now,
+        ),
     ]
     _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", rows)
 
@@ -158,17 +203,38 @@ def _make_fp(time_hash: str, time_min: int, time_max: int) -> str:
         "dims": {"time": 10, "lat": 5, "lon": 10},
         "data_vars": {
             "temp": {
-                "dtype": "float32", "dims": ["time", "lat", "lon"],
-                "chunks": [1, 5, 10], "fill_value": None, "codecs": ["Blosc"],
+                "dtype": "float32",
+                "dims": ["time", "lat", "lon"],
+                "chunks": [1, 5, 10],
+                "fill_value": None,
+                "codecs": ["Blosc"],
             }
         },
         "coords": {
-            "time": {"dtype": "int64", "dims": ["time"], "shape": [10],
-                     "values_hash": time_hash, "min": time_min, "max": time_max},
-            "lat":  {"dtype": "float32", "dims": ["lat"], "shape": [5],
-                     "values_hash": "lathash", "min": -45.0, "max": 45.0},
-            "lon":  {"dtype": "float32", "dims": ["lon"], "shape": [10],
-                     "values_hash": "lonhash", "min": -90.0, "max": 90.0},
+            "time": {
+                "dtype": "int64",
+                "dims": ["time"],
+                "shape": [10],
+                "values_hash": time_hash,
+                "min": time_min,
+                "max": time_max,
+            },
+            "lat": {
+                "dtype": "float32",
+                "dims": ["lat"],
+                "shape": [5],
+                "values_hash": "lathash",
+                "min": -45.0,
+                "max": 45.0,
+            },
+            "lon": {
+                "dtype": "float32",
+                "dims": ["lon"],
+                "shape": [10],
+                "values_hash": "lonhash",
+                "min": -90.0,
+                "max": 90.0,
+            },
         },
     }
     return fingerprint_to_json(fp)
@@ -188,11 +254,14 @@ def test_render_report_contains_counts(tmp_db_path, tmp_results_dir, tmp_path):
     now = datetime.now(timezone.utc)
     fp1 = _make_fp("hash_a", 0, 9)
     fp2 = _make_fp("hash_b", 10, 19)
-    _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", [
-        _row("C1", "G1", fingerprint=fp1, now=now),
-        _row("C2", "G2a", fingerprint=fp1, now=now),
-        _row("C2", "G2b", fingerprint=fp2, now=now),
-    ])
+    _write_results(
+        tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet",
+        [
+            _row("C1", "G1", fingerprint=fp1, now=now),
+            _row("C2", "G2a", fingerprint=fp1, now=now),
+            _row("C2", "G2b", fingerprint=fp2, now=now),
+        ],
+    )
 
     out = tmp_path / "report.md"
     run_report(tmp_db_path, tmp_results_dir, out)
@@ -218,26 +287,50 @@ def test_render_report_incompatible_detection(tmp_db_path, tmp_results_dir, tmp_
 
     now = datetime.now(timezone.utc)
 
-    def _fp_incompatible(dtype: str, time_hash: str, time_min: str, time_max: str) -> str:
+    def _fp_incompatible(
+        dtype: str, time_hash: str, time_min: str, time_max: str
+    ) -> str:
         fp = {
             "dims": {"time": 10, "lat": 5},
             "data_vars": {
                 "sst": {
-                    "dtype": dtype, "dims": ["time", "lat"],
-                    "chunks": [1, 5], "fill_value": None, "codecs": [],
+                    "dtype": dtype,
+                    "dims": ["time", "lat"],
+                    "chunks": [1, 5],
+                    "fill_value": None,
+                    "codecs": [],
                 }
             },
             "coords": {
-                "time": {"dtype": "int64", "dims": ["time"], "shape": [10],
-                         "values_hash": time_hash, "min": time_min, "max": time_max},
+                "time": {
+                    "dtype": "int64",
+                    "dims": ["time"],
+                    "shape": [10],
+                    "values_hash": time_hash,
+                    "min": time_min,
+                    "max": time_max,
+                },
             },
         }
         return fingerprint_to_json(fp)
 
-    _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", [
-        _row("CINC", "GA", fingerprint=_fp_incompatible("float32", "h1", "0", "9"), now=now),
-        _row("CINC", "GB", fingerprint=_fp_incompatible("float64", "h2", "10", "19"), now=now),
-    ])
+    _write_results(
+        tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet",
+        [
+            _row(
+                "CINC",
+                "GA",
+                fingerprint=_fp_incompatible("float32", "h1", "0", "9"),
+                now=now,
+            ),
+            _row(
+                "CINC",
+                "GB",
+                fingerprint=_fp_incompatible("float64", "h2", "10", "19"),
+                now=now,
+            ),
+        ],
+    )
 
     out = tmp_path / "report.md"
     run_report(tmp_db_path, tmp_results_dir, out)
@@ -246,7 +339,9 @@ def test_render_report_incompatible_detection(tmp_db_path, tmp_results_dir, tmp_
     assert "dtype" in text
 
 
-def test_taxonomy_counts_reports_granule_and_collection_counts(tmp_db_path, tmp_results_dir, tmp_path):
+def test_taxonomy_counts_reports_granule_and_collection_counts(
+    tmp_db_path, tmp_results_dir, tmp_path
+):
     con = connect(tmp_db_path)
     init_schema(con)
     con.execute(
@@ -261,14 +356,17 @@ def test_taxonomy_counts_reports_granule_and_collection_counts(tmp_db_path, tmp_
     rows = []
     for cid in ["C1", "C2"]:
         for i in range(3):
-            rows.append(_row(
-                cid, f"{cid}-G{i}",
-                parse_success=False,
-                dataset_success=None,
-                parse_error_type="NoParserAvailable",
-                parse_error_message="No VirtualiZarr parser registered for HDF4",
-                now=now,
-            ))
+            rows.append(
+                _row(
+                    cid,
+                    f"{cid}-G{i}",
+                    parse_success=False,
+                    dataset_success=None,
+                    parse_error_type="NoParserAvailable",
+                    parse_error_message="No VirtualiZarr parser registered for HDF4",
+                    now=now,
+                )
+            )
     _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", rows)
 
     out = tmp_path / "report.md"
@@ -289,9 +387,12 @@ def test_three_phase_daac_table_format(tmp_db_path, tmp_results_dir, tmp_path):
     con.close()
 
     now = datetime.now(timezone.utc)
-    _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", [
-        _row("C1", "G1", now=now),
-    ])
+    _write_results(
+        tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet",
+        [
+            _row("C1", "G1", now=now),
+        ],
+    )
 
     out = tmp_path / "report.md"
     run_report(tmp_db_path, tmp_results_dir, out)

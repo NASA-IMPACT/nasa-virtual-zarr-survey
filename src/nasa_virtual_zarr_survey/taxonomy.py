@@ -4,6 +4,7 @@ Seeded from titiler-cmr-compatibility's `IncompatibilityReason` plus hypotheses
 for VirtualiZarr-specific failure modes. Refined after the 50-collection pilot
 by reading raw `error_message` values under the `OTHER` bucket.
 """
+
 from __future__ import annotations
 
 import re
@@ -45,17 +46,52 @@ _RULES: list[tuple[re.Pattern | None, re.Pattern | None, Bucket]] = [
     (re.compile(r"NoParserAvailable"), None, Bucket.NO_PARSER),
     (re.compile(r"SampleInvalid"), None, Bucket.SAMPLE_INVALID),
     (re.compile(r"TimeoutError"), None, Bucket.TIMEOUT),
-    (None, re.compile(r"403|Forbidden|Unauthorized|AccessDenied", re.I), Bucket.FORBIDDEN),
-    (None, re.compile(r"variable[- ]length chunks|variable chunks", re.I), Bucket.VARIABLE_CHUNKS),
-    (None, re.compile(r"codec.*(not supported|unknown|unsupported)", re.I), Bucket.UNSUPPORTED_CODEC),
-    (None, re.compile(r"filter.*(not supported|unknown|unsupported)|filter pipeline element not supported", re.I), Bucket.UNSUPPORTED_FILTER),
+    (
+        None,
+        re.compile(r"403|Forbidden|Unauthorized|AccessDenied", re.I),
+        Bucket.FORBIDDEN,
+    ),
+    (
+        None,
+        re.compile(r"variable[- ]length chunks|variable chunks", re.I),
+        Bucket.VARIABLE_CHUNKS,
+    ),
+    (
+        None,
+        re.compile(r"codec.*(not supported|unknown|unsupported)", re.I),
+        Bucket.UNSUPPORTED_CODEC,
+    ),
+    (
+        None,
+        re.compile(
+            r"filter.*(not supported|unknown|unsupported)|filter pipeline element not supported",
+            re.I,
+        ),
+        Bucket.UNSUPPORTED_FILTER,
+    ),
     (None, re.compile(r"sharding.*not supported", re.I), Bucket.SHARDING_UNSUPPORTED),
     (None, re.compile(r"compound.*dtype|compound type", re.I), Bucket.COMPOUND_DTYPE),
     (None, re.compile(r"string.*dtype|dtype.*string", re.I), Bucket.STRING_DTYPE),
-    (None, re.compile(r"not aligned with its parents|group structure", re.I), Bucket.GROUP_STRUCTURE),
-    (None, re.compile(r"not a valid netCDF|valid HDF5|signature of", re.I), Bucket.CANT_OPEN_FILE),
-    (None, re.compile(r"decode|can only convert an array of size 1", re.I), Bucket.DECODE_ERROR),
-    (None, re.compile(r"ConnectionError|RemoteDisconnected|timed out reading", re.I), Bucket.NETWORK_ERROR),
+    (
+        None,
+        re.compile(r"not aligned with its parents|group structure", re.I),
+        Bucket.GROUP_STRUCTURE,
+    ),
+    (
+        None,
+        re.compile(r"not a valid netCDF|valid HDF5|signature of", re.I),
+        Bucket.CANT_OPEN_FILE,
+    ),
+    (
+        None,
+        re.compile(r"decode|can only convert an array of size 1", re.I),
+        Bucket.DECODE_ERROR,
+    ),
+    (
+        None,
+        re.compile(r"ConnectionError|RemoteDisconnected|timed out reading", re.I),
+        Bucket.NETWORK_ERROR,
+    ),
 ]
 
 

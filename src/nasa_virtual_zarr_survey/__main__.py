@@ -1,4 +1,5 @@
 """CLI entry point."""
+
 from __future__ import annotations
 
 import warnings
@@ -27,6 +28,7 @@ DEFAULT_REPORT = Path("output/report.md")
 
 def _discover_summary(db_path: Path) -> str:
     from nasa_virtual_zarr_survey.db import connect, init_schema
+
     con = connect(db_path)
     init_schema(con)
     total = con.execute("SELECT count(*) FROM collections").fetchone()[0]
@@ -42,6 +44,7 @@ def _discover_summary(db_path: Path) -> str:
 
 def _skipped_breakdown(db_path: Path, limit: int | None = None) -> str:
     from nasa_virtual_zarr_survey.db import connect, init_schema
+
     con = connect(db_path)
     init_schema(con)
 
@@ -84,6 +87,7 @@ def _skipped_breakdown(db_path: Path, limit: int | None = None) -> str:
 
 def _sample_summary(db_path: Path) -> str:
     from nasa_virtual_zarr_survey.db import connect, init_schema
+
     con = connect(db_path)
     init_schema(con)
     n_gran = con.execute("SELECT count(*) FROM granules").fetchone()[0]
@@ -95,6 +99,7 @@ def _sample_summary(db_path: Path) -> str:
 
 def _attempt_summary(db_path: Path, results_dir: Path, this_run: int) -> str:
     from nasa_virtual_zarr_survey.db import connect, init_schema
+
     con = connect(db_path)
     init_schema(con)
     total_granules = con.execute("SELECT count(*) FROM granules").fetchone()[0]
@@ -166,31 +171,67 @@ def version() -> None:
 
 @cli.command()
 @click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
-@click.option("--limit", type=int, default=None,
-              help="Cap on total collections (cloud-hosted mode).")
-@click.option("--top", "top_total", type=int, default=None,
-              help="Fetch the top-N most-used collections TOTAL (ranked by CMR usage_score), "
-                   "distributed across EOSDIS providers.")
-@click.option("--top-per-provider", "top_per_provider", type=int, default=None,
-              help="Fetch the top-N most-used collections PER provider (ranked by CMR usage_score).")
-@click.option("--skipped", "show_skipped", is_flag=True, default=False,
-              help="After discover completes, print the non-array-format breakdown.")
-@click.option("--dry-run", "dry_run", is_flag=True, default=False,
-              help="Fetch and classify collections without writing to the DB.")
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Cap on total collections (cloud-hosted mode).",
+)
+@click.option(
+    "--top",
+    "top_total",
+    type=int,
+    default=None,
+    help="Fetch the top-N most-used collections TOTAL (ranked by CMR usage_score), "
+    "distributed across EOSDIS providers.",
+)
+@click.option(
+    "--top-per-provider",
+    "top_per_provider",
+    type=int,
+    default=None,
+    help="Fetch the top-N most-used collections PER provider (ranked by CMR usage_score).",
+)
+@click.option(
+    "--skipped",
+    "show_skipped",
+    is_flag=True,
+    default=False,
+    help="After discover completes, print the non-array-format breakdown.",
+)
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Fetch and classify collections without writing to the DB.",
+)
 def discover(
-    db_path: Path, limit: int | None,
-    top_total: int | None, top_per_provider: int | None,
-    show_skipped: bool, dry_run: bool,
+    db_path: Path,
+    limit: int | None,
+    top_total: int | None,
+    top_per_provider: int | None,
+    show_skipped: bool,
+    dry_run: bool,
 ) -> None:
     """Phase 1 (discover): enumerate CMR collections and write to DuckDB."""
     from collections import Counter
 
     from nasa_virtual_zarr_survey.discover import (
-        collection_row_from_umm, fetch_collection_dicts, run_discover,
+        collection_row_from_umm,
+        fetch_collection_dicts,
+        run_discover,
     )
 
-    flags = [n for n, v in (("limit", limit), ("top", top_total),
-                            ("top-per-provider", top_per_provider)) if v is not None]
+    flags = [
+        n
+        for n, v in (
+            ("limit", limit),
+            ("top", top_total),
+            ("top-per-provider", top_per_provider),
+        )
+        if v is not None
+    ]
     if len(flags) > 1:
         raise click.UsageError(
             f"--{', --'.join(flags)} are mutually exclusive; pass only one"
@@ -213,7 +254,8 @@ def discover(
         if show_skipped:
             by_fmt_reason: Counter = Counter(
                 ((r.get("format_declared") or "(null)"), r["skip_reason"])
-                for r in rows if r["skip_reason"]
+                for r in rows
+                if r["skip_reason"]
             )
             click.echo("")
             click.echo("Skipped collections by format:")
@@ -234,8 +276,10 @@ def discover(
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     run_discover(
-        db_path, limit=limit,
-        top_per_provider=top_per_provider, top_total=top_total,
+        db_path,
+        limit=limit,
+        top_per_provider=top_per_provider,
+        top_total=top_total,
     )
     click.echo(_discover_summary(db_path))
     if show_skipped:
@@ -247,64 +291,122 @@ def discover(
 @click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
 @click.option("--n-bins", type=int, default=5, help="Granules per collection.")
 @click.option("--daac", type=str, default=None, help="Restrict to one DAAC.")
-@click.option("--access", type=click.Choice(["direct", "external"]), default="direct",
-              help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
-                   "'external' uses HTTPS URLs with EDL bearer token.")
+@click.option(
+    "--access",
+    type=click.Choice(["direct", "external"]),
+    default="direct",
+    help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
+    "'external' uses HTTPS URLs with EDL bearer token.",
+)
 def sample(db_path: Path, n_bins: int, daac: str | None, access: str) -> None:
     """Phase 2 (sample): pick N granules stratified across each collection's temporal extent."""
     from nasa_virtual_zarr_survey.sample import run_sample
+
     run_sample(db_path, n_bins=n_bins, only_daac=daac, access=access)
     click.echo(_sample_summary(db_path))
 
 
 @cli.command()
 @click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
-@click.option("--results", "results_dir", type=click.Path(path_type=Path), default=DEFAULT_RESULTS)
+@click.option(
+    "--results", "results_dir", type=click.Path(path_type=Path), default=DEFAULT_RESULTS
+)
 @click.option("--timeout", "timeout_s", type=int, default=60)
 @click.option("--shard-size", type=int, default=500)
 @click.option("--daac", type=str, default=None, help="Restrict to one DAAC.")
-@click.option("--access", type=click.Choice(["direct", "external"]), default="direct",
-              help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
-                   "'external' uses HTTPS URLs with EDL bearer token.")
-def attempt(db_path: Path, results_dir: Path, timeout_s: int, shard_size: int,
-            daac: str | None, access: str) -> None:
+@click.option(
+    "--access",
+    type=click.Choice(["direct", "external"]),
+    default="direct",
+    help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
+    "'external' uses HTTPS URLs with EDL bearer token.",
+)
+def attempt(
+    db_path: Path,
+    results_dir: Path,
+    timeout_s: int,
+    shard_size: int,
+    daac: str | None,
+    access: str,
+) -> None:
     """Phases 3 and 4 (attempt): parsability + datasetability per granule; write Parquet rows."""
     from nasa_virtual_zarr_survey.attempt import run_attempt
-    n = run_attempt(db_path, results_dir, timeout_s=timeout_s, shard_size=shard_size,
-                    only_daac=daac, access=access)
+
+    n = run_attempt(
+        db_path,
+        results_dir,
+        timeout_s=timeout_s,
+        shard_size=shard_size,
+        only_daac=daac,
+        access=access,
+    )
     click.echo(_attempt_summary(db_path, results_dir, n))
 
 
 @cli.command()
 @click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
-@click.option("--results", "results_dir", type=click.Path(path_type=Path), default=DEFAULT_RESULTS)
-@click.option("--out", "out_path", type=click.Path(path_type=Path), default=DEFAULT_REPORT)
+@click.option(
+    "--results", "results_dir", type=click.Path(path_type=Path), default=DEFAULT_RESULTS
+)
+@click.option(
+    "--out", "out_path", type=click.Path(path_type=Path), default=DEFAULT_REPORT
+)
 def report(db_path: Path, results_dir: Path, out_path: Path) -> None:
     """Phase 5 and report render: cubability + Markdown output from DuckDB + Parquet."""
     from nasa_virtual_zarr_survey.report import run_report
+
     run_report(db_path, results_dir, out_path)
     click.echo(f"Wrote {out_path}")
 
 
 @cli.command()
 @click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
-@click.option("--results", "results_dir", type=click.Path(path_type=Path), default=DEFAULT_RESULTS)
-@click.option("--out", "out_path", type=click.Path(path_type=Path), default=DEFAULT_REPORT)
-@click.option("--sample", "sample_size", type=int, default=50,
-              help="Cap on total collections (cloud-hosted mode).")
-@click.option("--top", "top_total", type=int, default=None,
-              help="Survey top-N TOTAL collections by usage_score (distributed across providers).")
-@click.option("--top-per-provider", "top_per_provider", type=int, default=None,
-              help="Survey top-N PER provider by usage_score.")
+@click.option(
+    "--results", "results_dir", type=click.Path(path_type=Path), default=DEFAULT_RESULTS
+)
+@click.option(
+    "--out", "out_path", type=click.Path(path_type=Path), default=DEFAULT_REPORT
+)
+@click.option(
+    "--sample",
+    "sample_size",
+    type=int,
+    default=50,
+    help="Cap on total collections (cloud-hosted mode).",
+)
+@click.option(
+    "--top",
+    "top_total",
+    type=int,
+    default=None,
+    help="Survey top-N TOTAL collections by usage_score (distributed across providers).",
+)
+@click.option(
+    "--top-per-provider",
+    "top_per_provider",
+    type=int,
+    default=None,
+    help="Survey top-N PER provider by usage_score.",
+)
 @click.option("--n-bins", type=int, default=5)
 @click.option("--timeout", "timeout_s", type=int, default=60)
-@click.option("--access", type=click.Choice(["direct", "external"]), default="direct",
-              help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
-                   "'external' uses HTTPS URLs with EDL bearer token.")
+@click.option(
+    "--access",
+    type=click.Choice(["direct", "external"]),
+    default="direct",
+    help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
+    "'external' uses HTTPS URLs with EDL bearer token.",
+)
 def pilot(
-    db_path: Path, results_dir: Path, out_path: Path,
-    sample_size: int, top_total: int | None, top_per_provider: int | None,
-    n_bins: int, timeout_s: int, access: str,
+    db_path: Path,
+    results_dir: Path,
+    out_path: Path,
+    sample_size: int,
+    top_total: int | None,
+    top_per_provider: int | None,
+    n_bins: int,
+    timeout_s: int,
+    access: str,
 ) -> None:
     """Run discover, sample, attempt, report on a small sample for taxonomy review."""
     from nasa_virtual_zarr_survey.discover import run_discover
@@ -330,7 +432,9 @@ def pilot(
     n_att = run_attempt(db_path, results_dir, timeout_s=timeout_s, access=access)
     click.echo(_attempt_summary(db_path, results_dir, n_att))
     run_report(db_path, results_dir, out_path)
-    click.echo(f"Pilot complete. Review errors in {results_dir}, refine taxonomy.py, then run full pipeline.")
+    click.echo(
+        f"Pilot complete. Review errors in {results_dir}, refine taxonomy.py, then run full pipeline."
+    )
 
 
 if __name__ == "__main__":

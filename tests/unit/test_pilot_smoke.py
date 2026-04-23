@@ -20,9 +20,17 @@ def test_pilot_dry_run(tmp_path, monkeypatch):
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        ["pilot", "--db", str(tmp_path / "s.duckdb"),
-         "--results", str(tmp_path / "r"), "--out", str(tmp_path / "report.md"),
-         "--sample", "50"],
+        [
+            "pilot",
+            "--db",
+            str(tmp_path / "s.duckdb"),
+            "--results",
+            str(tmp_path / "r"),
+            "--out",
+            str(tmp_path / "report.md"),
+            "--sample",
+            "50",
+        ],
     )
     assert result.exit_code == 0, result.output
     assert "Pilot complete" in result.output

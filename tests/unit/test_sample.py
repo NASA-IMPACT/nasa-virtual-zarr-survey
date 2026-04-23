@@ -20,7 +20,7 @@ def test_temporal_bins_splits_evenly():
     assert len(bins) == 4
     assert bins[0][0] == start
     assert bins[-1][1] == end
-    for (a, b) in bins:
+    for a, b in bins:
         assert a < b
 
 
@@ -32,11 +32,19 @@ def test_sample_one_collection_uses_temporal_bins(monkeypatch):
     call_count = {"n": 0}
 
     class G:
-        def __init__(self, gid: str): self.gid = gid
+        def __init__(self, gid: str):
+            self.gid = gid
+
         def __getitem__(self, k):
-            return {"meta": {"concept-id": self.gid},
-                    "umm": {"DataGranule": {"ArchiveAndDistributionInformation":
-                                            [{"SizeInBytes": 100}]}}}[k]
+            return {
+                "meta": {"concept-id": self.gid},
+                "umm": {
+                    "DataGranule": {
+                        "ArchiveAndDistributionInformation": [{"SizeInBytes": 100}]
+                    }
+                },
+            }[k]
+
         def data_links(self, access="direct"):
             return [f"s3://b/{self.gid}.nc"]
 
@@ -44,7 +52,9 @@ def test_sample_one_collection_uses_temporal_bins(monkeypatch):
         call_count["n"] += 1
         return [G(f"G{call_count['n']}")]
 
-    monkeypatch.setattr("nasa_virtual_zarr_survey.sample.earthaccess.search_data", fake_search_data)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data", fake_search_data
+    )
 
     coll = {
         "concept_id": "C1",
@@ -70,9 +80,14 @@ def test_run_sample_persists_granules(tmp_db_path: Path, monkeypatch):
     """)
 
     class G:
-        def __init__(self, gid: str): self.gid = gid
-        def __getitem__(self, k): return {"meta": {"concept-id": self.gid}}[k]
-        def data_links(self, access="direct"): return [f"s3://b/{self.gid}.nc"]
+        def __init__(self, gid: str):
+            self.gid = gid
+
+        def __getitem__(self, k):
+            return {"meta": {"concept-id": self.gid}}[k]
+
+        def data_links(self, access="direct"):
+            return [f"s3://b/{self.gid}.nc"]
 
     counter = iter(range(100))
     monkeypatch.setattr(
@@ -90,9 +105,12 @@ def test_run_sample_persists_granules(tmp_db_path: Path, monkeypatch):
 
 def test_sample_one_collection_no_temporal_extent(monkeypatch):
     class G:
-        def __init__(self, gid: str): self.gid = gid
+        def __init__(self, gid: str):
+            self.gid = gid
+
         def __getitem__(self, k):
             return {"meta": {"concept-id": self.gid}}[k]
+
         def data_links(self, access="direct"):
             return [f"s3://b/{self.gid}.nc"]
 
@@ -106,7 +124,12 @@ def test_sample_one_collection_no_temporal_extent(monkeypatch):
         "nasa_virtual_zarr_survey.sample.earthaccess.search_data", fake_search_data
     )
 
-    coll = {"concept_id": "C1", "time_start": None, "time_end": None, "num_granules": 1000}
+    coll = {
+        "concept_id": "C1",
+        "time_start": None,
+        "time_end": None,
+        "num_granules": 1000,
+    }
     gs = sample_one_collection(coll, n_bins=3)
     assert len(gs) == 3
     assert {g["temporal_bin"] for g in gs} == {0, 1, 2}
@@ -122,8 +145,12 @@ def test_sample_one_collection_external_access(monkeypatch):
     captured_accesses = []
 
     class G:
-        def __init__(self, gid): self.gid = gid
-        def __getitem__(self, k): return {"meta": {"concept-id": self.gid}}[k]
+        def __init__(self, gid):
+            self.gid = gid
+
+        def __getitem__(self, k):
+            return {"meta": {"concept-id": self.gid}}[k]
+
         def data_links(self, access="direct"):
             captured_accesses.append(access)
             return [f"https://ex/{self.gid}.nc"]
@@ -143,12 +170,18 @@ def test_sample_one_collection_external_access(monkeypatch):
 # _granule_format
 # ---------------------------------------------------------------------------
 
+
 def test_granule_format_list():
     class G:
         def __getitem__(self, k):
             return {
-                "umm": {"DataGranule": {"ArchiveAndDistributionInformation": [{"Format": "NetCDF-4"}]}}
+                "umm": {
+                    "DataGranule": {
+                        "ArchiveAndDistributionInformation": [{"Format": "NetCDF-4"}]
+                    }
+                }
             }[k]
+
     assert _granule_format(G()) == "NetCDF-4"
 
 
@@ -156,8 +189,13 @@ def test_granule_format_dict():
     class G:
         def __getitem__(self, k):
             return {
-                "umm": {"DataGranule": {"ArchiveAndDistributionInformation": {"Format": "HDF5"}}}
+                "umm": {
+                    "DataGranule": {
+                        "ArchiveAndDistributionInformation": {"Format": "HDF5"}
+                    }
+                }
             }[k]
+
     assert _granule_format(G()) == "HDF5"
 
 
@@ -165,12 +203,14 @@ def test_granule_format_missing():
     class G:
         def __getitem__(self, k):
             return {"umm": {}}[k]
+
     assert _granule_format(G()) is None
 
 
 # ---------------------------------------------------------------------------
 # _update_collection_classification
 # ---------------------------------------------------------------------------
+
 
 def test_update_collection_classification_array(tmp_db_path: Path):
     con = connect(tmp_db_path)
@@ -227,6 +267,7 @@ def test_update_collection_classification_still_unknown(tmp_db_path: Path):
 # run_sample re-classification path
 # ---------------------------------------------------------------------------
 
+
 def test_run_sample_reclassifies_format_unknown(tmp_db_path: Path, monkeypatch):
     con = connect(tmp_db_path)
     init_schema(con)
@@ -247,7 +288,11 @@ def test_run_sample_reclassifies_format_unknown(tmp_db_path: Path, monkeypatch):
                 return {"concept-id": self.gid}
             if k == "umm":
                 if self._fmt:
-                    return {"DataGranule": {"ArchiveAndDistributionInformation": [{"Format": self._fmt}]}}
+                    return {
+                        "DataGranule": {
+                            "ArchiveAndDistributionInformation": [{"Format": self._fmt}]
+                        }
+                    }
                 return {}
             raise KeyError(k)
 
@@ -288,7 +333,11 @@ def test_run_sample_skips_unresolvable_format_unknown(tmp_db_path: Path, monkeyp
             if k == "meta":
                 return {"concept-id": "GP"}
             if k == "umm":
-                return {"DataGranule": {"ArchiveAndDistributionInformation": [{"Format": "PDF"}]}}
+                return {
+                    "DataGranule": {
+                        "ArchiveAndDistributionInformation": [{"Format": "PDF"}]
+                    }
+                }
             raise KeyError(k)
 
         def data_links(self, access="direct"):

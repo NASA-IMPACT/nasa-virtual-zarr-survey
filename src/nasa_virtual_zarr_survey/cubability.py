@@ -1,4 +1,5 @@
 """Virtual store feasibility analysis: fingerprint extraction and cubability checks."""
+
 from __future__ import annotations
 
 import hashlib
@@ -97,7 +98,9 @@ def extract_fingerprint(ds: Any) -> dict[str, Any]:
             arr = np.asarray(var.values)
         except Exception:
             arr = None
-        values_hash = hashlib.sha256(arr.tobytes()).hexdigest() if arr is not None else ""
+        values_hash = (
+            hashlib.sha256(arr.tobytes()).hexdigest() if arr is not None else ""
+        )
         mn = mx = None
         if arr is not None and arr.size > 0:
             try:
@@ -150,10 +153,16 @@ def _per_variable_match(fps: list[dict]) -> tuple[bool, str]:
             return False, f"variable {name} has inconsistent dtype: {sorted(dtypes)}"
         dims_set = {tuple(fp["data_vars"][name]["dims"]) for fp in fps}
         if len(dims_set) > 1:
-            return False, f"variable {name} has inconsistent dims: {sorted(str(d) for d in dims_set)}"
+            return (
+                False,
+                f"variable {name} has inconsistent dims: {sorted(str(d) for d in dims_set)}",
+            )
         codecs_set = {tuple(fp["data_vars"][name]["codecs"]) for fp in fps}
         if len(codecs_set) > 1:
-            return False, f"variable {name} has inconsistent codecs: {sorted(str(c) for c in codecs_set)}"
+            return (
+                False,
+                f"variable {name} has inconsistent codecs: {sorted(str(c) for c in codecs_set)}",
+            )
     return True, ""
 
 
@@ -182,9 +191,17 @@ def _detect_concat_dim(fps: list[dict]) -> tuple[CubabilityVerdict, str, str | N
         candidates = hash_only_varying
 
     if len(candidates) == 0:
-        return CubabilityVerdict.INCONCLUSIVE, "all granules identical; cannot identify concat dim", None
+        return (
+            CubabilityVerdict.INCONCLUSIVE,
+            "all granules identical; cannot identify concat dim",
+            None,
+        )
     if len(candidates) > 1:
-        return CubabilityVerdict.INCONCLUSIVE, f"ambiguous concat dim: {sorted(candidates)}", None
+        return (
+            CubabilityVerdict.INCONCLUSIVE,
+            f"ambiguous concat dim: {sorted(candidates)}",
+            None,
+        )
     return CubabilityVerdict.FEASIBLE, "", candidates[0]
 
 
@@ -193,7 +210,10 @@ def _non_concat_dim_sizes_match(fps: list[dict], concat_dim: str) -> tuple[bool,
     for d in sorted(all_dims):
         sizes = {fp["dims"].get(d) for fp in fps}
         if len(sizes) > 1:
-            return False, f"non-concat dim {d} size varies: {sorted(s for s in sizes if s is not None)}"
+            return (
+                False,
+                f"non-concat dim {d} size varies: {sorted(s for s in sizes if s is not None)}",
+            )
     return True, ""
 
 
@@ -222,7 +242,10 @@ def _chunks_compatible(fps: list[dict], concat_dim: str) -> tuple[bool, str]:
                 continue
             vals = {c[i] for c in chunks_lists if i < len(c)}  # type: ignore[index]
             if len(vals) > 1:
-                return False, f"variable {name} chunk shape incompatible on dim {d}: {sorted(vals)}"
+                return (
+                    False,
+                    f"variable {name} chunk shape incompatible on dim {d}: {sorted(vals)}",
+                )
     return True, ""
 
 
@@ -275,7 +298,9 @@ def check_cubability(fingerprints: list[dict]) -> CubabilityResult:
     """
     fps = [fp for fp in fingerprints if fp]
     if len(fps) < 2:
-        return CubabilityResult(CubabilityVerdict.INCONCLUSIVE, reason="fewer than 2 fingerprints")
+        return CubabilityResult(
+            CubabilityVerdict.INCONCLUSIVE, reason="fewer than 2 fingerprints"
+        )
 
     ok, reason = _variables_match(fps)
     if not ok:

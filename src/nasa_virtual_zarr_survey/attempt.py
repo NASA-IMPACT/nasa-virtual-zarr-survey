@@ -1,4 +1,5 @@
 """Attempt pipeline: Phase 3 (Parsability) and Phase 4 (Datasetability)."""
+
 from __future__ import annotations
 
 import signal
@@ -62,9 +63,9 @@ class AttemptResult:
     dataset_duration_s: float = 0.0
 
     # Overall
-    success: bool = False          # parse_success AND (dataset_success == True)
+    success: bool = False  # parse_success AND (dataset_success == True)
     timed_out: bool = False
-    timed_out_phase: str | None = None   # "parse" or "dataset"
+    timed_out_phase: str | None = None  # "parse" or "dataset"
     duration_s: float = 0.0
     fingerprint: str | None = None
 
@@ -126,7 +127,9 @@ def attempt_one(
     parser = dispatch_parser(family)
     if parser is None:
         result.parse_error_type = "NoParserAvailable"
-        result.parse_error_message = f"No VirtualiZarr parser registered for {family.value}"
+        result.parse_error_message = (
+            f"No VirtualiZarr parser registered for {family.value}"
+        )
         return result
 
     result.parser = type(parser).__name__
@@ -167,6 +170,7 @@ def attempt_one(
             timed_out_phase = phase_ref[0]
         except Exception as e:
             import sys
+
             exc_info = (type(e), e, sys.exc_info()[2])
     finally:
         # Shut down without waiting so a sleeping thread doesn't block us here.
@@ -207,7 +211,10 @@ def attempt_one(
                     extract_fingerprint,
                     fingerprint_to_json,
                 )
-                result.fingerprint = fingerprint_to_json(extract_fingerprint(dataset_ref[0]))
+
+                result.fingerprint = fingerprint_to_json(
+                    extract_fingerprint(dataset_ref[0])
+                )
             except Exception:
                 # Fingerprint extraction is best-effort; never fail the attempt.
                 pass
@@ -215,30 +222,32 @@ def attempt_one(
     return result
 
 
-_SCHEMA = pa.schema([
-    ("collection_concept_id", pa.string()),
-    ("granule_concept_id", pa.string()),
-    ("daac", pa.string()),
-    ("format_family", pa.string()),
-    ("parser", pa.string()),
-    ("stratified", pa.bool_()),
-    ("attempted_at", pa.timestamp("us", tz="UTC")),
-    ("parse_success", pa.bool_()),
-    ("parse_error_type", pa.string()),
-    ("parse_error_message", pa.string()),
-    ("parse_error_traceback", pa.string()),
-    ("parse_duration_s", pa.float64()),
-    ("dataset_success", pa.bool_()),           # nullable
-    ("dataset_error_type", pa.string()),
-    ("dataset_error_message", pa.string()),
-    ("dataset_error_traceback", pa.string()),
-    ("dataset_duration_s", pa.float64()),
-    ("success", pa.bool_()),
-    ("timed_out", pa.bool_()),
-    ("timed_out_phase", pa.string()),
-    ("duration_s", pa.float64()),
-    ("fingerprint", pa.string()),
-])
+_SCHEMA = pa.schema(
+    [
+        ("collection_concept_id", pa.string()),
+        ("granule_concept_id", pa.string()),
+        ("daac", pa.string()),
+        ("format_family", pa.string()),
+        ("parser", pa.string()),
+        ("stratified", pa.bool_()),
+        ("attempted_at", pa.timestamp("us", tz="UTC")),
+        ("parse_success", pa.bool_()),
+        ("parse_error_type", pa.string()),
+        ("parse_error_message", pa.string()),
+        ("parse_error_traceback", pa.string()),
+        ("parse_duration_s", pa.float64()),
+        ("dataset_success", pa.bool_()),  # nullable
+        ("dataset_error_type", pa.string()),
+        ("dataset_error_message", pa.string()),
+        ("dataset_error_traceback", pa.string()),
+        ("dataset_duration_s", pa.float64()),
+        ("success", pa.bool_()),
+        ("timed_out", pa.bool_()),
+        ("timed_out_phase", pa.string()),
+        ("duration_s", pa.float64()),
+        ("fingerprint", pa.string()),
+    ]
+)
 
 
 class ResultWriter:
@@ -348,9 +357,15 @@ def _pending_granules(con, results_dir: Path, only_daac: str | None) -> list[dic
         rows = con.execute(fallback, params2).fetchall()
 
     return [
-        {"collection_concept_id": r[0], "granule_concept_id": r[1],
-         "data_url": r[2], "daac": r[3], "provider": r[4],
-         "format_family": r[5], "stratified": r[6]}
+        {
+            "collection_concept_id": r[0],
+            "granule_concept_id": r[1],
+            "data_url": r[2],
+            "daac": r[3],
+            "provider": r[4],
+            "format_family": r[5],
+            "stratified": r[6],
+        }
         for r in rows
     ]
 
@@ -428,7 +443,8 @@ def run_attempt(
             result = AttemptResult(
                 collection_concept_id=row["collection_concept_id"],
                 granule_concept_id=row["granule_concept_id"],
-                daac=row["daac"], format_family=family_str,
+                daac=row["daac"],
+                format_family=family_str,
                 stratified=row["stratified"],
                 parse_error_type="SampleInvalid",
                 parse_error_message="missing format family or data URL",
@@ -441,7 +457,8 @@ def run_attempt(
                 result = AttemptResult(
                     collection_concept_id=row["collection_concept_id"],
                     granule_concept_id=row["granule_concept_id"],
-                    daac=row["daac"], format_family=family_str,
+                    daac=row["daac"],
+                    format_family=family_str,
                     stratified=row["stratified"],
                     parse_error_type="AuthUnavailable",
                     parse_error_message=str(e),
@@ -467,7 +484,9 @@ def run_attempt(
 
         if access == "direct" and not result.success:
             parse_bucket = classify(result.parse_error_type, result.parse_error_message)
-            dataset_bucket = classify(result.dataset_error_type, result.dataset_error_message)
+            dataset_bucket = classify(
+                result.dataset_error_type, result.dataset_error_message
+            )
             if parse_bucket is Bucket.FORBIDDEN or dataset_bucket is Bucket.FORBIDDEN:
                 consecutive_forbidden += 1
             else:
