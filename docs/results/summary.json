@@ -1,7 +1,11 @@
 {
   "schema_version": 4,
-  "generated_at": "2026-04-24T01:34:20.960363+00:00",
+  "generated_at": "2026-04-24T02:06:19.944364+00:00",
   "survey_tool_version": "0.1.dev36+g85bf5a483.d20260424",
+  "virtualizarr_version": "2.5.1",
+  "zarr_version": "3.1.6",
+  "xarray_version": "2026.2.0",
+  "sampling_mode": "top=5",
   "verdicts": [
     {
       "concept_id": "C1667168435-LARC_ASDC",
@@ -61,14 +65,14 @@
   ],
   "parse_taxonomy": {
     "UNDEFINED_FILL_VALUE": [
-      3,
+      5,
       1
     ]
   },
   "dataset_taxonomy": {},
   "datatree_taxonomy": {
     "CONFLICTING_DIM_SIZES": [
-      3,
+      5,
       1
     ]
   },
@@ -101,7 +105,7 @@
   },
   "other_parse_errors": [
     [
-      3,
+      5,
       "RuntimeError",
       "Can't get fill value (fill value is undefined)"
     ]
@@ -109,7 +113,7 @@
   "other_dataset_errors": [],
   "other_datatree_errors": [
     [
-      3,
+      5,
       "ValueError",
       "conflicting sizes for dimension 'phony_dim_0': length 8192 on 'PixelType' and length 2048 on {'phony_dim_0': 'Image', 'phony_dim_1': 'Image'}"
     ]
