@@ -36,6 +36,9 @@ class Bucket(StrEnum):
     NETWORK_ERROR = "NETWORK_ERROR"
     SAMPLE_INVALID = "SAMPLE_INVALID"
     AUTH_UNAVAILABLE = "AUTH_UNAVAILABLE"
+    AMBIGUOUS_ARRAY_TRUTH = "AMBIGUOUS_ARRAY_TRUTH"
+    CONFLICTING_DIM_SIZES = "CONFLICTING_DIM_SIZES"
+    UNDEFINED_FILL_VALUE = "UNDEFINED_FILL_VALUE"
     OTHER = "OTHER"
 
 
@@ -50,6 +53,21 @@ _RULES: list[tuple[re.Pattern | None, re.Pattern | None, Bucket]] = [
         None,
         re.compile(r"403|Forbidden|Unauthorized|AccessDenied", re.I),
         Bucket.FORBIDDEN,
+    ),
+    (
+        None,
+        re.compile(r"truth value of an array .* is ambiguous", re.I),
+        Bucket.AMBIGUOUS_ARRAY_TRUTH,
+    ),
+    (
+        None,
+        re.compile(r"conflicting sizes for dimension", re.I),
+        Bucket.CONFLICTING_DIM_SIZES,
+    ),
+    (
+        None,
+        re.compile(r"can't get fill value|fill value is undefined", re.I),
+        Bucket.UNDEFINED_FILL_VALUE,
     ),
     (
         None,

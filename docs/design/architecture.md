@@ -113,15 +113,9 @@ Both raise `AuthUnavailable` on empty credentials or missing tokens. The caller 
 
 #### `taxonomy.py`
 
-Empirically-derived classifier mapping `(error_type, error_message)` to one of 17 `Bucket` values:
+Empirically-derived classifier mapping `(error_type, error_message)` to a `Bucket` value. Seeded from `titiler-cmr-compatibility`'s `IncompatibilityReason` enum plus hypothesized VirtualiZarr-specific buckets, then refined as real errors surface in the `OTHER` bucket of a pilot run.
 
-- `SUCCESS`, `NO_PARSER`, `TIMEOUT`, `AUTH_UNAVAILABLE`, `FORBIDDEN`
-- `CANT_OPEN_FILE`, `GROUP_STRUCTURE`, `DECODE_ERROR`
-- `VARIABLE_CHUNKS`, `UNSUPPORTED_CODEC`, `UNSUPPORTED_FILTER`, `SHARDING_UNSUPPORTED`, `NON_STANDARD_HDF5`
-- `COMPOUND_DTYPE`, `STRING_DTYPE`
-- `NETWORK_ERROR`, `SAMPLE_INVALID`, `OTHER`
-
-Rules are ordered `(error_type_pattern, error_message_pattern, bucket)` tuples with first-match-wins semantics. Seeded from `titiler-cmr-compatibility`'s `IncompatibilityReason` enum plus hypothesized VirtualiZarr-specific buckets. Expected to be refined after a 50-collection pilot by reading raw errors in the `OTHER` bucket.
+Rules are ordered `(error_type_pattern, error_message_pattern, bucket)` tuples with first-match-wins semantics. See the [Failure Taxonomy](taxonomy.md) reference for per-bucket descriptions, example error strings, and typical next steps.
 
 #### `__main__.py`
 

@@ -53,6 +53,10 @@ class VerdictRow(TypedDict):
 
     ``parse_verdict`` and ``dataset_verdict`` are one of
     'all_pass', 'partial_pass', 'all_fail', 'not_attempted', 'skipped'.
+
+    ``top_bucket`` is the representative failure taxonomy bucket for the
+    collection (first parse failure if any, else first dataset failure).
+    Empty string means no failure was recorded.
     """
 
     concept_id: str
@@ -62,6 +66,7 @@ class VerdictRow(TypedDict):
     stratified: bool | None
     parse_verdict: str
     dataset_verdict: str
+    top_bucket: str
 
 
 class VarInfo(TypedDict):

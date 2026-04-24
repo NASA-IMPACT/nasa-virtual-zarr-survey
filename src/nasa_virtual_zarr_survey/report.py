@@ -17,6 +17,9 @@ from nasa_virtual_zarr_survey.cubability import (
 )
 from nasa_virtual_zarr_survey.types import Fingerprint, VerdictRow
 
+# `figures` is imported lazily inside run_report so the base install (without
+# the `docs` dependency group) can still import the report module.
+
 
 def _attach_results(con: duckdb.DuckDBPyConnection, results_dir: Path) -> bool:
     """Register a view `results` over all Parquet shards. Returns True if any exist."""
@@ -69,6 +72,39 @@ def _phase_verdicts(con: duckdb.DuckDBPyConnection, phase: str) -> dict[str, str
     return out
 
 
+def _top_buckets_from_db(con: duckdb.DuckDBPyConnection) -> dict[str, str]:
+    """Return {collection_concept_id: representative_bucket} from the Parquet log.
+
+    Chooses the first non-null parse_error first, falling back to dataset_error.
+    Collections with no failures map to an empty string.
+    """
+    try:
+        rows = con.execute(
+            """
+            SELECT collection_concept_id,
+                   any_value(parse_error_type)
+                       FILTER (WHERE parse_error_type IS NOT NULL),
+                   any_value(parse_error_message)
+                       FILTER (WHERE parse_error_type IS NOT NULL),
+                   any_value(dataset_error_type)
+                       FILTER (WHERE dataset_error_type IS NOT NULL),
+                   any_value(dataset_error_message)
+                       FILTER (WHERE dataset_error_type IS NOT NULL)
+            FROM results
+            GROUP BY collection_concept_id
+            """
+        ).fetchall()
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for cid, p_et, p_em, d_et, d_em in rows:
+        if p_et:
+            out[cid] = classify(p_et, p_em).value
+        elif d_et:
+            out[cid] = classify(d_et, d_em).value
+    return out
+
+
 def collection_verdicts(
     db_path: Path | str, results_dir: Path | str
 ) -> list[VerdictRow]:
@@ -79,6 +115,7 @@ def collection_verdicts(
 
     parse_phase = _phase_verdicts(con, "parse")
     dataset_phase = _phase_verdicts(con, "dataset")
+    top_buckets = _top_buckets_from_db(con)
 
     q = """
         WITH stratification AS (
@@ -108,6 +145,7 @@ def collection_verdicts(
                 stratified=stratified,
                 parse_verdict=parse_verdict,
                 dataset_verdict=dataset_verdict,
+                top_bucket=top_buckets.get(concept_id, ""),
             )
         )
     return out
@@ -176,6 +214,27 @@ def _cubability_results(
     return out
 
 
+def _other_errors_for_phase(
+    con: duckdb.DuckDBPyConnection, phase: str
+) -> list[tuple[int, str, str]]:
+    """Return top-50 (count, error_type, error_message) rows for errors classified as OTHER.
+
+    Filters to the top 50 by count, then further filtered to Bucket.OTHER by the caller.
+    """
+    et_col = f"{phase}_error_type"
+    em_col = f"{phase}_error_message"
+    success_col = f"{phase}_success"
+    try:
+        rows = con.execute(
+            f"SELECT {et_col}, {em_col}, count(*) c FROM results "
+            f"WHERE {success_col} = FALSE AND {et_col} IS NOT NULL "
+            f"GROUP BY 1,2 ORDER BY c DESC LIMIT 50"
+        ).fetchall()
+    except Exception:
+        rows = []
+    return [(int(c), str(et), str(em)) for et, em, c in rows]
+
+
 def _render_verdict_counts(
     verdicts: list[VerdictRow],
     verdict_key: Literal["parse_verdict", "dataset_verdict"],
@@ -205,43 +264,9 @@ def _pct(num: int, denom: int) -> str:
     return f"{num}/{denom} ({p}%)"
 
 
-def _top_buckets(con: duckdb.DuckDBPyConnection) -> dict[str, str]:
-    """Return {collection_concept_id: representative_bucket} from the Parquet log.
-
-    Chooses the first non-null parse_error first, falling back to dataset_error.
-    Collections with no failures map to an empty string.
-    """
-    try:
-        rows = con.execute(
-            """
-            SELECT collection_concept_id,
-                   any_value(parse_error_type)
-                       FILTER (WHERE parse_error_type IS NOT NULL),
-                   any_value(parse_error_message)
-                       FILTER (WHERE parse_error_type IS NOT NULL),
-                   any_value(dataset_error_type)
-                       FILTER (WHERE dataset_error_type IS NOT NULL),
-                   any_value(dataset_error_message)
-                       FILTER (WHERE dataset_error_type IS NOT NULL)
-            FROM results
-            GROUP BY collection_concept_id
-            """
-        ).fetchall()
-    except Exception:
-        return {}
-    out: dict[str, str] = {}
-    for cid, p_et, p_em, d_et, d_em in rows:
-        if p_et:
-            out[cid] = classify(p_et, p_em).value
-        elif d_et:
-            out[cid] = classify(d_et, d_em).value
-    return out
-
-
 def _render_collections_table(
     verdicts: list[VerdictRow],
     cube_results: dict[str, CubabilityResult],
-    top_buckets: dict[str, str],
 ) -> list[str]:
     """Render a full per-collection table near the end of the report."""
     lines = ["## Collections\n"]
@@ -260,7 +285,7 @@ def _render_collections_table(
         cube = cube_results.get(
             v["concept_id"], CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)
         ).verdict.value
-        bucket = top_buckets.get(v["concept_id"], "")
+        bucket = v.get("top_bucket", "")
         lines.append(
             f"| {v['concept_id']} | {v['daac'] or ''} | "
             f"{v['format_family'] or ''} | {v['parse_verdict']} | "
@@ -300,24 +325,55 @@ def _render_three_phase_table(
     return lines
 
 
+def _iframe(name: str) -> str:
+    """Return a markdown-safe HTML iframe for an interactive figure."""
+    return f'<iframe src="figures/{name}.html" width="100%" height="500" frameborder="0"></iframe>'
+
+
 def render_report(
     verdicts: list[VerdictRow],
     parse_tax: dict[str, tuple[int, int]],
     dataset_tax: dict[str, tuple[int, int]],
     cube_results: dict[str, CubabilityResult],
-    con: duckdb.DuckDBPyConnection,
+    other_parse_errors: list[tuple[int, str, str]],
+    other_dataset_errors: list[tuple[int, str, str]],
+    figure_stems: dict[str, Path] | None = None,
 ) -> str:
     """Render the full Markdown report from pre-computed phase verdicts and taxonomy counts.
 
-    Sections emitted, in order: totals, Phase 3 (Parsability), Phase 4
-    (Datasetability), Phase 5 (Virtual Store Feasibility), incompatibility
-    reasons drill-down, By DAAC table, By Format Family table, Stratification
-    breakdown, and raw-error drill-downs for each phase's `OTHER` bucket.
+    Sections emitted, in order: Overview (Sankey), totals (with funnel figure),
+    Phase 3 (Parsability, with parse taxonomy figure), Phase 4 (Datasetability,
+    with dataset taxonomy figure), Phase 5 (Virtual Store Feasibility),
+    incompatibility reasons drill-down, By DAAC table (with by_daac figure),
+    By Format Family table (with by_format figure), Stratification breakdown,
+    raw-error drill-downs for each phase's ``OTHER`` bucket, and the full
+    per-collection table (with collections heatmap figure).
+
+    If ``figure_stems`` is provided (mapping name to stem Path without extension),
+    interactive HTML figures are embedded via ``<iframe>`` elements.  The PNG
+    files also live under ``figures/`` for reference.  The caller is responsible
+    for generating the figures before calling this function.
+
+    ``other_parse_errors`` and ``other_dataset_errors`` are lists of
+    ``(count, error_type, error_message)`` triples (top 50 by count, pre-computed
+    by the caller). Only entries classified as Bucket.OTHER are rendered.
     """
+    fs = figure_stems or {}
+
     total = len(verdicts)
     lines: list[str] = []
     lines.append("# NASA VirtualiZarr Survey Report\n")
+
+    # Overview section with Sankey
+    lines.append("## Overview\n")
+    if "sankey" in fs:
+        lines.append(_iframe("sankey"))
+        lines.append("")
+
     lines.append(f"Total collections: **{total}**\n")
+    if "funnel" in fs:
+        lines.append(_iframe("funnel"))
+        lines.append("")
 
     # Phase 3: Parsability
     lines.append("## Phase 3: Parsability\n")
@@ -329,6 +385,9 @@ def render_report(
     lines.append("")
     lines.extend(_render_taxonomy_table(parse_tax, "Parse Failure Taxonomy"))
     lines.append("")
+    if "taxonomy_parse" in fs:
+        lines.append(_iframe("taxonomy_parse"))
+        lines.append("")
 
     # Phase 4: Datasetability
     parsable_count = sum(1 for v in verdicts if v["parse_verdict"] == "all_pass")
@@ -343,6 +402,9 @@ def render_report(
     lines.append("")
     lines.extend(_render_taxonomy_table(dataset_tax, "Dataset Failure Taxonomy"))
     lines.append("")
+    if "taxonomy_dataset" in fs:
+        lines.append(_iframe("taxonomy_dataset"))
+        lines.append("")
 
     # Phase 5: Virtual Store Feasibility
     datasetable_count = sum(
@@ -390,12 +452,33 @@ def render_report(
         lines.append("")
 
     # Three-phase summary by DAAC and Format Family
-    lines.extend(_render_three_phase_table(verdicts, cube_results, "By DAAC", "daac"))
-    lines.extend(
-        _render_three_phase_table(
-            verdicts, cube_results, "By Format Family", "format_family"
+    if "by_daac" in fs:
+        lines.append("## By DAAC\n")
+        lines.append(_iframe("by_daac"))
+        lines.append("")
+        lines.extend(
+            _render_three_phase_table(verdicts, cube_results, "By DAAC", "daac")[1:]
         )
-    )
+    else:
+        lines.extend(
+            _render_three_phase_table(verdicts, cube_results, "By DAAC", "daac")
+        )
+
+    if "by_format" in fs:
+        lines.append("## By Format Family\n")
+        lines.append(_iframe("by_format"))
+        lines.append("")
+        lines.extend(
+            _render_three_phase_table(
+                verdicts, cube_results, "By Format Family", "format_family"
+            )[1:]
+        )
+    else:
+        lines.extend(
+            _render_three_phase_table(
+                verdicts, cube_results, "By Format Family", "format_family"
+            )
+        )
 
     # Stratification
     lines.append("## Stratification\n")
@@ -416,27 +499,14 @@ def render_report(
         )
     lines.append("")
 
-    # Top 20 OTHER errors per phase
-    for phase_label, et_col, em_col, success_col in [
-        ("Parsability", "parse_error_type", "parse_error_message", "parse_success"),
-        (
-            "Datasetability",
-            "dataset_error_type",
-            "dataset_error_message",
-            "dataset_success",
-        ),
+    # Top 20 OTHER errors per phase (pre-computed by caller)
+    for phase_label, error_list in [
+        ("Parsability", other_parse_errors),
+        ("Datasetability", other_dataset_errors),
     ]:
         lines.append(f"## Top 20 Raw Errors in `OTHER` ({phase_label})\n")
-        try:
-            rows = con.execute(
-                f"SELECT {et_col}, {em_col}, count(*) c FROM results "
-                f"WHERE {success_col} = FALSE AND {et_col} IS NOT NULL "
-                f"GROUP BY 1,2 ORDER BY c DESC LIMIT 50"
-            ).fetchall()
-        except Exception:
-            rows = []
         shown = 0
-        for et, em, c in rows:
+        for c, et, em in error_list:
             if classify(et, em) is Bucket.OTHER:
                 lines.append(f"- **{c}x** `{et}`: {em}")
                 shown += 1
@@ -447,27 +517,112 @@ def render_report(
         lines.append("")
 
     # Full per-collection listing at the end.
-    lines.extend(_render_collections_table(verdicts, cube_results, _top_buckets(con)))
+    lines.extend(_render_collections_table(verdicts, cube_results))
+    if "collections" in fs:
+        lines.append("")
+        lines.append(_iframe("collections"))
+        lines.append("")
 
     return "\n".join(lines)
 
 
 def run_report(
-    db_path: Path | str, results_dir: Path | str, out_path: Path | str
+    db_path: Path | str,
+    results_dir: Path | str,
+    out_path: Path | str = "docs/results/index.md",
+    *,
+    export_to: Path | str | None = None,
+    from_data: Path | str | None = None,
 ) -> None:
-    """Read DuckDB state plus Parquet results, compute verdicts, and write `report.md`.
+    """Read DuckDB state plus Parquet results, compute verdicts, and write the report.
 
-    Idempotent and cheap: re-run after refining `taxonomy.py` to update the
-    Markdown output without re-running `attempt`.
+    Idempotent and cheap: re-run after refining ``taxonomy.py`` to update the
+    Markdown output without re-running ``attempt``.
+
+    Generates interactive HTML figures (Bokeh) and static PNG figures (matplotlib)
+    into a ``figures/`` subdirectory alongside the report and embeds the interactive
+    figures via ``<iframe>`` elements in the Markdown output.  The default output
+    path writes directly into the mkdocs docs site so ``mkdocs serve`` renders the
+    report with interactive charts.
+
+    Parameters
+    ----------
+    db_path:
+        Path to the DuckDB database (ignored when ``from_data`` is set).
+    results_dir:
+        Path to the directory containing Parquet result shards (ignored when
+        ``from_data`` is set).
+    out_path:
+        Destination Markdown file for the rendered report.
+    export_to:
+        When provided, serialize all computed data to a compact JSON digest at
+        this path after computing verdicts from DuckDB/Parquet. Mutually
+        exclusive with ``from_data``.
+    from_data:
+        When provided, load verdicts and taxonomy from the given JSON digest
+        (written by a previous ``export_to`` run) and skip all DuckDB/Parquet
+        queries entirely. Mutually exclusive with ``export_to``.
     """
-    con = connect(db_path)
-    init_schema(con)
-    _attach_results(con, Path(results_dir))
-    verdicts = collection_verdicts(db_path, results_dir)
-    parse_tax = _taxonomy_counts(con, "parse")
-    dataset_tax = _taxonomy_counts(con, "dataset")
-    cube_results = _cubability_results(con, verdicts)
-    text = render_report(verdicts, parse_tax, dataset_tax, cube_results, con)
+    if export_to is not None and from_data is not None:
+        raise ValueError("export_to and from_data are mutually exclusive")
+
+    from nasa_virtual_zarr_survey import figures as _figures
+
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if from_data is not None:
+        # Regenerate report purely from committed JSON digest.
+        from nasa_virtual_zarr_survey.summary_io import load_summary
+
+        summary = load_summary(from_data)
+        verdicts = summary.verdicts
+        parse_tax = summary.parse_taxonomy
+        dataset_tax = summary.dataset_taxonomy
+        cube_results = summary.cubability_results
+        other_parse_errors = summary.other_parse_errors
+        other_dataset_errors = summary.other_dataset_errors
+    else:
+        # Compute from DuckDB + Parquet.
+        con = connect(db_path)
+        init_schema(con)
+        _attach_results(con, Path(results_dir))
+        verdicts = collection_verdicts(db_path, results_dir)
+        parse_tax = _taxonomy_counts(con, "parse")
+        dataset_tax = _taxonomy_counts(con, "dataset")
+        cube_results = _cubability_results(con, verdicts)
+        other_parse_errors = _other_errors_for_phase(con, "parse")
+        other_dataset_errors = _other_errors_for_phase(con, "dataset")
+
+        if export_to is not None:
+            from nasa_virtual_zarr_survey.summary_io import dump_summary
+            from nasa_virtual_zarr_survey import __version__
+
+            dump_summary(
+                export_to,
+                verdicts=verdicts,
+                parse_taxonomy=parse_tax,
+                dataset_taxonomy=dataset_tax,
+                cubability_results=cube_results,
+                other_parse_errors=other_parse_errors,
+                other_dataset_errors=other_dataset_errors,
+                survey_tool_version=__version__,
+            )
+
+    figure_stems = _figures.generate_all(
+        verdicts=verdicts,
+        cube_results=cube_results,
+        parse_tax=parse_tax,
+        dataset_tax=dataset_tax,
+        out_dir=out_path.parent / "figures",
+    )
+    text = render_report(
+        verdicts,
+        parse_tax,
+        dataset_tax,
+        cube_results,
+        other_parse_errors,
+        other_dataset_errors,
+        figure_stems,
+    )
     out_path.write_text(text)

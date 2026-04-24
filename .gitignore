@@ -11,3 +11,7 @@ dist/
 
 
 site/
+
+# Regenerated in CI from docs/results/summary.json
+docs/results/index.md
+docs/results/figures/

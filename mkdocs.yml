@@ -14,8 +14,11 @@ extra:
 
 nav:
   - "index.md"
+  - Results:
+      - results/index.md
   - Design:
       - design/architecture.md
+      - design/taxonomy.md
   - API Reference:
       - api/discover.md
       - api/sample.md

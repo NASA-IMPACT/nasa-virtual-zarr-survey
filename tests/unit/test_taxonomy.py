@@ -40,6 +40,21 @@ from nasa_virtual_zarr_survey.taxonomy import Bucket, classify
         ),
         ("Exception", "who knows", Bucket.OTHER),
         (None, None, Bucket.SUCCESS),
+        (
+            "ValueError",
+            "The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()",
+            Bucket.AMBIGUOUS_ARRAY_TRUTH,
+        ),
+        (
+            "ValueError",
+            "conflicting sizes for dimension 'y': length 18557 on '1' and length 37114 on {'y': '0', 'x': '0'}",
+            Bucket.CONFLICTING_DIM_SIZES,
+        ),
+        (
+            "RuntimeError",
+            "Can't get fill value (fill value is undefined)",
+            Bucket.UNDEFINED_FILL_VALUE,
+        ),
     ],
 )
 def test_classify(error_type, error_message, expected):

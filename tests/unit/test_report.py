@@ -281,6 +281,11 @@ def test_render_report_contains_counts(tmp_db_path, tmp_results_dir, tmp_path):
     )
     assert "| C1 |" in text
     assert "| C2 |" in text
+    # Interactive figures are embedded via iframes; figures/ directory exists
+    assert 'src="figures/funnel.html"' in text
+    assert (tmp_path / "figures").is_dir()
+    assert (tmp_path / "figures" / "funnel.html").exists()
+    assert (tmp_path / "figures" / "funnel.png").exists()
 
 
 def test_render_report_incompatible_detection(tmp_db_path, tmp_results_dir, tmp_path):
@@ -410,3 +415,52 @@ def test_three_phase_daac_table_format(tmp_db_path, tmp_results_dir, tmp_path):
     assert "Cubable" in text
     # PODAAC row should appear
     assert "PODAAC" in text
+
+
+def test_export_then_from_data_produces_identical_report(
+    tmp_db_path, tmp_results_dir, tmp_path
+):
+    """Export a JSON digest, then regenerate from it; the two reports must be identical."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute(
+        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now())"
+    )
+    con.execute(
+        "INSERT INTO collections VALUES ('C2','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now())"
+    )
+    con.close()
+
+    now = datetime.now(timezone.utc)
+    fp1 = _make_fp("hash_a", 0, 9)
+    fp2 = _make_fp("hash_b", 10, 19)
+    _write_results(
+        tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet",
+        [
+            _row("C1", "G1", fingerprint=fp1, now=now),
+            _row("C2", "G2a", fingerprint=fp1, now=now),
+            _row("C2", "G2b", fingerprint=fp2, now=now),
+        ],
+    )
+
+    out1 = tmp_path / "index.md"
+    digest = tmp_path / "summary.json"
+    # Step 1: run from DB, exporting digest alongside
+    run_report(tmp_db_path, tmp_results_dir, out_path=out1, export_to=digest)
+    assert digest.exists(), "export_to did not create the digest file"
+
+    out2 = tmp_path / "index2.md"
+    # Step 2: regenerate from digest only (db_path / results_dir are ignored)
+    run_report(
+        tmp_db_path,
+        tmp_results_dir,
+        out_path=out2,
+        from_data=digest,
+    )
+
+    text1 = out1.read_text()
+    text2 = out2.read_text()
+    assert text1 == text2, (
+        "Report regenerated from digest differs from original.\n"
+        f"First diff line: {next((left for left, right in zip(text1.splitlines(), text2.splitlines()) if left != right), 'length differs')}"
+    )

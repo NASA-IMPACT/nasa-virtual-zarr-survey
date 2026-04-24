@@ -31,7 +31,7 @@ warnings.filterwarnings(
 
 DEFAULT_DB = Path("output/survey.duckdb")
 DEFAULT_RESULTS = Path("output/results")
-DEFAULT_REPORT = Path("output/report.md")
+DEFAULT_REPORT = Path("docs/results/index.md")
 
 
 def _discover_summary(db_path: Path) -> str:
@@ -367,11 +367,41 @@ def attempt(
 @click.option(
     "--out", "out_path", type=click.Path(path_type=Path), default=DEFAULT_REPORT
 )
-def report(db_path: Path, results_dir: Path, out_path: Path) -> None:
-    """Phase 5 and report render: cubability + Markdown output from DuckDB + Parquet."""
+@click.option(
+    "--export",
+    "export_to",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Also write a compact JSON digest suitable for regenerating the report in CI.",
+)
+@click.option(
+    "--from-data",
+    "from_data",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Regenerate the report from a JSON digest; skip DuckDB/Parquet queries.",
+)
+def report(
+    db_path: Path,
+    results_dir: Path,
+    out_path: Path,
+    export_to: Path | None,
+    from_data: Path | None,
+) -> None:
+    """Phase 5 + render: generate the report from survey state OR a committed JSON digest."""
     from nasa_virtual_zarr_survey.report import run_report
 
-    run_report(db_path, results_dir, out_path)
+    if export_to is not None and from_data is not None:
+        raise click.UsageError("--export and --from-data are mutually exclusive")
+    run_report(
+        db_path=db_path,
+        results_dir=results_dir,
+        out_path=out_path,
+        export_to=export_to,
+        from_data=from_data,
+    )
+    if export_to:
+        click.echo(f"Wrote digest to {export_to}")
     click.echo(f"Wrote {out_path}")
 
 

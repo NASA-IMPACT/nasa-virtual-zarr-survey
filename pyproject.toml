@@ -33,12 +33,16 @@ dev = [
     "mypy>=1.11",
     "types-requests>=2.31",
     "pyarrow-stubs>=17",
+    {include-group = "docs"},
 ]
 docs = [
     "mkdocs-material[imaging]>=9.6.14",
     "mkdocs>=1.6.1",
     "mkdocstrings>=0.29.1",
     "mkdocstrings-python>=1.16.10",
+    "matplotlib>=3.8",
+    "holoviews>=1.18",
+    "bokeh>=3.3",
 ]
 
 [tool.hatch.version]
@@ -55,6 +59,10 @@ testpaths = ["tests"]
 
 [tool.mypy]
 python_version = "3.12"
+
+[[tool.mypy.overrides]]
+module = ["holoviews", "holoviews.*"]
+ignore_missing_imports = true
 
 [tool.codespell]
 ignore-words-list = "strat"
