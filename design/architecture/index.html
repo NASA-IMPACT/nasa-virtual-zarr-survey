@@ -1,0 +1,2460 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Survey cloud-hosted NASA CMR collections for VirtualiZarr compatibility.">
+      
+      
+        <meta name="author" content="Max Jones">
+      
+      
+        <link rel="canonical" href="https://nasa-virtual-zarr-survey.readthedocs.io/design/architecture/">
+      
+      
+        <link rel="prev" href="../../results/">
+      
+      
+        <link rel="next" href="../taxonomy/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Survey design - nasa-virtual-zarr-survey</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../overrides/stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#survey-design" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're not viewing the latest version.
+  <a href="../../..">
+    <strong>Click here to go to latest.</strong>
+  </a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../.."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="nasa-virtual-zarr-survey" class="md-header__button md-logo" aria-label="nasa-virtual-zarr-survey" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            nasa-virtual-zarr-survey
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Survey design
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m14.3 16-.7-2h-3.2l-.7 2H7.8L11 7h2l3.2 9zM20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12zm-9.15 3.96h2.3L12 9z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="blue-grey" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="blue-grey" data-md-color-accent="indigo"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/NASA-IMPACT/nasa-virtual-zarr-survey" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nasa-virtual-zarr-survey
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="nasa-virtual-zarr-survey" class="md-nav__button md-logo" aria-label="nasa-virtual-zarr-survey" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    nasa-virtual-zarr-survey
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/NASA-IMPACT/nasa-virtual-zarr-survey" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nasa-virtual-zarr-survey
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    nasa-virtual-zarr-survey
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../results/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Results
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Design
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Survey design
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Survey design
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#measurement-model-the-phases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measurement model (the phases)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Measurement model (the phases)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-parsability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3 — Parsability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-datasetability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4 — Datasetability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4b-datatreeability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4b — Datatreeability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-cubability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5 — Cubability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-granule-result-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-granule result record
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cmr-interactions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CMR interactions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CMR interactions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#provider-universe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider universe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#discover-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discover modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#umm-json-extraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UMM-JSON extraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#format-classification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Format classification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sampling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sampling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rate-limiting-and-politeness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rate-limiting and politeness
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#virtualizarr-interactions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VirtualiZarr interactions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="VirtualiZarr interactions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-two-phases-rather-than-open_virtual_dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why two phases rather than open_virtual_dataset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#registry-construction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registry construction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#timeout-mechanism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timeout mechanism
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parser-instantiation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parser instantiation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fingerprints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fingerprints
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#whats-not-exercised" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What's not exercised
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#access-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Access modes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Access modes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#direct-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        direct (default)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#external" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        external
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#duckdb-outputsurveyduckdb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DuckDB (output/survey.duckdb)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parquet-outputresultsdaacdaacpart-nnnnparquet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parquet (output/results/DAAC=&lt;daac&gt;/part-NNNN.parquet)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resume-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resume logic
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reporting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reporting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#error-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Error handling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unit-testsunit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit (tests/unit/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#integration-testsintegration-opt-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integration (tests/integration/, opt-in)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extensibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extensibility
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Extensibility">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#refining-the-taxonomy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refining the taxonomy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-a-format-family" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding a format family
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-an-access-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding an access mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-questions-for-reviewers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open questions for reviewers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-prior-art" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related prior art
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../taxonomy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Failure Taxonomy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/discover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discover (Phase 1)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/sample/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sample (Phase 2)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/attempt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Attempt (Phases 3 and 4)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/report/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Report (Phase 5 and render)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/cubability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cubability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/taxonomy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Taxonomy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#measurement-model-the-phases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measurement model (the phases)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Measurement model (the phases)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-parsability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3 — Parsability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-datasetability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4 — Datasetability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4b-datatreeability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4b — Datatreeability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-cubability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5 — Cubability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-granule-result-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-granule result record
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cmr-interactions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CMR interactions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CMR interactions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#provider-universe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider universe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#discover-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discover modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#umm-json-extraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UMM-JSON extraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#format-classification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Format classification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sampling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sampling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rate-limiting-and-politeness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rate-limiting and politeness
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#virtualizarr-interactions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VirtualiZarr interactions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="VirtualiZarr interactions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-two-phases-rather-than-open_virtual_dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why two phases rather than open_virtual_dataset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#registry-construction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registry construction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#timeout-mechanism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timeout mechanism
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parser-instantiation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parser instantiation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fingerprints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fingerprints
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#whats-not-exercised" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What's not exercised
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#access-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Access modes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Access modes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#direct-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        direct (default)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#external" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        external
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#duckdb-outputsurveyduckdb" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DuckDB (output/survey.duckdb)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parquet-outputresultsdaacdaacpart-nnnnparquet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parquet (output/results/DAAC=&lt;daac&gt;/part-NNNN.parquet)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resume-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resume logic
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reporting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reporting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#error-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Error handling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unit-testsunit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit (tests/unit/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#integration-testsintegration-opt-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integration (tests/integration/, opt-in)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extensibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extensibility
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Extensibility">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#refining-the-taxonomy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refining the taxonomy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-a-format-family" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding a format family
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-an-access-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding an access mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-questions-for-reviewers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open questions for reviewers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-prior-art" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related prior art
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="survey-design">Survey design<a class="headerlink" href="#survey-design" title="Permanent link">&para;</a></h1>
+<h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
+<p>Measure, for each cloud-hosted NASA CMR collection of an array-like format, how far the stack gets when asked to virtualize it — broken into three independently-observable phases:</p>
+<ol>
+<li><strong>Parsability</strong> — can a VirtualiZarr parser read the file's metadata into a <code>ManifestStore</code>?</li>
+<li><strong>Datasetability</strong> — can that <code>ManifestStore</code> be materialized into an <code>xarray.Dataset</code> via <code>ManifestStore.to_virtual_dataset()</code>?</li>
+<li><strong>Cubability</strong> — across N stratified granules of a collection, are the per-granule datasets structurally compatible enough to be concatenated into one coherent virtual cube?</li>
+</ol>
+<p>The output is a per-collection verdict table plus a Markdown report that VirtualiZarr maintainers and NASA DAAC operators can act on.</p>
+<h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
+<p><strong>In:</strong> CMR collections with <code>cloud_hosted=True</code> hosted by EOSDIS DAAC providers, whose declared or probed format is array-like (NetCDF, HDF, Zarr, GeoTIFF, FITS, DMR++).</p>
+<p><strong>Out:</strong> on-prem-only collections; non-array formats (PDF, shapefile, CSV, binary); non-NASA providers.</p>
+<p><strong>Explicit non-goals:</strong></p>
+<ul>
+<li>No data read tests. The survey does not call <code>.compute()</code> or <code>.load()</code>; only metadata / manifest-level opens are exercised.</li>
+<li>No performance benchmarking. <code>duration_s</code> is recorded only to surface hangs and pathologically slow opens, not to rank parsers.</li>
+<li>No retries. Flakiness is surfaced as <code>partial_pass</code> across the 5 stratified granules rather than hidden.</li>
+<li>No DataTree-aware Cubability. Phase 4b (Datatreeability) is implemented and records whether <code>ManifestStore.to_virtual_datatree()</code> succeeds, but the Cubability check (Phase 5) still operates on flat <code>xr.Dataset</code> fingerprints; tree-only collections are reported as <code>NOT_ATTEMPTED</code> for Cubability.</li>
+</ul>
+<h2 id="pipeline">Pipeline<a class="headerlink" href="#pipeline" title="Permanent link">&para;</a></h2>
+<p>Single CLI <code>nasa-virtual-zarr-survey</code> with five phase subcommands plus a <code>pilot</code> convenience wrapper. Phases share state through a DuckDB checkpoint DB and a DAAC-partitioned Parquet dataset.</p>
+<div class="highlight"><pre><span></span><code>earthaccess.search_datasets(cloud_hosted=True, provider=&lt;EOSDIS&gt;)
+  ↓
+discover → collections (DuckDB)                       [Phase 1]
+  ↓
+sample   → granules  (DuckDB)                         [Phase 2]
+  ↓
+attempt  → results.parquet, one row per granule       [Phases 3, 4a, 4b]
+  ├─ Parsability:      parser(url=url, registry=...)
+  ├─ Datasetability:   manifest_store.to_virtual_dataset()      (4a)
+  └─ Datatreeability:  manifest_store.to_virtual_datatree()     (4b, parallel with 4a)
+  ↓
+report   → report.md + figures                        [Phase 5: cubability rollup]
+</code></pre></div>
+<ul>
+<li><code>discover</code> and <code>sample</code> are idempotent and safe to re-run.</li>
+<li><code>attempt</code> is resumable: it skips <code>(collection, granule)</code> pairs already present in the Parquet log.</li>
+<li><code>report</code> is cheap and side-effect-free; re-run after any taxonomy refinement.</li>
+</ul>
+<h2 id="measurement-model-the-phases">Measurement model (the phases)<a class="headerlink" href="#measurement-model-the-phases" title="Permanent link">&para;</a></h2>
+<p>Each phase is recorded independently on every per-granule attempt so reviewers can see where in the stack a failure occurs without re-running the pipeline. Phases 4a and 4b run in parallel after Phase 3 succeeds: a collection can be datasetable, datatreeable, both, or neither.</p>
+<h3 id="phase-3-parsability">Phase 3 — Parsability<a class="headerlink" href="#phase-3-parsability" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">parser</span> <span class="o">=</span> <span class="n">dispatch_parser</span><span class="p">(</span><span class="n">family</span><span class="p">)</span>   <span class="c1"># HDFParser / NetCDF3Parser / ZarrParser / FITSParser / DMRPPParser / VirtualTIFF</span>
+<span class="n">manifest_store</span> <span class="o">=</span> <span class="n">parser</span><span class="p">(</span><span class="n">url</span><span class="o">=</span><span class="n">url</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">)</span>
+</code></pre></div>
+<p>Success = the parser returned a <code>ManifestStore</code> without raising.</p>
+<p>Parser dispatch (in <code>attempt.dispatch_parser</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Parser</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NETCDF4</code>, <code>HDF5</code></td>
+<td><code>virtualizarr.parsers.hdf.HDFParser</code></td>
+</tr>
+<tr>
+<td><code>NETCDF3</code></td>
+<td><code>virtualizarr.parsers.netcdf3.NetCDF3Parser</code></td>
+</tr>
+<tr>
+<td><code>DMRPP</code></td>
+<td><code>virtualizarr.parsers.dmrpp.DMRPPParser</code></td>
+</tr>
+<tr>
+<td><code>FITS</code></td>
+<td><code>virtualizarr.parsers.fits.FITSParser</code></td>
+</tr>
+<tr>
+<td><code>ZARR</code></td>
+<td><code>virtualizarr.parsers.zarr.ZarrParser</code></td>
+</tr>
+<tr>
+<td><code>GEOTIFF</code></td>
+<td><code>virtual_tiff.VirtualTIFF</code> (out-of-tree)</td>
+</tr>
+<tr>
+<td><code>HDF4</code></td>
+<td><em>(no parser — recorded as <code>NoParserAvailable</code>)</em></td>
+</tr>
+</tbody>
+</table>
+<h3 id="phase-4-datasetability">Phase 4 — Datasetability<a class="headerlink" href="#phase-4-datasetability" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">ds</span> <span class="o">=</span> <span class="n">manifest_store</span><span class="o">.</span><span class="n">to_virtual_dataset</span><span class="p">()</span>
+</code></pre></div>
+<p>Only attempted if Phase 3 succeeded. Exercises xarray's <code>open_dataset</code> path wired to VirtualiZarr's manifest store. Captures failures that only surface once <code>xarray</code> tries to flatten / coordinate-align the manifest contents (e.g. <code>conflicting sizes for dimension</code>, group-structure mismatches).</p>
+<p>Recording rule:</p>
+<ul>
+<li>If Phase 3 fails, Phase 4's <code>dataset_success</code> is left <code>NULL</code> ("not attempted") — <strong>not</strong> <code>False</code>. This keeps the parsability signal from being diluted by cascading nulls in downstream aggregates.</li>
+<li>If Phase 4 fails, it is attributed to the Dataset phase even when the underlying cause is arguably upstream (e.g. a parser that eagerly materialized malformed coords). Reviewers should treat the error message as the ground truth, not the phase label.</li>
+</ul>
+<p>On Phase 4 success, <code>extract_fingerprint(ds)</code> captures a JSON summary of the dataset's structure (see <a href="#fingerprints">Fingerprints</a>). Failure of fingerprint extraction is swallowed — the attempt is still counted as success.</p>
+<h3 id="phase-4b-datatreeability">Phase 4b — Datatreeability<a class="headerlink" href="#phase-4b-datatreeability" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">dt</span> <span class="o">=</span> <span class="n">manifest_store</span><span class="o">.</span><span class="n">to_virtual_datatree</span><span class="p">()</span>
+</code></pre></div>
+<p>Attempted whenever Phase 3 succeeds, <strong>in parallel with Phase 4a (Datasetability)</strong>. A single daemon worker runs parse → dataset → datatree sequentially; three <code>threading.Event</code>s let the main thread record per-phase timeouts independently. A failure in 4a does not prevent 4b from running.</p>
+<p>Primary motivation: many hierarchical NetCDF4 / HDF5 collections fail <code>to_virtual_dataset()</code> with <code>conflicting sizes for dimension ...</code> (xarray refusing to flatten nested groups) but succeed as <code>xr.DataTree</code>. Capturing 4b separately lets reviewers distinguish "genuinely unreadable" from "flat-only readers get stuck, tree readers succeed."</p>
+<p>Recording rule:</p>
+<ul>
+<li>If Phase 3 fails, Phase 4b's <code>datatree_success</code> is left <code>NULL</code> (same policy as 4a).</li>
+<li><code>result.success</code> is <code>True</code> when <code>parse_success AND (dataset_success OR datatree_success)</code>, so tree-only successes are still counted as successes.</li>
+</ul>
+<p>No fingerprint is captured from the datatree (see Phase 5).</p>
+<h3 id="phase-5-cubability">Phase 5 — Cubability<a class="headerlink" href="#phase-5-cubability" title="Permanent link">&para;</a></h3>
+<p>Run at report time, not at attempt time. Gated on Phase 4a only — collections whose sampled granules all produced an <code>xr.Dataset</code>. Tree-only collections (4a failed, 4b succeeded) get <code>NOT_ATTEMPTED</code>; extending Cubability to <code>xr.DataTree</code> nodes is a future work item.</p>
+<p>For each eligible collection, <code>check_cubability(fingerprints)</code> runs a sequence of pass/fail checks:</p>
+<ol>
+<li>Variable name sets match across granules.</li>
+<li>Per-variable dtype / dims / codecs match.</li>
+<li>A concat dimension can be unambiguously identified (preferring a size-varying dim; falling back to a dim with differing coord value hashes).</li>
+<li>All non-concat dim sizes match.</li>
+<li>All non-concat coord value hashes match.</li>
+<li>Per-variable chunk sizes on non-concat axes match.</li>
+<li>Concat-dim coord ranges are monotonic and non-overlapping across granules.</li>
+</ol>
+<p>Verdicts: <code>FEASIBLE</code>, <code>INCOMPATIBLE</code>, <code>INCONCLUSIVE</code> (e.g. ambiguous concat dim, all granules identical), <code>NOT_ATTEMPTED</code> (Phase 4 didn't fully pass).</p>
+<h3 id="per-granule-result-record">Per-granule result record<a class="headerlink" href="#per-granule-result-record" title="Permanent link">&para;</a></h3>
+<p>Every <code>attempt_one</code> call produces exactly one <code>AttemptResult</code>, serialized as one Parquet row. Key fields:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>parse_success</code>, <code>parse_error_{type,message,traceback}</code></td>
+<td>Phase 3 outcome</td>
+</tr>
+<tr>
+<td><code>parse_duration_s</code></td>
+<td>Wall time inside <code>parser(...)</code> only</td>
+</tr>
+<tr>
+<td><code>dataset_success</code> (nullable), <code>dataset_error_{type,message,traceback}</code></td>
+<td>Phase 4a outcome; <code>NULL</code> when Phase 3 failed</td>
+</tr>
+<tr>
+<td><code>dataset_duration_s</code></td>
+<td>Wall time inside <code>to_virtual_dataset()</code> only</td>
+</tr>
+<tr>
+<td><code>datatree_success</code> (nullable), <code>datatree_error_{type,message,traceback}</code></td>
+<td>Phase 4b outcome; <code>NULL</code> when Phase 3 failed</td>
+</tr>
+<tr>
+<td><code>datatree_duration_s</code></td>
+<td>Wall time inside <code>to_virtual_datatree()</code> only</td>
+</tr>
+<tr>
+<td><code>success</code></td>
+<td><code>parse_success AND (dataset_success OR datatree_success)</code></td>
+</tr>
+<tr>
+<td><code>timed_out</code>, <code>timed_out_phase</code></td>
+<td>Per-phase timeout (<code>parse</code> / <code>dataset</code> / <code>datatree</code>); the main thread waits on each phase's event with its own budget</td>
+</tr>
+<tr>
+<td><code>fingerprint</code></td>
+<td>JSON string, populated only when Phase 4a succeeded; consumed by the cubability check</td>
+</tr>
+</tbody>
+</table>
+<h2 id="cmr-interactions">CMR interactions<a class="headerlink" href="#cmr-interactions" title="Permanent link">&para;</a></h2>
+<h3 id="provider-universe">Provider universe<a class="headerlink" href="#provider-universe" title="Permanent link">&para;</a></h3>
+<p><code>providers.py::get_eosdis_providers()</code> returns a hard-coded snapshot of EOSDIS DAAC providers, ported from <code>titiler-cmr-compatibility</code>. It is a pure list; re-check annually against <code>https://cmr.earthdata.nasa.gov/search/providers</code>.</p>
+<h3 id="discover-modes">Discover modes<a class="headerlink" href="#discover-modes" title="Permanent link">&para;</a></h3>
+<p><code>discover</code> has three mutually-exclusive modes:</p>
+<ul>
+<li><strong>Default:</strong> <code>earthaccess.search_datasets(cloud_hosted=True, provider=&lt;EOSDIS list&gt;, count=limit)</code>. <code>limit=None</code> means all.</li>
+<li><strong><code>--top N</code>:</strong> top-N collections across all EOSDIS providers, ranked by CMR's <code>usage_score</code>.</li>
+<li><strong><code>--top-per-provider N</code>:</strong> top-N per provider, concatenated.</li>
+</ul>
+<p>Popularity ranking (<code>popularity.py</code>) queries <code>POST https://cmr.earthdata.nasa.gov/search/collections.json</code> directly — not via <code>earthaccess</code> — because the Python wrapper doesn't expose <code>sort_key[]=-usage_score</code>. CMR caps any single page at 2000 rows and does not support paging for this sort, so <code>num &gt; 2000</code> raises.</p>
+<p>For top-N modes, the flow is: fetch concept IDs with <code>usage_score</code> sort, then batch-fetch UMM-JSON in chunks of 100 via <code>earthaccess.search_datasets(concept_id=batch)</code>.</p>
+<h3 id="umm-json-extraction">UMM-JSON extraction<a class="headerlink" href="#umm-json-extraction" title="Permanent link">&para;</a></h3>
+<p>Per collection (<code>discover.collection_row_from_umm</code>):</p>
+<ul>
+<li><strong><code>format_declared</code></strong> — prefer <code>umm.ArchiveAndDistributionInformation.FileDistributionInformation[*].Format</code> (the actually distributed format), falling back to <code>FileArchiveInformation[*].Format</code> (format as archived).</li>
+<li><strong><code>daac</code></strong> — first <code>umm.DataCenters[].ShortName</code>, falling back to <code>meta.provider-id</code>.</li>
+<li><strong>Temporal extent</strong> — first <code>umm.TemporalExtents[*].RangeDateTimes[*].{Beginning,Ending}DateTime</code>. Single-range extents only (we don't walk gaps in discontinuous series).</li>
+<li><strong><code>processing_level</code></strong> — <code>umm.ProcessingLevel.Id</code>.</li>
+</ul>
+<p>Per granule (<code>sample._extract_*</code>):</p>
+<ul>
+<li><strong><code>data_url</code></strong> — first entry from <code>DataGranule.data_links(access=&lt;mode&gt;)</code>. See <a href="#access-modes">Access modes</a>.</li>
+<li><strong><code>size_bytes</code></strong> — first <code>SizeInBytes</code> (or legacy <code>Size</code>) in <code>umm.DataGranule.ArchiveAndDistributionInformation</code>.</li>
+<li><strong>Format (probe)</strong> — when a collection has no collection-level format declared, <code>sample</code> calls <code>earthaccess.search_data(concept_id=..., count=1)</code> and reads <code>umm.DataGranule.ArchiveAndDistributionInformation.Format</code> to reclassify before sampling in earnest.</li>
+</ul>
+<h3 id="format-classification">Format classification<a class="headerlink" href="#format-classification" title="Permanent link">&para;</a></h3>
+<p><code>formats.classify_format(declared, url)</code> maps a CMR-declared format string (case-insensitive) or file extension to one of eight <code>FormatFamily</code> values. The declared-string mapping is the same one used by <code>titiler-cmr-compatibility</code>, extended with <code>DMR++</code> and variants.</p>
+<p>Collections with no declared format get <code>skip_reason="format_unknown"</code> at discover time. <code>sample</code> later probes one granule; if the granule's UMM-JSON also lacks a format, or the probed format is non-array, the collection stays skipped. This two-phase probing avoids burning granule queries on thousands of collections at discover time.</p>
+<p>Collections whose declared format is known but non-array (shapefile, CSV, PDF, etc.) get <code>skip_reason="non_array_format"</code> immediately.</p>
+<h3 id="sampling">Sampling<a class="headerlink" href="#sampling" title="Permanent link">&para;</a></h3>
+<p>For each array-like collection, 5 granules are sampled.</p>
+<ul>
+<li><strong>Stratified (preferred):</strong> split the temporal extent into 5 equal bins; for each bin, call <code>earthaccess.search_data(concept_id, temporal=(bin_start, bin_end), count=1)</code>. If a bin returns no granules, it is silently dropped (fewer than 5 rows but still <code>stratified=True</code>).</li>
+<li><strong>Fallback:</strong> if the temporal extent is missing, call <code>search_data(concept_id, count=5)</code> and assign synthetic <code>temporal_bin=0..4</code> with <code>stratified=False</code>.</li>
+</ul>
+<p>The <code>stratified</code> flag propagates to the Parquet log so the final report can distinguish genuine temporal coverage from fallback sampling.</p>
+<h3 id="rate-limiting-and-politeness">Rate-limiting and politeness<a class="headerlink" href="#rate-limiting-and-politeness" title="Permanent link">&para;</a></h3>
+<p>No explicit rate limiting. <code>discover</code> issues O(1) CMR calls (one paged <code>search_datasets</code>, or N/100 concept-id batches in top-N mode). <code>sample</code> issues O(collections × 5) granule-search calls. <code>attempt</code> hits S3 / DAAC HTTPS gateways directly and does not touch CMR. A full survey is ~10k attempts and runs in ~1 workday.</p>
+<h2 id="virtualizarr-interactions">VirtualiZarr interactions<a class="headerlink" href="#virtualizarr-interactions" title="Permanent link">&para;</a></h2>
+<h3 id="why-two-phases-rather-than-open_virtual_dataset">Why two phases rather than <code>open_virtual_dataset</code><a class="headerlink" href="#why-two-phases-rather-than-open_virtual_dataset" title="Permanent link">&para;</a></h3>
+<p><code>virtualizarr.open_virtual_dataset(url, registry, parser)</code> wraps both phases in one call. We split them because the survey's value is discriminating failures. Without the split, a single error column cannot tell a reviewer whether to file a parser issue or an xarray / manifest-store issue.</p>
+<p>Concretely, inside <code>attempt.attempt_one</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">ms</span> <span class="o">=</span> <span class="n">parser</span><span class="p">(</span><span class="n">url</span><span class="o">=</span><span class="n">url</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">)</span>      <span class="c1"># Phase 3</span>
+<span class="n">ds</span> <span class="o">=</span> <span class="n">ms</span><span class="o">.</span><span class="n">to_virtual_dataset</span><span class="p">()</span>                 <span class="c1"># Phase 4</span>
+</code></pre></div>
+<h3 id="registry-construction">Registry construction<a class="headerlink" href="#registry-construction" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># _build_registry</span>
+<span class="n">parsed</span> <span class="o">=</span> <span class="n">urlparse</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+<span class="n">scheme</span> <span class="o">=</span> <span class="n">parsed</span><span class="o">.</span><span class="n">scheme</span> <span class="ow">or</span> <span class="s2">&quot;s3&quot;</span>
+<span class="n">bucket</span> <span class="o">=</span> <span class="n">parsed</span><span class="o">.</span><span class="n">netloc</span>
+<span class="k">return</span> <span class="n">ObjectStoreRegistry</span><span class="p">({</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">scheme</span><span class="si">}</span><span class="s2">://</span><span class="si">{</span><span class="n">bucket</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">:</span> <span class="n">store</span><span class="p">})</span>
+</code></pre></div>
+<p>One registry entry per attempt, keyed by <code>scheme://netloc</code>. In direct mode the netloc is an S3 bucket; in external mode it is a DAAC HTTPS host. This works because every URL for a given attempt lives under one host / bucket; VirtualiZarr parsers that follow internal references (e.g. DMR++ pointing to a sidecar) within the same host / bucket are naturally covered, but cross-host references are not.</p>
+<h3 id="timeout-mechanism">Timeout mechanism<a class="headerlink" href="#timeout-mechanism" title="Permanent link">&para;</a></h3>
+<p>Each attempt runs inside a daemon <code>threading.Thread</code>. The worker fires three <code>threading.Event</code>s — one per phase (parse, dataset, datatree) — as each completes. The main thread waits on each event in turn with its own <code>timeout_s</code> budget:</p>
+<div class="highlight"><pre><span></span><code><span class="n">thread</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">_runner</span><span class="p">,</span> <span class="n">daemon</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">thread</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">phase_name</span><span class="p">,</span> <span class="n">event</span> <span class="ow">in</span> <span class="p">[(</span><span class="s2">&quot;parse&quot;</span><span class="p">,</span> <span class="n">parse_done</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;dataset&quot;</span><span class="p">,</span> <span class="n">dataset_done</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;datatree&quot;</span><span class="p">,</span> <span class="n">datatree_done</span><span class="p">)]:</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">event</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="n">timeout_s</span><span class="p">):</span>
+        <span class="n">result</span><span class="o">.</span><span class="n">timed_out</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="n">result</span><span class="o">.</span><span class="n">timed_out_phase</span> <span class="o">=</span> <span class="n">phase_name</span>
+        <span class="k">break</span>
+</code></pre></div>
+<p>If any phase's event doesn't fire in time, the main thread records the timeout, stops waiting, and abandons the worker. Subsequent events may still fire in the background; their results are not captured. The daemon flag ensures Python exits at process end even if the worker is still blocked on I/O. The per-attempt thread leak is acceptable because the pipeline is sequential and parser instances are fresh on every attempt.</p>
+<p>Budget note: because each phase gets its own <code>timeout_s</code> budget, the worst-case wall time for a fully-hanging attempt is <code>3 × timeout_s</code>. That's a deliberate choice over a shared countdown — it keeps per-phase diagnosis unambiguous and gives each phase a full budget regardless of what came before.</p>
+<h3 id="parser-instantiation">Parser instantiation<a class="headerlink" href="#parser-instantiation" title="Permanent link">&para;</a></h3>
+<p>A fresh parser instance per attempt (<code>dispatch_parser</code> always returns <code>X()</code>, never a cached instance). This avoids parsers accumulating internal state between granules of different collections and keeps attempts independent.</p>
+<h3 id="fingerprints">Fingerprints<a class="headerlink" href="#fingerprints" title="Permanent link">&para;</a></h3>
+<p>On Phase 4 success, <code>cubability.extract_fingerprint(ds)</code> walks the resulting xarray <code>Dataset</code> metadata — no data values — and writes a JSON object with:</p>
+<ul>
+<li><code>dims: {name: size}</code></li>
+<li><code>data_vars: {name: {dtype, dims, chunks, fill_value, codecs}}</code> where <code>codecs</code> is derived from <code>var.encoding.{compressor, filters, codecs}</code> (type names only).</li>
+<li><code>coords: {name: {dtype, dims, shape, values_hash, min, max}}</code> — coord values are hashed (<code>sha256(arr.tobytes())</code>) and reduced to sorted-endpoints so inter-granule compatibility can be checked without paying the round-trip cost.</li>
+</ul>
+<p>Reviewers should weigh in on whether this is a faithful enough summary for the cubability decisions that depend on it. In particular: chunk shape from <code>var.chunks[0]</code> per dim assumes uniform chunking; <code>codecs</code> by type name loses parameterization.</p>
+<h3 id="whats-not-exercised">What's not exercised<a class="headerlink" href="#whats-not-exercised" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>.compute()</code> / data reads — only metadata-level opens.</li>
+<li>Writing (e.g. to Icechunk). The survey stops at an in-memory virtual dataset.</li>
+<li>Concat across granules. Cubability is a <em>feasibility check</em>, not an actual combine — no <code>xr.concat</code> is ever run.</li>
+</ul>
+<h2 id="access-modes">Access modes<a class="headerlink" href="#access-modes" title="Permanent link">&para;</a></h2>
+<p>Two modes are supported end-to-end. <code>--access</code> plumbs through <code>sample</code> (which URL to store) and <code>attempt</code> (which store type to build). The rest of the pipeline is mode-agnostic because the registry keys on <code>scheme://netloc</code>.</p>
+<h3 id="direct-default"><code>direct</code> (default)<a class="headerlink" href="#direct-default" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Granule URLs are S3 (<code>s3://bucket/key</code>), from <code>DataGranule.data_links(access="direct")</code>.</li>
+<li>Requires AWS compute in <code>us-west-2</code> (NASA S3 direct access is region-locked).</li>
+<li>Store: <code>obstore.store.S3Store</code>, one per <code>(provider, bucket)</code> pair.</li>
+<li>Credentials are minted per provider via <code>earthaccess.get_s3_credentials(provider=...)</code> and cached with a 50-minute TTL (EDL expires them at 60 minutes). On TTL expiry, all cached stores for the provider are invalidated before a new credential is minted.</li>
+<li><strong>Forbidden abort:</strong> if five consecutive attempts in direct mode classify as <code>Bucket.FORBIDDEN</code> (403 / AccessDenied), the run aborts with a message suggesting <code>--access external</code> and reminding the user that sampled URLs differ between modes and must be regenerated. This catches the common "running outside us-west-2" footgun fast.</li>
+</ul>
+<h3 id="external"><code>external</code><a class="headerlink" href="#external" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Granule URLs are HTTPS (<code>https://&lt;daac-host&gt;/path/file.nc</code>), from <code>DataGranule.data_links(access="external")</code>.</li>
+<li>Works from anywhere with EDL credentials in <code>~/.netrc</code>.</li>
+<li>Store: <code>obstore.store.HTTPStore.from_url(f"{scheme}://{host}", default_headers={"Authorization": f"Bearer {edl_token}"})</code>, cached per <code>scheme://host</code>.</li>
+<li>Token source: after <code>earthaccess.login(strategy="netrc")</code>, we pull <code>earthaccess.__auth__.token["access_token"]</code>.</li>
+<li>Many DAAC HTTPS gateways 302-redirect to presigned S3 URLs. This is expected; <code>HTTPStore</code>'s default redirect behaviour handles it. See <a href="#known-limitations">Known Limitations</a> for the caveat about bearer-header retention across redirects.</li>
+</ul>
+<p>Both stores raise <code>AuthUnavailable</code> on missing credentials / tokens; the caller records the failure as a per-granule <code>AuthUnavailable</code> result rather than aborting.</p>
+<h2 id="data-model">Data model<a class="headerlink" href="#data-model" title="Permanent link">&para;</a></h2>
+<h3 id="duckdb-outputsurveyduckdb">DuckDB (<code>output/survey.duckdb</code>)<a class="headerlink" href="#duckdb-outputsurveyduckdb" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">collections</span><span class="w"> </span><span class="p">(</span>
+<span class="w">  </span><span class="n">concept_id</span><span class="w">       </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+<span class="w">  </span><span class="n">short_name</span><span class="w">       </span><span class="nb">TEXT</span><span class="p">,</span>
+<span class="w">  </span><span class="k">version</span><span class="w">          </span><span class="nb">TEXT</span><span class="p">,</span>
+<span class="w">  </span><span class="n">daac</span><span class="w">             </span><span class="nb">TEXT</span><span class="p">,</span>
+<span class="w">  </span><span class="n">provider</span><span class="w">         </span><span class="nb">TEXT</span><span class="p">,</span>
+<span class="w">  </span><span class="n">format_family</span><span class="w">    </span><span class="nb">TEXT</span><span class="p">,</span><span class="w">      </span><span class="c1">-- one of FormatFamily, NULL if unknown / non-array</span>
+<span class="w">  </span><span class="n">format_declared</span><span class="w">  </span><span class="nb">TEXT</span><span class="p">,</span><span class="w">      </span><span class="c1">-- raw CMR-declared string, for debugging</span>
+<span class="w">  </span><span class="n">num_granules</span><span class="w">     </span><span class="nb">BIGINT</span><span class="p">,</span>
+<span class="w">  </span><span class="n">time_start</span><span class="w">       </span><span class="k">TIMESTAMP</span><span class="p">,</span>
+<span class="w">  </span><span class="n">time_end</span><span class="w">         </span><span class="k">TIMESTAMP</span><span class="p">,</span>
+<span class="w">  </span><span class="n">processing_level</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<span class="w">  </span><span class="n">skip_reason</span><span class="w">      </span><span class="nb">TEXT</span><span class="p">,</span><span class="w">      </span><span class="c1">-- NULL | &#39;non_array_format&#39; | &#39;format_unknown&#39;</span>
+<span class="w">  </span><span class="n">discovered_at</span><span class="w">    </span><span class="k">TIMESTAMP</span>
+<span class="p">);</span>
+
+<span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">granules</span><span class="w"> </span><span class="p">(</span>
+<span class="w">  </span><span class="n">collection_concept_id</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">  </span><span class="n">granule_concept_id</span><span class="w">    </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">  </span><span class="n">data_url</span><span class="w">              </span><span class="nb">TEXT</span><span class="p">,</span>
+<span class="w">  </span><span class="n">temporal_bin</span><span class="w">          </span><span class="nb">INTEGER</span><span class="p">,</span>
+<span class="w">  </span><span class="n">size_bytes</span><span class="w">            </span><span class="nb">BIGINT</span><span class="p">,</span>
+<span class="w">  </span><span class="n">sampled_at</span><span class="w">            </span><span class="k">TIMESTAMP</span><span class="p">,</span>
+<span class="w">  </span><span class="n">stratified</span><span class="w">            </span><span class="nb">BOOLEAN</span><span class="p">,</span>
+<span class="w">  </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">collection_concept_id</span><span class="p">,</span><span class="w"> </span><span class="n">granule_concept_id</span><span class="p">)</span>
+<span class="p">);</span>
+</code></pre></div>
+<p>Schema creation uses <code>CREATE TABLE IF NOT EXISTS</code>. No migrations: schema changes require deleting <code>output/survey.duckdb</code> and <code>output/results/</code> and re-running.</p>
+<h3 id="parquet-outputresultsdaacdaacpart-nnnnparquet">Parquet (<code>output/results/DAAC=&lt;daac&gt;/part-NNNN.parquet</code>)<a class="headerlink" href="#parquet-outputresultsdaacdaacpart-nnnnparquet" title="Permanent link">&para;</a></h3>
+<p>Append-only per-attempt log. One row per <code>attempt_one</code> call. Partitioned by DAAC so partial reprocessing is easy and a crash only risks the active shard's in-memory buffer.</p>
+<p>Notable columns (full list in <code>attempt._SCHEMA_FIELDS</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>collection_concept_id</code></td>
+<td>STRING</td>
+<td></td>
+</tr>
+<tr>
+<td><code>granule_concept_id</code></td>
+<td>STRING</td>
+<td></td>
+</tr>
+<tr>
+<td><code>daac</code></td>
+<td>STRING</td>
+<td>partition key</td>
+</tr>
+<tr>
+<td><code>format_family</code></td>
+<td>STRING</td>
+<td><code>FormatFamily.value</code></td>
+</tr>
+<tr>
+<td><code>parser</code></td>
+<td>STRING</td>
+<td><code>type(parser).__name__</code></td>
+</tr>
+<tr>
+<td><code>parse_success</code></td>
+<td>BOOL</td>
+<td>Phase 3</td>
+</tr>
+<tr>
+<td><code>parse_error_{type,message,traceback}</code></td>
+<td>STRING</td>
+<td>truncated to 2/2/4 KB</td>
+</tr>
+<tr>
+<td><code>parse_duration_s</code></td>
+<td>DOUBLE</td>
+<td>parser call only</td>
+</tr>
+<tr>
+<td><code>dataset_success</code></td>
+<td>BOOL (nullable)</td>
+<td>Phase 4; NULL when Phase 3 failed</td>
+</tr>
+<tr>
+<td><code>dataset_error_{type,message,traceback}</code></td>
+<td>STRING</td>
+<td></td>
+</tr>
+<tr>
+<td><code>dataset_duration_s</code></td>
+<td>DOUBLE</td>
+<td><code>to_virtual_dataset()</code> only</td>
+</tr>
+<tr>
+<td><code>success</code></td>
+<td>BOOL</td>
+<td>parse AND dataset succeeded</td>
+</tr>
+<tr>
+<td><code>timed_out</code>, <code>timed_out_phase</code></td>
+<td>BOOL, STRING</td>
+<td><code>"parse"</code> | <code>"dataset"</code></td>
+</tr>
+<tr>
+<td><code>duration_s</code></td>
+<td>DOUBLE</td>
+<td>wall time including dispatch</td>
+</tr>
+<tr>
+<td><code>stratified</code></td>
+<td>BOOL</td>
+<td>propagated from sampling</td>
+</tr>
+<tr>
+<td><code>fingerprint</code></td>
+<td>STRING</td>
+<td>JSON; populated only on full success</td>
+</tr>
+<tr>
+<td><code>attempted_at</code></td>
+<td>TIMESTAMP</td>
+<td>UTC</td>
+</tr>
+</tbody>
+</table>
+<p>Shards rotate every 500 rows (<code>ResultWriter.shard_size</code>). A SIGINT handler flushes every DAAC's buffered rows before exiting with code 0, so reruns resume cleanly.</p>
+<h3 id="resume-logic">Resume logic<a class="headerlink" href="#resume-logic" title="Permanent link">&para;</a></h3>
+<p><code>_pending_granules</code> joins <code>granules</code> with <code>collections</code> and excludes pairs already present in the Parquet log:</p>
+<div class="highlight"><pre><span></span><code><span class="k">WHERE</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">skip_reason</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">NULL</span>
+<span class="w">  </span><span class="k">AND</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">EXISTS</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="k">SELECT</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">read_parquet</span><span class="p">(</span><span class="o">?</span><span class="p">,</span><span class="w"> </span><span class="n">union_by_name</span><span class="o">=</span><span class="k">true</span><span class="p">,</span><span class="w"> </span><span class="n">hive_partitioning</span><span class="o">=</span><span class="k">true</span><span class="p">)</span><span class="w"> </span><span class="n">r</span>
+<span class="w">    </span><span class="k">WHERE</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">collection_concept_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">g</span><span class="p">.</span><span class="n">collection_concept_id</span>
+<span class="w">      </span><span class="k">AND</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">granule_concept_id</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="k">g</span><span class="p">.</span><span class="n">granule_concept_id</span>
+<span class="w">  </span><span class="p">)</span>
+</code></pre></div>
+<p>On the first run, <code>read_parquet</code> raises (no files yet); a <code>try/except</code> falls back to "all pending granules." Results are ordered by <code>(daac, collection, temporal_bin)</code> so per-collection progress lines to stderr are meaningful and shards stay DAAC-local.</p>
+<h2 id="reporting">Reporting<a class="headerlink" href="#reporting" title="Permanent link">&para;</a></h2>
+<p><code>report.py</code> reads <code>survey.duckdb</code> and the full Parquet log via DuckDB's <code>read_parquet</code> with Hive partitioning. The emitted Markdown contains:</p>
+<ul>
+<li>Overview Sankey (collections → parsable → datasetable → cubable).</li>
+<li>Per-phase verdict tables (<code>all_pass</code> / <code>partial_pass</code> / <code>all_fail</code> / <code>not_attempted</code> / <code>skipped</code>). <code>skipped</code> is assigned at the collection level from <code>collections.skip_reason</code>; the other verdicts are derived from the Parquet log.</li>
+<li>Per-phase failure taxonomy (see <a href="../taxonomy/">Failure Taxonomy</a>) with both granule and distinct-collection counts.</li>
+<li>Per-DAAC and per-format-family tables in the form "parsable / datasetable / cubable (% of the previous column)."</li>
+<li>Stratification breakdown (stratified vs fallback vs unsampled).</li>
+<li>Top-50 raw errors per phase for the <code>OTHER</code> bucket, seeding the next round of taxonomy refinement.</li>
+<li>Full per-collection table at the end.</li>
+</ul>
+<h2 id="error-handling">Error handling<a class="headerlink" href="#error-handling" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Per-attempt:</strong> all exceptions caught; errors serialized into the Parquet row. Timeouts → <code>TimeoutError</code>. Auth failures → <code>AuthUnavailable</code>.</li>
+<li><strong>No retries.</strong> Flakiness surfaces naturally as <code>partial_pass</code> across the 5 stratified granules. Retrying inside <code>attempt_one</code> would conflate transient failure with genuine lack of support and muddy the taxonomy.</li>
+<li><strong>Process-level SIGINT:</strong> flushes every DAAC's active shard, then <code>sys.exit(0)</code>. The next <code>attempt</code> run resumes from where it stopped.</li>
+<li><strong>Forbidden run-abort:</strong> 5 consecutive direct-mode 403s cause a clean abort with a remediation message. Non-direct runs do not trigger this.</li>
+</ul>
+<h2 id="cli">CLI<a class="headerlink" href="#cli" title="Permanent link">&para;</a></h2>
+<p>Click-based. Subcommands: <code>version</code>, <code>discover</code>, <code>sample</code>, <code>attempt</code>, <code>report</code>, <code>pilot</code>, plus a <code>repro</code> helper that minimizes any single failure into a runnable script.</p>
+<p>Common flags across work phases:</p>
+<ul>
+<li><code>--db PATH</code> — DuckDB checkpoint (default <code>output/survey.duckdb</code>)</li>
+<li><code>--results PATH</code> — Parquet results directory (default <code>output/results</code>)</li>
+<li><code>--out PATH</code> — report output (default <code>docs/results/index.md</code>)</li>
+<li><code>--access {direct,external}</code> — granule access mode (default <code>direct</code>)</li>
+<li><code>--daac NAME</code> — restrict to one DAAC</li>
+</ul>
+<p>Discovery-specific:</p>
+<ul>
+<li><code>--limit N</code>, <code>--top N</code>, <code>--top-per-provider N</code> (mutually exclusive)</li>
+<li><code>--dry-run</code>, <code>--skipped</code></li>
+</ul>
+<p>Attempt-specific:</p>
+<ul>
+<li><code>--timeout SECONDS</code> (default 60)</li>
+<li><code>--shard-size ROWS</code> (default 500)</li>
+</ul>
+<p>The <code>pilot</code> subcommand runs all phases end-to-end on a small sample (<code>--sample N</code>, default 50) so users can review raw errors and refine <code>taxonomy.py</code> before committing to a full survey.</p>
+<p><code>__main__.py</code> suppresses three noisy upstream warnings (<code>earthaccess</code> <code>DataGranule.size</code> <code>FutureWarning</code>, Numcodecs / Imagecodecs "not in Zarr v3 spec" <code>UserWarning</code>s) to keep stderr meaningful.</p>
+<h2 id="testing">Testing<a class="headerlink" href="#testing" title="Permanent link">&para;</a></h2>
+<h3 id="unit-testsunit">Unit (<code>tests/unit/</code>)<a class="headerlink" href="#unit-testsunit" title="Permanent link">&para;</a></h3>
+<p>Every module has mocked tests for its public API. Notable suites:</p>
+<ul>
+<li><code>test_taxonomy.py</code> — table-driven, one case per hypothesized bucket; grows as the pilot reveals new patterns.</li>
+<li><code>test_auth.py</code> — both modes mocked at <code>earthaccess</code>, <code>obstore.store.S3Store</code>, and <code>HTTPStore</code>. Does not exercise real S3 or real EDL.</li>
+<li><code>test_attempt.py::test_run_attempt_resumes</code> — pre-populates a Parquet shard, verifies the resume check skips already-attempted granules.</li>
+<li><code>test_sample.py</code> — both the stratified-bins branch and the no-temporal-extent fallback.</li>
+<li><code>test_cubability.py</code> — the seven-step feasibility check, with fixtures for each failing-step case.</li>
+</ul>
+<h3 id="integration-testsintegration-opt-in">Integration (<code>tests/integration/</code>, opt-in)<a class="headerlink" href="#integration-testsintegration-opt-in" title="Permanent link">&para;</a></h3>
+<p>One smoke test that runs the full pipeline on 3 collections with real EDL credentials. Skipped cleanly when <code>~/.netrc</code> is absent. Not run in CI.</p>
+<h2 id="extensibility">Extensibility<a class="headerlink" href="#extensibility" title="Permanent link">&para;</a></h2>
+<h3 id="refining-the-taxonomy">Refining the taxonomy<a class="headerlink" href="#refining-the-taxonomy" title="Permanent link">&para;</a></h3>
+<p>After a pilot run, read the "Top 50 Raw Errors in <code>OTHER</code>" section of <code>output/report.md</code>. For each recurring pattern:</p>
+<ul>
+<li>Add a <code>Bucket</code> value in <code>taxonomy.py</code> if it's a novel failure mode.</li>
+<li>Add a <code>(type_regex, message_regex, bucket)</code> rule at the correct position in <code>_RULES</code> (first match wins).</li>
+<li>Add a test case in <code>tests/unit/test_taxonomy.py</code>.</li>
+<li>Re-run <code>report</code>; no need to re-run <code>attempt</code>.</li>
+</ul>
+<h3 id="adding-a-format-family">Adding a format family<a class="headerlink" href="#adding-a-format-family" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add a <code>FormatFamily</code> value.</li>
+<li>Add declared-string and extension entries in <code>formats._DECLARED</code> and <code>_EXT</code>.</li>
+<li>Add a parser-dispatch branch in <code>attempt.dispatch_parser</code> if VirtualiZarr supports it; otherwise attempts record <code>NoParserAvailable</code>.</li>
+</ul>
+<h3 id="adding-an-access-mode">Adding an access mode<a class="headerlink" href="#adding-an-access-mode" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add a branch in <code>StoreCache.get_store</code> and whatever store construction is needed.</li>
+<li>Extend <code>--access</code> <code>click.Choice</code>.</li>
+<li><code>sample._extract_url</code> already forwards the mode to <code>data_links(access=...)</code>.</li>
+<li><code>_build_registry</code> keys on <code>scheme://netloc</code>; a new scheme should work without changes.</li>
+</ul>
+<h2 id="known-limitations">Known limitations<a class="headerlink" href="#known-limitations" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Sequential only.</strong> Single-process, single-threaded apart from the per-attempt timeout worker. At roughly 5 s/attempt and ~10k attempts, a full survey takes a workday. Natural partition for future parallelism is the DAAC.</li>
+<li><strong>No schema migrations.</strong> DB schema changes require deleting <code>output/survey.duckdb</code> and <code>output/results/</code> and re-running.</li>
+<li><strong>Taxonomy drift.</strong> Upstream error strings change; the regex-based classifier needs maintenance whenever VirtualiZarr or its dependencies evolve. The <code>OTHER</code> bucket plus its raw-error drill-down is the operational mitigation.</li>
+<li><strong>External-mode redirects.</strong> <code>HTTPStore</code>'s bearer header is attached as a default header per hostname; whether obstore preserves that header across 302 redirects to a different host (e.g. presigned S3) has not been exhaustively tested against the full DAAC matrix. Edge-case failures surface as bucketed errors in the report.</li>
+<li><strong>Timeout leaks threads.</strong> A timed-out worker continues to run in the background until the interpreter exits. The daemon flag ensures eventual cleanup but the leaking thread can still hold sockets, memory, or file descriptors for the rest of the run.</li>
+<li><strong>Hierarchical datasets: partial support.</strong> Phase 4b (Datatreeability) captures whether <code>ManifestStore.to_virtual_datatree()</code> succeeds, so collections that fail Phase 4a with <code>CONFLICTING_DIM_SIZES</code> or similar can still be counted as hierarchical-readable. The Cubability check (Phase 5) still operates on <code>xr.Dataset</code> fingerprints only; extending it to per-node <code>xr.DataTree</code> fingerprints (picking a representative node, or checking every node) is a future work item.</li>
+<li><strong>Fingerprint lossiness.</strong> The per-granule fingerprint records codec <em>type names</em> and assumes uniform chunking along each dim. Collections whose per-variable codec parameters or chunking vary in ways not captured by the fingerprint will pass the cubability check but may still fail a real concat. Flagged explicitly as a trust boundary for reviewers.</li>
+<li><strong>VirtualiZarr parser coverage.</strong> HDF4 lands in <code>NoParserAvailable</code> by design. Future VirtualiZarr releases that close that gap will be picked up automatically on the next run.</li>
+</ul>
+<h2 id="open-questions-for-reviewers">Open questions for reviewers<a class="headerlink" href="#open-questions-for-reviewers" title="Permanent link">&para;</a></h2>
+<p>CMR experts:</p>
+<ol>
+<li>Is <code>FileDistributionInformation.Format → FileArchiveInformation.Format → probe-one-granule</code> the right precedence, or are there collections where only a product-type field reliably identifies the format?</li>
+<li>Are there DAACs where <code>DataGranule.data_links(access="direct")</code> returns a non-S3 scheme (e.g. TEA-signed HTTPS treated as "direct"), and should we classify those differently?</li>
+<li>Is the EOSDIS provider snapshot in <code>providers.py</code> missing any active cloud-hosted DAAC? (Last audited Q1 2026.)</li>
+<li>Are there collections where temporal extent splitting is misleading — e.g. reprocessing campaigns that invalidate earlier bins? Should we prefer <code>reprocessed=true</code> filtering?</li>
+</ol>
+<p>VirtualiZarr experts:</p>
+<ol>
+<li>Is splitting <code>parser(...)</code> from <code>to_virtual_dataset()</code> a fair and stable API contract, or do some parsers blur the line (e.g. by deferring work until dataset construction)?</li>
+<li>Is the registry shape (<code>{f"{scheme}://{netloc}": store}</code>) sufficient for every current parser? DMR++ in particular can reference sidecar URLs — do those need a broader registry?</li>
+<li>Is the fingerprint faithful enough for cubability? What's the minimum additional metadata (codec parameters, fill-value comparison, time-unit handling) that would let us trust a <code>FEASIBLE</code> verdict as a real concat?</li>
+<li>For <code>VirtualTIFF</code>: does it integrate with <code>ObjectStoreRegistry</code> cleanly, and should we expect different error shapes from it than from the in-tree parsers?</li>
+<li>Should failures like <code>not a valid HDF5 file</code> after a successful <code>HDFParser</code> dispatch be attributed to parser misdispatch (i.e. the declared format was wrong) or to genuine file corruption? The current taxonomy lumps them together under <code>CANT_OPEN_FILE</code>.</li>
+</ol>
+<h2 id="related-prior-art">Related prior art<a class="headerlink" href="#related-prior-art" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>titiler-cmr-compatibility</code> ran a structurally similar survey for tile-generation compatibility. Ported: EOSDIS provider filter, initial taxonomy buckets, UMM-JSON fields to record (processing level, short name + version), declared-format / extension mapping, Parquet-incremental-write pattern, per-granule timeout.</li>
+<li>Diverged: 5 stratified granules vs their 1 random granule per collection (for intra-collection heterogeneity detection); <code>open_virtual_dataset</code> split into parse + dataset phases vs their single <code>CMRBackend</code> tile-render test (different failure surface); cubability as a third phase vs their single-granule result.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.annotate", "content.code.copy", "navigation.indexes", "navigation.instant", "navigation.tracking", "search.suggest", "search.share"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
