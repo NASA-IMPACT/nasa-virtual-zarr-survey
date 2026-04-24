@@ -7,7 +7,7 @@ Thanks for your interest in improving nasa-virtual-zarr-survey.
 This project uses [uv](https://docs.astral.sh/uv/) for Python environment management. No conda, no pip.
 
 ```bash
-git clone https://github.com/developmentseed/nasa-virtual-zarr-survey.git
+git clone https://github.com/NASA-IMPACT/nasa-virtual-zarr-survey.git
 cd nasa-virtual-zarr-survey
 uv sync
 ```
