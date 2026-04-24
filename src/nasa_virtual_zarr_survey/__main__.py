@@ -28,6 +28,11 @@ warnings.filterwarnings(
     message=r"Imagecodecs codecs are not in the Zarr version 3 specification",
     category=UserWarning,
 )
+warnings.filterwarnings(
+    "ignore",
+    message=r"In a future version, xarray will not decode the variable .* into a timedelta64 dtype",
+    category=FutureWarning,
+)
 
 DEFAULT_DB = Path("output/survey.duckdb")
 DEFAULT_RESULTS = Path("output/results")
