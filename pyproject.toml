@@ -7,6 +7,8 @@ name = "nasa-virtual-zarr-survey"
 dynamic = ["version"]
 description = "Survey cloud-hosted NASA CMR collections for VirtualiZarr compatibility"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "Max Jones", email = "14077947+maxrjones@users.noreply.github.com" }
 ]
