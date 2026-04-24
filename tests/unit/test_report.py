@@ -296,6 +296,46 @@ def _make_fp(time_hash: str, time_min: int, time_max: int) -> str:
     return fingerprint_to_json(fp)
 
 
+def test_render_report_includes_skipped_by_format_section(
+    tmp_db_path, tmp_results_dir, tmp_path
+):
+    """The Skipped collections section lists declared formats sorted descending
+    by count, drawing from collections.skip_reason + collections.format_declared."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    # One array-like (no skip), three skipped with two distinct declared formats.
+    con.execute(
+        "INSERT INTO collections VALUES ('CARR','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now())"
+    )
+    con.execute(
+        "INSERT INTO collections VALUES ('CPDF1','s','1','PODAAC','PODAAC',NULL,'PDF',1,NULL,NULL,'L3','non_array_format',now())"
+    )
+    con.execute(
+        "INSERT INTO collections VALUES ('CPDF2','s','1','PODAAC','PODAAC',NULL,'PDF',1,NULL,NULL,'L3','non_array_format',now())"
+    )
+    con.execute(
+        "INSERT INTO collections VALUES ('CGRIB','s','1','PODAAC','PODAAC',NULL,'GRIB',1,NULL,NULL,'L3','non_array_format',now())"
+    )
+    con.close()
+
+    _write_results(
+        tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet",
+        [_row("CARR", "G0")],
+    )
+
+    out = tmp_path / "report.md"
+    run_report(tmp_db_path, tmp_results_dir, out)
+    text = out.read_text()
+    assert "## Skipped collections by declared format" in text
+    assert "| Declared format | Reason | Collections |" in text
+    # PDF (n=2) must precede GRIB (n=1) — sorted descending.
+    pdf_idx = text.index("| PDF | non_array_format | 2 |")
+    grib_idx = text.index("| GRIB | non_array_format | 1 |")
+    assert pdf_idx < grib_idx
+    # Array-like collection must not appear in this section's table.
+    assert "| NetCDF-4 |" not in text.split("## Phase 3")[0]
+
+
 def test_render_report_reports_rescued_by_datatree_count(
     tmp_db_path, tmp_results_dir, tmp_path
 ):

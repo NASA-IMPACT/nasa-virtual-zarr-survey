@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 4,
   "generated_at": "2026-04-24T01:34:20.960363+00:00",
   "survey_tool_version": "0.1.dev36+g85bf5a483.d20260424",
   "verdicts": [
@@ -112,6 +112,13 @@
       3,
       "ValueError",
       "conflicting sizes for dimension 'phony_dim_0': length 8192 on 'PixelType' and length 2048 on {'phony_dim_0': 'Image', 'phony_dim_1': 'Image'}"
+    ]
+  ],
+  "skipped_by_format": [
+    [
+      "(null)",
+      "format_unknown",
+      1
     ]
   ]
 }

@@ -266,6 +266,28 @@ def _cubability_results(
     return out
 
 
+def _skipped_by_format(
+    con: duckdb.DuckDBPyConnection,
+) -> list[tuple[str, str, int]]:
+    """Return ``(format_declared, skip_reason, count)`` rows for skipped collections,
+    sorted descending by count then format."""
+    try:
+        rows = con.execute(
+            """
+            SELECT COALESCE(format_declared, '(null)') AS fmt,
+                   skip_reason,
+                   count(*) AS n
+            FROM collections
+            WHERE skip_reason IS NOT NULL
+            GROUP BY fmt, skip_reason
+            ORDER BY n DESC, fmt
+            """
+        ).fetchall()
+    except Exception:
+        return []
+    return [(str(fmt), str(reason), int(n)) for fmt, reason, n in rows]
+
+
 def _other_errors_for_phase(
     con: duckdb.DuckDBPyConnection, phase: str
 ) -> list[tuple[int, str, str]]:
@@ -406,6 +428,31 @@ def _render_metadata_block(meta: RunMetadata) -> list[str]:
     return lines
 
 
+def _render_skipped_by_format(
+    rows: list[tuple[str, str, int]],
+) -> list[str]:
+    """Render the "Skipped collections by declared format" section body.
+
+    ``rows`` is ``(format_declared, skip_reason, count)`` sorted descending.
+    """
+    lines = ["## Skipped collections by declared format\n"]
+    lines.append(
+        "Collections filtered out before sampling because no VirtualiZarr parser "
+        "exists for the declared format. Sorted descending by count; the top "
+        "rows are the highest-impact targets for new-parser work.\n"
+    )
+    if not rows:
+        lines.append("_No skipped collections._")
+        lines.append("")
+        return lines
+    lines.append("| Declared format | Reason | Collections |")
+    lines.append("|---|---|---:|")
+    for fmt, reason, n in rows:
+        lines.append(f"| {fmt} | {reason} | {n} |")
+    lines.append("")
+    return lines
+
+
 def render_report(
     verdicts: list[VerdictRow],
     parse_tax: dict[str, tuple[int, int]],
@@ -417,6 +464,7 @@ def render_report(
     datatree_tax: dict[str, tuple[int, int]] | None = None,
     other_datatree_errors: list[tuple[int, str, str]] | None = None,
     metadata: RunMetadata | None = None,
+    skipped_by_format: list[tuple[str, str, int]] | None = None,
 ) -> str:
     """Render the full Markdown report from pre-computed phase verdicts and taxonomy counts.
 
@@ -441,6 +489,7 @@ def render_report(
     fs = figure_stems or {}
     _datatree_tax: dict[str, tuple[int, int]] = datatree_tax or {}
     _other_datatree_errors: list[tuple[int, str, str]] = other_datatree_errors or []
+    _skipped_by_format: list[tuple[str, str, int]] = skipped_by_format or []
 
     total = len(verdicts)
     lines: list[str] = []
@@ -459,6 +508,8 @@ def render_report(
     if "funnel" in fs:
         lines.append(_iframe("funnel"))
         lines.append("")
+
+    lines.extend(_render_skipped_by_format(_skipped_by_format))
 
     # Phase 3: Parsability
     lines.append("## Phase 3: Parsability\n")
@@ -698,6 +749,7 @@ def run_report(
         other_parse_errors = summary.other_parse_errors
         other_dataset_errors = summary.other_dataset_errors
         other_datatree_errors = summary.other_datatree_errors
+        skipped_by_format = summary.skipped_by_format
         metadata = RunMetadata(
             generated_at=summary.generated_at,
             survey_tool_version=summary.survey_tool_version,
@@ -719,6 +771,7 @@ def run_report(
         other_parse_errors = _other_errors_for_phase(con, "parse")
         other_dataset_errors = _other_errors_for_phase(con, "dataset")
         other_datatree_errors = _other_errors_for_phase(con, "datatree")
+        skipped_by_format = _skipped_by_format(con)
         metadata = _collect_run_metadata(con, __version__)
 
         if export_to is not None:
@@ -734,6 +787,7 @@ def run_report(
                 other_parse_errors=other_parse_errors,
                 other_dataset_errors=other_dataset_errors,
                 other_datatree_errors=other_datatree_errors,
+                skipped_by_format=skipped_by_format,
                 survey_tool_version=metadata.survey_tool_version,
                 virtualizarr_version=metadata.virtualizarr_version,
                 zarr_version=metadata.zarr_version,
@@ -761,5 +815,6 @@ def run_report(
         datatree_tax=datatree_tax,
         other_datatree_errors=other_datatree_errors,
         metadata=metadata,
+        skipped_by_format=skipped_by_format,
     )
     out_path.write_text(text)

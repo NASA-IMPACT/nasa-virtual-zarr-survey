@@ -15,7 +15,7 @@ from typing import cast
 from nasa_virtual_zarr_survey.cubability import CubabilityResult, CubabilityVerdict
 from nasa_virtual_zarr_survey.types import VerdictRow
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def dump_summary(
@@ -29,6 +29,7 @@ def dump_summary(
     other_parse_errors: list[tuple[int, str, str]],
     other_dataset_errors: list[tuple[int, str, str]],
     other_datatree_errors: list[tuple[int, str, str]],
+    skipped_by_format: list[tuple[str, str, int]] | None = None,
     survey_tool_version: str,
     virtualizarr_version: str | None = None,
     zarr_version: str | None = None,
@@ -68,6 +69,7 @@ def dump_summary(
         "other_parse_errors": [list(e) for e in other_parse_errors],
         "other_dataset_errors": [list(e) for e in other_dataset_errors],
         "other_datatree_errors": [list(e) for e in other_datatree_errors],
+        "skipped_by_format": [list(e) for e in (skipped_by_format or [])],
     }
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,6 +87,7 @@ class LoadedSummary:
     other_parse_errors: list[tuple[int, str, str]]
     other_dataset_errors: list[tuple[int, str, str]]
     other_datatree_errors: list[tuple[int, str, str]]
+    skipped_by_format: list[tuple[str, str, int]]
     generated_at: str
     survey_tool_version: str
     virtualizarr_version: str | None = None
@@ -96,15 +99,16 @@ class LoadedSummary:
 def load_summary(path: Path | str) -> LoadedSummary:
     """Parse a summary JSON back into the typed structures used by render_report.
 
-    Supports schema versions 1, 2, and 3.  Older versions are migrated by
+    Supports schema versions 1 through 4.  Older versions are migrated by
     synthesizing safe defaults for newer fields:
 
     - v1 -> v2: empty datatree structures, ``datatree_verdict = "not_attempted"``.
     - v2 -> v3: dependency versions and sampling mode default to ``None``.
+    - v3 -> v4: ``skipped_by_format`` defaults to empty list.
     """
     data = json.loads(Path(path).read_text())
     version = data.get("schema_version")
-    if version not in (1, 2, SCHEMA_VERSION):
+    if version not in (1, 2, 3, SCHEMA_VERSION):
         raise ValueError(
             f"Unsupported schema_version: {version!r} (expected {SCHEMA_VERSION})"
         )
@@ -139,6 +143,10 @@ def load_summary(path: Path | str) -> LoadedSummary:
         other_parse_errors=[tuple(e) for e in data["other_parse_errors"]],  # type: ignore[misc]
         other_dataset_errors=[tuple(e) for e in data["other_dataset_errors"]],  # type: ignore[misc]
         other_datatree_errors=[tuple(e) for e in data.get("other_datatree_errors", [])],  # type: ignore[misc]
+        skipped_by_format=[
+            (str(fmt), str(reason), int(n))
+            for fmt, reason, n in data.get("skipped_by_format", [])
+        ],
         generated_at=data["generated_at"],
         survey_tool_version=data["survey_tool_version"],
         virtualizarr_version=data.get("virtualizarr_version"),
