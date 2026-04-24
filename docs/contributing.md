@@ -44,6 +44,30 @@ uv run --group docs mkdocs build      # writes to site/
 
 The API reference pages are generated from source via mkdocstrings, so adding a public class or function automatically requires a matching entry in the relevant `docs/api/*.md` file for it to show up.
 
+### Regenerating report figures
+
+The report page at `docs/results/index.md` embeds figures from `docs/results/figures/` (one `.html` and one `.png` per chart: `sankey`, `funnel`, `taxonomy_parse`, `taxonomy_dataset`, `taxonomy_datatree`, `by_daac`, `by_format`, `collections`). These are produced by `nasa-virtual-zarr-survey report`, which writes the figures as a side effect of rendering the Markdown.
+
+Two ways to regenerate, depending on what changed:
+
+1. From the committed digest (no survey re-run, no credentials needed). Fast path when you are only tweaking figure styling in `src/nasa_virtual_zarr_survey/figures.py` or the report template:
+
+    ```bash
+    uv run nasa-virtual-zarr-survey report \
+      --from-data docs/results/summary.json \
+      --out docs/results/index.md
+    ```
+
+2. From current survey state (requires a populated `output/survey.duckdb` and `output/results/`, i.e. you have run `discover`, `sample`, and `attempt` locally). This path also refreshes `docs/results/summary.json` if you pass `--export`:
+
+    ```bash
+    uv run nasa-virtual-zarr-survey report \
+      --export docs/results/summary.json \
+      --out docs/results/index.md
+    ```
+
+Commit the regenerated `docs/results/summary.json` if it changed, alongside your code change.
+
 Documentation conventions:
 
 - Write in plain prose, no em dashes.
