@@ -115,6 +115,7 @@ def collection_verdicts(
 
     parse_phase = _phase_verdicts(con, "parse")
     dataset_phase = _phase_verdicts(con, "dataset")
+    datatree_phase = _phase_verdicts(con, "datatree")
     top_buckets = _top_buckets_from_db(con)
 
     q = """
@@ -133,9 +134,11 @@ def collection_verdicts(
         if skip:
             parse_verdict = "skipped"
             dataset_verdict = "skipped"
+            datatree_verdict = "skipped"
         else:
             parse_verdict = parse_phase.get(concept_id, "not_attempted")
             dataset_verdict = dataset_phase.get(concept_id, "not_attempted")
+            datatree_verdict = datatree_phase.get(concept_id, "not_attempted")
         out.append(
             VerdictRow(
                 concept_id=concept_id,
@@ -145,6 +148,7 @@ def collection_verdicts(
                 stratified=stratified,
                 parse_verdict=parse_verdict,
                 dataset_verdict=dataset_verdict,
+                datatree_verdict=datatree_verdict,
                 top_bucket=top_buckets.get(concept_id, ""),
             )
         )
@@ -237,7 +241,7 @@ def _other_errors_for_phase(
 
 def _render_verdict_counts(
     verdicts: list[VerdictRow],
-    verdict_key: Literal["parse_verdict", "dataset_verdict"],
+    verdict_key: Literal["parse_verdict", "dataset_verdict", "datatree_verdict"],
 ) -> list[str]:
     by_verdict = Counter(v[verdict_key] for v in verdicts)
     lines = ["| Verdict | Count |\n|---|---:|"]
@@ -276,8 +280,10 @@ def _render_collections_table(
         "first dataset failure). The Parquet log at `output/results/` has the "
         "full per-granule detail.\n"
     )
-    lines.append("| concept_id | daac | format | parse | dataset | cube | top_bucket |")
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append(
+        "| concept_id | daac | format | parse | dataset | datatree | cube | top_bucket |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|")
     for v in sorted(
         verdicts,
         key=lambda r: (r["daac"] or "", r["format_family"] or "", r["concept_id"]),
@@ -289,7 +295,7 @@ def _render_collections_table(
         lines.append(
             f"| {v['concept_id']} | {v['daac'] or ''} | "
             f"{v['format_family'] or ''} | {v['parse_verdict']} | "
-            f"{v['dataset_verdict']} | {cube} | {bucket or '-'} |"
+            f"{v['dataset_verdict']} | {v['datatree_verdict']} | {cube} | {bucket or '-'} |"
         )
     lines.append("")
     return lines
@@ -302,14 +308,20 @@ def _render_three_phase_table(
     key: Literal["daac", "format_family"],
 ) -> list[str]:
     lines = [f"## {title}\n"]
-    lines.append("| Group | Parsable | Datasetable | Cubable |\n|---|---|---|---|")
+    lines.append(
+        "| Group | Parsable | Datasetable | Datatreeable | Cubable |\n|---|---|---|---|---|"
+    )
 
     groups = sorted({v[key] or "UNKNOWN" for v in verdicts})
     for group in groups:
         gv = [v for v in verdicts if (v[key] or "UNKNOWN") == group]
         total = len(gv)
         parsable = sum(1 for v in gv if v["parse_verdict"] == "all_pass")
-        datasetable = sum(1 for v in gv if v["dataset_verdict"] == "all_pass")
+        parsable_vs = [v for v in gv if v["parse_verdict"] == "all_pass"]
+        datasetable = sum(1 for v in parsable_vs if v["dataset_verdict"] == "all_pass")
+        datatreeable = sum(
+            1 for v in parsable_vs if v["datatree_verdict"] == "all_pass"
+        )
         cubable = sum(
             1
             for v in gv
@@ -319,7 +331,8 @@ def _render_three_phase_table(
             == CubabilityVerdict.FEASIBLE
         )
         lines.append(
-            f"| {group} | {_pct(parsable, total)} | {_pct(datasetable, parsable)} | {_pct(cubable, datasetable)} |"
+            f"| {group} | {_pct(parsable, total)} | {_pct(datasetable, parsable)} | "
+            f"{_pct(datatreeable, parsable)} | {_pct(cubable, datasetable)} |"
         )
     lines.append("")
     return lines
@@ -338,12 +351,15 @@ def render_report(
     other_parse_errors: list[tuple[int, str, str]],
     other_dataset_errors: list[tuple[int, str, str]],
     figure_stems: dict[str, Path] | None = None,
+    datatree_tax: dict[str, tuple[int, int]] | None = None,
+    other_datatree_errors: list[tuple[int, str, str]] | None = None,
 ) -> str:
     """Render the full Markdown report from pre-computed phase verdicts and taxonomy counts.
 
     Sections emitted, in order: Overview (Sankey), totals (with funnel figure),
-    Phase 3 (Parsability, with parse taxonomy figure), Phase 4 (Datasetability,
-    with dataset taxonomy figure), Phase 5 (Virtual Store Feasibility),
+    Phase 3 (Parsability, with parse taxonomy figure), Phase 4a (Datasetability,
+    with dataset taxonomy figure), Phase 4b (Datatreeability, with datatree
+    taxonomy figure), Phase 5 (Virtual Store Feasibility),
     incompatibility reasons drill-down, By DAAC table (with by_daac figure),
     By Format Family table (with by_format figure), Stratification breakdown,
     raw-error drill-downs for each phase's ``OTHER`` bucket, and the full
@@ -354,11 +370,13 @@ def render_report(
     files also live under ``figures/`` for reference.  The caller is responsible
     for generating the figures before calling this function.
 
-    ``other_parse_errors`` and ``other_dataset_errors`` are lists of
-    ``(count, error_type, error_message)`` triples (top 50 by count, pre-computed
-    by the caller). Only entries classified as Bucket.OTHER are rendered.
+    ``other_parse_errors``, ``other_dataset_errors``, and ``other_datatree_errors``
+    are lists of ``(count, error_type, error_message)`` triples (top 50 by count,
+    pre-computed by the caller). Only entries classified as Bucket.OTHER are rendered.
     """
     fs = figure_stems or {}
+    _datatree_tax: dict[str, tuple[int, int]] = datatree_tax or {}
+    _other_datatree_errors: list[tuple[int, str, str]] = other_datatree_errors or []
 
     total = len(verdicts)
     lines: list[str] = []
@@ -389,9 +407,9 @@ def render_report(
         lines.append(_iframe("taxonomy_parse"))
         lines.append("")
 
-    # Phase 4: Datasetability
+    # Phase 4a: Datasetability
     parsable_count = sum(1 for v in verdicts if v["parse_verdict"] == "all_pass")
-    lines.append("## Phase 4: Datasetability\n")
+    lines.append("## Phase 4a: Datasetability\n")
     lines.append(
         f"Per-collection verdicts based on whether the ManifestStore converted to an "
         f"xarray.Dataset. Denominator: {parsable_count} collections whose sampled "
@@ -404,6 +422,22 @@ def render_report(
     lines.append("")
     if "taxonomy_dataset" in fs:
         lines.append(_iframe("taxonomy_dataset"))
+        lines.append("")
+
+    # Phase 4b: Datatreeability
+    lines.append("## Phase 4b: Datatreeability\n")
+    lines.append(
+        f"Per-collection verdicts based on whether the ManifestStore converted to an "
+        f"xarray.DataTree. Attempted in parallel with Phase 4a for all collections "
+        f"that parsed successfully (denominator: {parsable_count}). Collections that "
+        f"fail Phase 4a due to `CONFLICTING_DIM_SIZES` often succeed here.\n"
+    )
+    lines.extend(_render_verdict_counts(parsable_verdicts, "datatree_verdict"))
+    lines.append("")
+    lines.extend(_render_taxonomy_table(_datatree_tax, "Datatree Failure Taxonomy"))
+    lines.append("")
+    if "taxonomy_datatree" in fs:
+        lines.append(_iframe("taxonomy_datatree"))
         lines.append("")
 
     # Phase 5: Virtual Store Feasibility
@@ -503,6 +537,7 @@ def render_report(
     for phase_label, error_list in [
         ("Parsability", other_parse_errors),
         ("Datasetability", other_dataset_errors),
+        ("Datatreeability", _other_datatree_errors),
     ]:
         lines.append(f"## Top 20 Raw Errors in `OTHER` ({phase_label})\n")
         shown = 0
@@ -579,9 +614,11 @@ def run_report(
         verdicts = summary.verdicts
         parse_tax = summary.parse_taxonomy
         dataset_tax = summary.dataset_taxonomy
+        datatree_tax = summary.datatree_taxonomy
         cube_results = summary.cubability_results
         other_parse_errors = summary.other_parse_errors
         other_dataset_errors = summary.other_dataset_errors
+        other_datatree_errors = summary.other_datatree_errors
     else:
         # Compute from DuckDB + Parquet.
         con = connect(db_path)
@@ -590,9 +627,11 @@ def run_report(
         verdicts = collection_verdicts(db_path, results_dir)
         parse_tax = _taxonomy_counts(con, "parse")
         dataset_tax = _taxonomy_counts(con, "dataset")
+        datatree_tax = _taxonomy_counts(con, "datatree")
         cube_results = _cubability_results(con, verdicts)
         other_parse_errors = _other_errors_for_phase(con, "parse")
         other_dataset_errors = _other_errors_for_phase(con, "dataset")
+        other_datatree_errors = _other_errors_for_phase(con, "datatree")
 
         if export_to is not None:
             from nasa_virtual_zarr_survey.summary_io import dump_summary
@@ -603,9 +642,11 @@ def run_report(
                 verdicts=verdicts,
                 parse_taxonomy=parse_tax,
                 dataset_taxonomy=dataset_tax,
+                datatree_taxonomy=datatree_tax,
                 cubability_results=cube_results,
                 other_parse_errors=other_parse_errors,
                 other_dataset_errors=other_dataset_errors,
+                other_datatree_errors=other_datatree_errors,
                 survey_tool_version=__version__,
             )
 
@@ -614,6 +655,7 @@ def run_report(
         cube_results=cube_results,
         parse_tax=parse_tax,
         dataset_tax=dataset_tax,
+        datatree_tax=datatree_tax,
         out_dir=out_path.parent / "figures",
     )
     text = render_report(
@@ -624,5 +666,7 @@ def run_report(
         other_parse_errors,
         other_dataset_errors,
         figure_stems,
+        datatree_tax=datatree_tax,
+        other_datatree_errors=other_datatree_errors,
     )
     out_path.write_text(text)

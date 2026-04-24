@@ -1,4 +1,4 @@
-"""Attempt pipeline: Phase 3 (Parsability) and Phase 4 (Datasetability)."""
+"""Attempt pipeline: Phase 3 (Parsability), Phase 4a (Datasetability), Phase 4b (Datatreeability)."""
 
 from __future__ import annotations
 
@@ -32,13 +32,14 @@ from nasa_virtual_zarr_survey.types import PendingGranule
 class AttemptResult:
     """One row of the append-only per-attempt Parquet log.
 
-    Records independent outcomes for Phase 3 (Parsability) and Phase 4
-    (Datasetability) of a single granule attempt, plus identifying fields
-    (collection, granule, DAAC, format family) and, on success, the fingerprint
-    used by the Cubability phase.
+    Records independent outcomes for Phase 3 (Parsability), Phase 4a
+    (Datasetability), and Phase 4b (Datatreeability) of a single granule
+    attempt, plus identifying fields (collection, granule, DAAC, format family)
+    and, on success, the fingerprint used by the Cubability phase.
 
-    `dataset_success` is `None` when Phase 4 was not attempted because parsing
-    failed. `success` is `True` only when both phases succeeded.
+    `dataset_success` and `datatree_success` are `None` when the respective
+    phase was not attempted because parsing failed.  `success` is `True` when
+    parse succeeded AND at least one of dataset or datatree succeeded.
     """
 
     collection_concept_id: str | None = None
@@ -56,17 +57,24 @@ class AttemptResult:
     parse_error_traceback: str | None = None
     parse_duration_s: float = 0.0
 
-    # Phase 4: Datasetability (None = not attempted because parse failed)
+    # Phase 4a: Datasetability (None = not attempted because parse failed)
     dataset_success: bool | None = None
     dataset_error_type: str | None = None
     dataset_error_message: str | None = None
     dataset_error_traceback: str | None = None
     dataset_duration_s: float = 0.0
 
+    # Phase 4b: Datatreeability (None = not attempted because parse failed)
+    datatree_success: bool | None = None
+    datatree_error_type: str | None = None
+    datatree_error_message: str | None = None
+    datatree_error_traceback: str | None = None
+    datatree_duration_s: float = 0.0
+
     # Overall
-    success: bool = False  # parse_success AND (dataset_success == True)
+    success: bool = False  # parse_success AND (dataset_success OR datatree_success)
     timed_out: bool = False
-    timed_out_phase: str | None = None  # "parse" or "dataset"
+    timed_out_phase: str | None = None  # "parse", "dataset", or "datatree"
     duration_s: float = 0.0
     fingerprint: str | None = None
 
@@ -136,96 +144,121 @@ def attempt_one(
     result.parser = type(parser).__name__
     registry = _build_registry(store, url)
 
-    # Shared state between worker thread and main; only the worker writes phase_ref.
-    phase_ref = ["parse"]
+    # Shared state written by the worker thread only.
     manifest_ref: list = []
     dataset_ref: list = []
+    datatree_ref: list = []
 
-    def _call() -> None:
-        t_parse = time.monotonic()
-        ms = parser(url=url, registry=registry)
-        result.parse_duration_s = time.monotonic() - t_parse
-        manifest_ref.append(ms)
-        result.parse_success = True
-
-        phase_ref[0] = "dataset"
-        t_ds = time.monotonic()
-        ds = ms.to_virtual_dataset()
-        result.dataset_duration_s = time.monotonic() - t_ds
-        dataset_ref.append(ds)
-        result.dataset_success = True
-
-    t0 = time.monotonic()
-    timed_out_phase: str | None = None
-    timed_out_flag = False
-    exc_info: tuple | None = None
-    done = threading.Event()
-    exc_info_ref: list[tuple | None] = [None]
+    # Three events, one per phase; set by the worker as each phase completes
+    # (whether by success, exception, or early-exit).
+    parse_done = threading.Event()
+    dataset_done = threading.Event()
+    datatree_done = threading.Event()
 
     def _runner() -> None:
+        # Phase 3: Parsability
         try:
-            _call()
-        except BaseException as worker_exc:
-            exc_info_ref[0] = (type(worker_exc), worker_exc, worker_exc.__traceback__)
+            t = time.monotonic()
+            ms = parser(url=url, registry=registry)
+            result.parse_duration_s = time.monotonic() - t
+            manifest_ref.append(ms)
+            result.parse_success = True
+        except BaseException as exc:
+            tb_str = _truncate(traceback.format_exc(), 4096)
+            result.parse_error_type = type(exc).__name__
+            result.parse_error_message = _truncate(str(exc), 2048)
+            result.parse_error_traceback = tb_str
         finally:
-            done.set()
+            parse_done.set()
 
-    # Daemon thread: if the worker hangs on a blocking I/O call we still want
-    # the interpreter to exit cleanly once the outer process is done. Unlike
-    # ThreadPoolExecutor, daemon threads do not keep Python alive at shutdown.
-    thread = threading.Thread(target=_runner, daemon=True)
-    thread.start()
-    completed = done.wait(timeout=timeout_s)
-    result.duration_s = time.monotonic() - t0
+        if not result.parse_success:
+            dataset_done.set()
+            datatree_done.set()
+            return
 
-    if not completed:
-        # Capture phase NOW; the worker may still be running and advance it.
-        timed_out_flag = True
-        timed_out_phase = phase_ref[0]
-    elif exc_info_ref[0] is not None:
-        exc_info = exc_info_ref[0]
-
-    if timed_out_flag:
-        result.timed_out = True
-        result.timed_out_phase = timed_out_phase
-        if timed_out_phase == "parse":
-            result.parse_error_type = "TimeoutError"
-            result.parse_error_message = f"parse timed out after {timeout_s}s"
-        else:
-            # Parse succeeded inside worker but dataset construction hung
-            result.dataset_success = False
-            result.dataset_error_type = "TimeoutError"
-            result.dataset_error_message = f"dataset timed out after {timeout_s}s"
-    elif exc_info is not None:
-        exc = exc_info[1]
-        tb_str = _truncate("".join(traceback.format_exception(*exc_info)), 4096)
-        if manifest_ref:
-            # Parse completed; dataset construction raised
+        # Phase 4a: Datasetability
+        try:
+            t = time.monotonic()
+            ds = manifest_ref[0].to_virtual_dataset()
+            result.dataset_duration_s = time.monotonic() - t
+            dataset_ref.append(ds)
+            result.dataset_success = True
+        except BaseException as exc:
+            tb_str = _truncate(traceback.format_exc(), 4096)
             result.dataset_success = False
             result.dataset_error_type = type(exc).__name__
             result.dataset_error_message = _truncate(str(exc), 2048)
             result.dataset_error_traceback = tb_str
-        else:
-            # Parser raised
-            result.parse_error_type = type(exc).__name__
-            result.parse_error_message = _truncate(str(exc), 2048)
-            result.parse_error_traceback = tb_str
-    else:
-        # Both phases completed without raising
-        result.success = bool(result.parse_success and result.dataset_success)
-        if dataset_ref:
-            try:
-                from nasa_virtual_zarr_survey.cubability import (
-                    extract_fingerprint,
-                    fingerprint_to_json,
-                )
+        finally:
+            dataset_done.set()
 
-                result.fingerprint = fingerprint_to_json(
-                    extract_fingerprint(dataset_ref[0])
-                )
-            except Exception:
-                # Fingerprint extraction is best-effort; never fail the attempt.
-                pass
+        # Phase 4b: Datatreeability
+        try:
+            t = time.monotonic()
+            dt = manifest_ref[0].to_virtual_datatree()
+            result.datatree_duration_s = time.monotonic() - t
+            datatree_ref.append(dt)
+            result.datatree_success = True
+        except BaseException as exc:
+            tb_str = _truncate(traceback.format_exc(), 4096)
+            result.datatree_success = False
+            result.datatree_error_type = type(exc).__name__
+            result.datatree_error_message = _truncate(str(exc), 2048)
+            result.datatree_error_traceback = tb_str
+        finally:
+            datatree_done.set()
+
+    # Daemon thread: if the worker hangs on a blocking I/O call we still want
+    # the interpreter to exit cleanly once the outer process is done.
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+
+    t0 = time.monotonic()
+    # Wait on each event sequentially; the first timeout terminates the wait loop.
+    phase_budgets = [
+        ("parse", parse_done),
+        ("dataset", dataset_done),
+        ("datatree", datatree_done),
+    ]
+    for phase_name, event in phase_budgets:
+        if not event.wait(timeout=timeout_s):
+            result.timed_out = True
+            result.timed_out_phase = phase_name
+            if phase_name == "parse":
+                result.parse_error_type = "TimeoutError"
+                result.parse_error_message = f"parse timed out after {timeout_s}s"
+            elif phase_name == "dataset":
+                result.dataset_success = False
+                result.dataset_error_type = "TimeoutError"
+                result.dataset_error_message = f"dataset timed out after {timeout_s}s"
+            else:
+                result.datatree_success = False
+                result.datatree_error_type = "TimeoutError"
+                result.datatree_error_message = f"datatree timed out after {timeout_s}s"
+            break
+
+    result.duration_s = time.monotonic() - t0
+
+    # Compute overall success: parse AND at least one of dataset/datatree succeeded.
+    if result.parse_success and (
+        result.dataset_success is True or result.datatree_success is True
+    ):
+        result.success = True
+
+    # Fingerprint: use xr.Dataset when available; skip when only datatree succeeded.
+    if dataset_ref:
+        try:
+            from nasa_virtual_zarr_survey.cubability import (
+                extract_fingerprint,
+                fingerprint_to_json,
+            )
+
+            result.fingerprint = fingerprint_to_json(
+                extract_fingerprint(dataset_ref[0])
+            )
+        except Exception:
+            # Fingerprint extraction is best-effort; never fail the attempt.
+            pass
 
     return result
 
@@ -248,6 +281,11 @@ _SCHEMA_FIELDS: dict[str, pa.DataType] = {
     "dataset_error_message": pa.string(),
     "dataset_error_traceback": pa.string(),
     "dataset_duration_s": pa.float64(),
+    "datatree_success": pa.bool_(),  # nullable
+    "datatree_error_type": pa.string(),
+    "datatree_error_message": pa.string(),
+    "datatree_error_traceback": pa.string(),
+    "datatree_duration_s": pa.float64(),
     "success": pa.bool_(),
     "timed_out": pa.bool_(),
     "timed_out_phase": pa.string(),
@@ -305,6 +343,11 @@ class ResultWriter:
             cols["dataset_error_message"].append(r.dataset_error_message)
             cols["dataset_error_traceback"].append(r.dataset_error_traceback)
             cols["dataset_duration_s"].append(r.dataset_duration_s)
+            cols["datatree_success"].append(r.datatree_success)
+            cols["datatree_error_type"].append(r.datatree_error_type)
+            cols["datatree_error_message"].append(r.datatree_error_message)
+            cols["datatree_error_traceback"].append(r.datatree_error_traceback)
+            cols["datatree_duration_s"].append(r.datatree_duration_s)
             cols["success"].append(r.success)
             cols["timed_out"].append(r.timed_out)
             cols["timed_out_phase"].append(r.timed_out_phase)

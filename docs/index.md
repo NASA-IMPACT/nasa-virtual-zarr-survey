@@ -5,8 +5,9 @@ Surveys cloud-hosted NASA CMR collections for VirtualiZarr compatibility. The pi
 1. **Discover** (Phase 1): enumerate CMR collections into DuckDB.
 2. **Sample** (Phase 2): pick N granules per collection, stratified across its temporal extent.
 3. **Parsability** (Phase 3): the VirtualiZarr parser can produce a `ManifestStore` from a granule URL.
-4. **Datasetability** (Phase 4): the `ManifestStore` can be converted to an `xarray.Dataset`.
-5. **Virtual Store Feasibility / Cubability** (Phase 5): the per-granule datasets can be combined into a coherent virtual store.
+4a. **Datasetability** (Phase 4a): the `ManifestStore` can be converted to an `xarray.Dataset`.
+4b. **Datatreeability** (Phase 4b): the `ManifestStore` can be converted to an `xarray.DataTree`. Attempted in parallel with 4a; captures hierarchical files that fail 4a with `CONFLICTING_DIM_SIZES`.
+5. **Virtual Store Feasibility / Cubability** (Phase 5): the per-granule datasets can be combined into a coherent virtual store. Gated on Phase 4a `all_pass` (tree-only collections are not yet cubable).
 
 Failures in each phase are categorized into an empirically-derived taxonomy so VirtualiZarr maintainers and NASA DAAC operators can prioritize gaps.
 
@@ -64,7 +65,9 @@ earthaccess.search_datasets(...)        (Phase 1: discover)
   ↓
 stratified temporal sampling            (Phase 2: sample)
   ↓
-parse (Phase 3) → to_virtual_dataset (Phase 4)  (attempt)
+parse (Phase 3)                         (attempt)
+  ├── to_virtual_dataset  (Phase 4a)
+  └── to_virtual_datatree (Phase 4b)
   ↓
 cubability (Phase 5) + report render
 ```

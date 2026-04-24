@@ -21,6 +21,7 @@ def _make_verdict(concept_id: str = "C1") -> VerdictRow:
         stratified=True,
         parse_verdict="all_pass",
         dataset_verdict="all_pass",
+        datatree_verdict="all_pass",
         top_bucket="",
     )
 
@@ -33,18 +34,22 @@ def test_roundtrip_empty(tmp_path: Path) -> None:
         verdicts=[],
         parse_taxonomy={},
         dataset_taxonomy={},
+        datatree_taxonomy={},
         cubability_results={},
         other_parse_errors=[],
         other_dataset_errors=[],
+        other_datatree_errors=[],
         survey_tool_version="0.1.0",
     )
     summary = load_summary(p)
     assert summary.verdicts == []
     assert summary.parse_taxonomy == {}
     assert summary.dataset_taxonomy == {}
+    assert summary.datatree_taxonomy == {}
     assert summary.cubability_results == {}
     assert summary.other_parse_errors == []
     assert summary.other_dataset_errors == []
+    assert summary.other_datatree_errors == []
     assert summary.survey_tool_version == "0.1.0"
 
 
@@ -59,10 +64,12 @@ def test_roundtrip_with_data(tmp_path: Path) -> None:
         stratified=False,
         parse_verdict="all_fail",
         dataset_verdict="not_attempted",
+        datatree_verdict="not_attempted",
         top_bucket="NO_PARSER",
     )
     parse_tax: dict[str, tuple[int, int]] = {"NO_PARSER": (6, 2), "OTHER": (1, 1)}
     dataset_tax: dict[str, tuple[int, int]] = {"UNSUPPORTED_CODEC": (3, 1)}
+    datatree_tax: dict[str, tuple[int, int]] = {"CONFLICTING_DIM_SIZES": (2, 1)}
     cube_results = {
         "C1": CubabilityResult(
             verdict=CubabilityVerdict.FEASIBLE, reason="", concat_dim="time"
@@ -71,6 +78,7 @@ def test_roundtrip_with_data(tmp_path: Path) -> None:
     }
     other_parse: list[tuple[int, str, str]] = [(5, "SomeError", "some message")]
     other_dataset: list[tuple[int, str, str]] = [(2, "OtherError", "other message")]
+    other_datatree: list[tuple[int, str, str]] = [(1, "TreeError", "tree message")]
 
     p = tmp_path / "summary.json"
     dump_summary(
@@ -78,9 +86,11 @@ def test_roundtrip_with_data(tmp_path: Path) -> None:
         verdicts=[v1, v2],
         parse_taxonomy=parse_tax,
         dataset_taxonomy=dataset_tax,
+        datatree_taxonomy=datatree_tax,
         cubability_results=cube_results,
         other_parse_errors=other_parse,
         other_dataset_errors=other_dataset,
+        other_datatree_errors=other_datatree,
         survey_tool_version="1.2.3",
     )
 
@@ -90,11 +100,14 @@ def test_roundtrip_with_data(tmp_path: Path) -> None:
     by_id = {v["concept_id"]: v for v in summary.verdicts}
     assert by_id["C1"]["daac"] == "PODAAC"
     assert by_id["C1"]["top_bucket"] == ""
+    assert by_id["C1"]["datatree_verdict"] == "all_pass"
     assert by_id["C2"]["top_bucket"] == "NO_PARSER"
     assert by_id["C2"]["parse_verdict"] == "all_fail"
+    assert by_id["C2"]["datatree_verdict"] == "not_attempted"
 
     assert summary.parse_taxonomy == parse_tax
     assert summary.dataset_taxonomy == dataset_tax
+    assert summary.datatree_taxonomy == datatree_tax
 
     assert summary.cubability_results["C1"].verdict == CubabilityVerdict.FEASIBLE
     assert summary.cubability_results["C1"].concat_dim == "time"
@@ -102,6 +115,7 @@ def test_roundtrip_with_data(tmp_path: Path) -> None:
 
     assert summary.other_parse_errors == other_parse
     assert summary.other_dataset_errors == other_dataset
+    assert summary.other_datatree_errors == other_datatree
     assert summary.survey_tool_version == "1.2.3"
 
 
@@ -111,6 +125,43 @@ def test_schema_version_mismatch_raises(tmp_path: Path) -> None:
     p.write_text(json.dumps({"schema_version": 999, "verdicts": []}))
     with pytest.raises(ValueError, match="Unsupported schema_version"):
         load_summary(p)
+
+
+def test_load_v1_summary_migrates(tmp_path: Path) -> None:
+    """Loading a v1 summary synthesizes datatree_verdict and empty datatree fields."""
+    # Construct a minimal v1-shaped payload
+    v1_payload = {
+        "schema_version": 1,
+        "generated_at": "2025-01-01T00:00:00+00:00",
+        "survey_tool_version": "0.9.0",
+        "verdicts": [
+            {
+                "concept_id": "C1",
+                "daac": "PODAAC",
+                "format_family": "NetCDF4",
+                "skip_reason": None,
+                "stratified": True,
+                "parse_verdict": "all_pass",
+                "dataset_verdict": "all_pass",
+                "top_bucket": "",
+                # No datatree_verdict key -- v1 format
+            }
+        ],
+        "parse_taxonomy": {},
+        "dataset_taxonomy": {},
+        "cubability_results": {},
+        "other_parse_errors": [],
+        "other_dataset_errors": [],
+    }
+    p = tmp_path / "v1_summary.json"
+    p.write_text(json.dumps(v1_payload))
+
+    summary = load_summary(p)
+    assert len(summary.verdicts) == 1
+    assert summary.verdicts[0]["datatree_verdict"] == "not_attempted"
+    assert summary.datatree_taxonomy == {}
+    assert summary.other_datatree_errors == []
+    assert summary.survey_tool_version == "0.9.0"
 
 
 def test_cubability_result_roundtrip(tmp_path: Path) -> None:
@@ -139,9 +190,11 @@ def test_cubability_result_roundtrip(tmp_path: Path) -> None:
         verdicts=[],
         parse_taxonomy={},
         dataset_taxonomy={},
+        datatree_taxonomy={},
         cubability_results=cube_results,
         other_parse_errors=[],
         other_dataset_errors=[],
+        other_datatree_errors=[],
         survey_tool_version="0.0.1",
     )
     summary = load_summary(p)
@@ -164,9 +217,11 @@ def test_dump_creates_parent_dirs(tmp_path: Path) -> None:
         verdicts=[],
         parse_taxonomy={},
         dataset_taxonomy={},
+        datatree_taxonomy={},
         cubability_results={},
         other_parse_errors=[],
         other_dataset_errors=[],
+        other_datatree_errors=[],
         survey_tool_version="0.0.0",
     )
     assert p.exists()

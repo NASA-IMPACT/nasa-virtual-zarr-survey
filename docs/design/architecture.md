@@ -20,9 +20,13 @@ earthaccess.search_datasets(cloud_hosted=True, provider=<EOSDIS>)
   ↓
 discover → collections (DuckDB)
   ↓
-sample   → granules (DuckDB)      (stratified temporal sampling)
+sample   → granules (DuckDB)           (stratified temporal sampling)
   ↓
-attempt  → results.parquet         (per-granule open_virtual_dataset attempts)
+attempt  → results.parquet             (per-granule attempt log)
+    Phase 3:  parse → ManifestStore
+    Phase 4a: ManifestStore.to_virtual_dataset()   → xr.Dataset
+    Phase 4b: ManifestStore.to_virtual_datatree()  → xr.DataTree   (parallel with 4a)
+    Phase 5:  fingerprint comparison → cubability verdict
   ↓
 report   → report.md
 ```
@@ -50,15 +54,20 @@ For each pending collection:
 
 The `stratified` flag propagates through the rest of the pipeline so the final report can distinguish genuine temporal coverage from fallback sampling.
 
-#### Phases 3 and 4: `attempt.py`
+#### Phases 3, 4a, 4b: `attempt.py`
 
 Two halves: the per-granule dispatcher (`attempt_one`) and the resume loop (`run_attempt`).
 
 **Per-granule (`attempt_one`):**
 
 - `dispatch_parser(family)` returns a VirtualiZarr parser instance for the format family, or `None` for families VirtualiZarr does not support (HDF4, GeoTIFF).
-- When a parser exists, `attempt_one` calls `virtualizarr.open_virtual_dataset(url, registry, parser)` inside a `ThreadPoolExecutor.submit(...).result(timeout=60)`. On timeout, the future is abandoned (threads leak; acceptable because the run is sequential and parsers restart cleanly between DAACs).
+- When a parser exists, `attempt_one` runs three sequential phases inside a single daemon worker thread. The main thread waits on three `threading.Event`s, one per phase, each with its own `timeout_s` deadline:
+  - **Phase 3 (Parsability):** calls the VirtualiZarr parser to produce a `ManifestStore`.
+  - **Phase 4a (Datasetability):** calls `manifest_store.to_virtual_dataset()`.
+  - **Phase 4b (Datatreeability):** calls `manifest_store.to_virtual_datatree()`. Phases 4a and 4b are independent; a failure in 4a does not prevent 4b from running.
+- If any phase times out, the main thread records the timeout and stops waiting; subsequent events may still fire in the background but their results are not captured.
 - All exceptions are caught, serialized (`type(e).__name__`, `str(e)`, truncated traceback), and packaged into an `AttemptResult`. A failed attempt is a valid data point, never raises.
+- `success` is `True` when parse succeeded AND at least one of dataset or datatree succeeded.
 
 **Resume loop (`run_attempt`):**
 

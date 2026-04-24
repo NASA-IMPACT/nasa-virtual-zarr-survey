@@ -30,6 +30,11 @@ _RESULT_SCHEMA = pa.schema(
         ("dataset_error_message", pa.string()),
         ("dataset_error_traceback", pa.string()),
         ("dataset_duration_s", pa.float64()),
+        ("datatree_success", pa.bool_()),
+        ("datatree_error_type", pa.string()),
+        ("datatree_error_message", pa.string()),
+        ("datatree_error_traceback", pa.string()),
+        ("datatree_duration_s", pa.float64()),
         ("success", pa.bool_()),
         ("timed_out", pa.bool_()),
         ("timed_out_phase", pa.string()),
@@ -51,10 +56,13 @@ def _row(
     *,
     parse_success: bool = True,
     dataset_success: bool | None = True,
+    datatree_success: bool | None = None,
     parse_error_type: str | None = None,
     parse_error_message: str | None = None,
     dataset_error_type: str | None = None,
     dataset_error_message: str | None = None,
+    datatree_error_type: str | None = None,
+    datatree_error_message: str | None = None,
     fingerprint: str | None = None,
     now: datetime | None = None,
 ) -> dict:
@@ -78,12 +86,60 @@ def _row(
         "dataset_error_message": dataset_error_message,
         "dataset_error_traceback": None,
         "dataset_duration_s": 0.1 if dataset_success is not None else 0.0,
-        "success": bool(parse_success and dataset_success),
+        "datatree_success": datatree_success,
+        "datatree_error_type": datatree_error_type,
+        "datatree_error_message": datatree_error_message,
+        "datatree_error_traceback": None,
+        "datatree_duration_s": 0.1 if datatree_success is not None else 0.0,
+        "success": bool(
+            parse_success and (dataset_success is True or datatree_success is True)
+        ),
         "timed_out": False,
         "timed_out_phase": None,
         "duration_s": 0.2,
         "fingerprint": fingerprint,
     }
+
+
+def test_datatree_verdict_independent_of_dataset_verdict(tmp_db_path, tmp_results_dir):
+    """A collection with dataset_success=False but datatree_success=True has correct verdicts."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute(
+        "INSERT INTO collections VALUES ('CTREE','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now())"
+    )
+    con.close()
+
+    now = datetime.now(timezone.utc)
+    rows = [
+        _row(
+            "CTREE",
+            "G0",
+            parse_success=True,
+            dataset_success=False,
+            datatree_success=True,
+            dataset_error_type="ValueError",
+            dataset_error_message="conflicting sizes for dimension",
+            now=now,
+        ),
+        _row(
+            "CTREE",
+            "G1",
+            parse_success=True,
+            dataset_success=False,
+            datatree_success=True,
+            dataset_error_type="ValueError",
+            dataset_error_message="conflicting sizes for dimension",
+            now=now,
+        ),
+    ]
+    _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", rows)
+
+    verdicts = collection_verdicts(tmp_db_path, tmp_results_dir)
+    by_id = {v["concept_id"]: v for v in verdicts}
+    assert by_id["CTREE"]["parse_verdict"] == "all_pass"
+    assert by_id["CTREE"]["dataset_verdict"] == "all_fail"
+    assert by_id["CTREE"]["datatree_verdict"] == "all_pass"
 
 
 def test_collection_verdicts_classifies_all_three(tmp_db_path, tmp_results_dir):
@@ -267,20 +323,24 @@ def test_render_report_contains_counts(tmp_db_path, tmp_results_dir, tmp_path):
     run_report(tmp_db_path, tmp_results_dir, out)
     text = out.read_text()
     assert "Phase 3: Parsability" in text
-    assert "Phase 4: Datasetability" in text
+    assert "Phase 4a: Datasetability" in text
+    assert "Phase 4b: Datatreeability" in text
     assert "Phase 5: Virtual Store Feasibility" in text
     assert "all_pass" in text
     assert "PODAAC" in text
     assert "NetCDF4" in text
     assert "Stratification" in text
     assert "FEASIBLE" in text
-    # Collections table enumerates concept IDs
+    # Collections table enumerates concept IDs and includes datatree column
     assert "## Collections" in text
     assert (
-        "| concept_id | daac | format | parse | dataset | cube | top_bucket |" in text
+        "| concept_id | daac | format | parse | dataset | datatree | cube | top_bucket |"
+        in text
     )
     assert "| C1 |" in text
     assert "| C2 |" in text
+    # Datatree taxonomy section present
+    assert "Datatree Failure Taxonomy" in text
     # Interactive figures are embedded via iframes; figures/ directory exists
     assert 'src="figures/funnel.html"' in text
     assert (tmp_path / "figures").is_dir()
@@ -412,6 +472,7 @@ def test_three_phase_daac_table_format(tmp_db_path, tmp_results_dir, tmp_path):
     assert "By DAAC" in text
     assert "Parsable" in text
     assert "Datasetable" in text
+    assert "Datatreeable" in text
     assert "Cubable" in text
     # PODAAC row should appear
     assert "PODAAC" in text

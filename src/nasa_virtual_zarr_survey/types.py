@@ -51,7 +51,7 @@ class PendingGranule(TypedDict):
 class VerdictRow(TypedDict):
     """Per-collection verdict row produced by ``collection_verdicts``.
 
-    ``parse_verdict`` and ``dataset_verdict`` are one of
+    ``parse_verdict``, ``dataset_verdict``, and ``datatree_verdict`` are one of
     'all_pass', 'partial_pass', 'all_fail', 'not_attempted', 'skipped'.
 
     ``top_bucket`` is the representative failure taxonomy bucket for the
@@ -66,6 +66,7 @@ class VerdictRow(TypedDict):
     stratified: bool | None
     parse_verdict: str
     dataset_verdict: str
+    datatree_verdict: str
     top_bucket: str
 
 

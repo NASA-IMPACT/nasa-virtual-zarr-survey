@@ -87,6 +87,11 @@ def _funnel_tiers(
         for v in verdicts
         if v["parse_verdict"] == "all_pass" and v["dataset_verdict"] == "all_pass"
     )
+    datatreeable = sum(
+        1
+        for v in verdicts
+        if v["parse_verdict"] == "all_pass" and v.get("datatree_verdict") == "all_pass"
+    )
     cubable = sum(
         1
         for v in verdicts
@@ -99,7 +104,8 @@ def _funnel_tiers(
         ("Total discovered", total),
         ("Array-like", array_like),
         ("Parsable", parsable),
-        ("Datasetable", datasetable),
+        ("Datasetable (4a)", datasetable),
+        ("Datatreeable (4b)", datatreeable),
         ("Cubable", cubable),
     ]
 
@@ -143,6 +149,17 @@ def generate_sankey(
         and v["dataset_verdict"] in ("all_fail", "partial_pass")
     )
     dataset_na = parsable - datasetable - dataset_fail
+    datatreeable = sum(
+        1
+        for v in verdicts
+        if v["parse_verdict"] == "all_pass" and v.get("datatree_verdict") == "all_pass"
+    )
+    datatree_fail = sum(
+        1
+        for v in verdicts
+        if v["parse_verdict"] == "all_pass"
+        and v.get("datatree_verdict") in ("all_fail", "partial_pass")
+    )
     cubable = sum(
         1
         for v in verdicts
@@ -172,6 +189,8 @@ def generate_sankey(
         ("Parsable", "Datasetable", datasetable),
         ("Parsable", "Dataset fail", dataset_fail),
         ("Parsable", "Not attempted (dataset)", dataset_na),
+        ("Parsable", "Datatreeable", datatreeable),
+        ("Parsable", "Datatree fail", datatree_fail),
         ("Datasetable", "Cubable", cubable),
         ("Datasetable", "Not cubable", not_cubable),
     ]:
@@ -287,6 +306,9 @@ def generate_group_bars(
         parsable = sum(1 for v in gv if v["parse_verdict"] == "all_pass")
         parsable_vs = [v for v in gv if v["parse_verdict"] == "all_pass"]
         datasetable = sum(1 for v in parsable_vs if v["dataset_verdict"] == "all_pass")
+        datatreeable = sum(
+            1 for v in parsable_vs if v.get("datatree_verdict") == "all_pass"
+        )
         datasetable_vs = [v for v in parsable_vs if v["dataset_verdict"] == "all_pass"]
         cubable = sum(
             1
@@ -298,6 +320,7 @@ def generate_group_bars(
         )
         data.append((group, "Parsable %", _pct(parsable, total)))
         data.append((group, "Datasetable %", _pct(datasetable, parsable)))
+        data.append((group, "Datatreeable %", _pct(datatreeable, parsable)))
         data.append((group, "Cubable %", _pct(cubable, len(datasetable_vs))))
 
     bars = hv.Bars(data, kdims=["Group", "Phase"], vdims=["Pass rate (%)"]).opts(
@@ -356,6 +379,7 @@ def generate_heatmap(
         for phase, raw in [
             ("Parsability", v["parse_verdict"]),
             ("Datasetability", v["dataset_verdict"]),
+            ("Datatreeability", v.get("datatree_verdict", "not_attempted")),
             ("Cubability", cube_verdict),
         ]:
             data.append((phase, cid, _VERDICT_NUM.get(raw, 0)))
@@ -381,6 +405,7 @@ def generate_all(
     parse_tax: dict[str, tuple[int, int]],
     dataset_tax: dict[str, tuple[int, int]],
     out_dir: Path,
+    datatree_tax: dict[str, tuple[int, int]] | None = None,
 ) -> dict[str, Path]:
     """Generate every figure. Returns {name: stem} (without extension)."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -389,6 +414,7 @@ def generate_all(
         "funnel": out_dir / "funnel",
         "taxonomy_parse": out_dir / "taxonomy_parse",
         "taxonomy_dataset": out_dir / "taxonomy_dataset",
+        "taxonomy_datatree": out_dir / "taxonomy_datatree",
         "by_daac": out_dir / "by_daac",
         "by_format": out_dir / "by_format",
         "collections": out_dir / "collections",
@@ -398,6 +424,9 @@ def generate_all(
     generate_taxonomy(parse_tax, "Parse failure taxonomy", stems["taxonomy_parse"])
     generate_taxonomy(
         dataset_tax, "Dataset failure taxonomy", stems["taxonomy_dataset"]
+    )
+    generate_taxonomy(
+        datatree_tax or {}, "Datatree failure taxonomy", stems["taxonomy_datatree"]
     )
     generate_group_bars(
         verdicts, cube_results, "daac", "Pass rate by DAAC", stems["by_daac"]

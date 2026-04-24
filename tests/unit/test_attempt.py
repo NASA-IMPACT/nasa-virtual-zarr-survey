@@ -31,6 +31,7 @@ def _make_attempt_result(**overrides) -> AttemptResult:
         attempted_at=datetime.now(timezone.utc),
         parse_success=True,
         dataset_success=True,
+        datatree_success=True,
         success=True,
         duration_s=0.1,
     )
@@ -74,10 +75,12 @@ def test_attempt_one_records_no_parser():
 
 
 def test_attempt_one_success(monkeypatch):
-    """Both phases succeed: parser returns a manifest store, to_virtual_dataset returns a Dataset."""
+    """All phases succeed: parser returns a manifest store, to_virtual_dataset and to_virtual_datatree succeed."""
     fake_ds = MagicMock(name="Dataset")
+    fake_dt = MagicMock(name="DataTree")
     fake_ms = MagicMock(name="ManifestStore")
     fake_ms.to_virtual_dataset.return_value = fake_ds
+    fake_ms.to_virtual_datatree.return_value = fake_dt
 
     def fake_parser_call(url, registry):
         assert url == "s3://bucket/file.nc"
@@ -102,14 +105,16 @@ def test_attempt_one_success(monkeypatch):
     )
     assert result.parse_success is True
     assert result.dataset_success is True
+    assert result.datatree_success is True
     assert result.success is True
     assert result.parse_error_type is None
     assert result.dataset_error_type is None
+    assert result.datatree_error_type is None
     assert result.duration_s >= 0
 
 
 def test_attempt_one_captures_parse_exception(monkeypatch):
-    """Parser raises: parse_success=False, dataset_success=None."""
+    """Parser raises: parse_success=False, dataset_success=None, datatree_success=None."""
 
     def fake_parser_call(url, registry):
         raise ValueError("parser boom")
@@ -132,16 +137,57 @@ def test_attempt_one_captures_parse_exception(monkeypatch):
     assert result.success is False
     assert result.parse_success is False
     assert result.dataset_success is None
+    assert result.datatree_success is None
     assert result.parse_error_type == "ValueError"
     assert "parser boom" in result.parse_error_message
     assert result.parse_error_traceback is not None
     assert result.dataset_error_type is None
+    assert result.datatree_error_type is None
 
 
 def test_attempt_one_captures_dataset_exception(monkeypatch):
-    """Parser succeeds but to_virtual_dataset raises: parse_success=True, dataset_success=False."""
+    """Parser succeeds but to_virtual_dataset raises: parse_success=True, dataset_success=False.
+    datatree is still attempted and may succeed independently."""
+    fake_dt = MagicMock(name="DataTree")
     fake_ms = MagicMock(name="ManifestStore")
     fake_ms.to_virtual_dataset.side_effect = RuntimeError("dataset boom")
+    fake_ms.to_virtual_datatree.return_value = fake_dt
+
+    def fake_parser_call(url, registry):
+        return fake_ms
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
+    )
+    fake_parser = MagicMock(side_effect=fake_parser_call)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
+        lambda family: fake_parser,
+    )
+
+    result = attempt_one(
+        url="s3://bucket/file.nc",
+        family=FormatFamily.NETCDF4,
+        store=object(),
+        timeout_s=5,
+    )
+    # success=True because parse succeeded AND datatree succeeded
+    assert result.success is True
+    assert result.parse_success is True
+    assert result.dataset_success is False
+    assert result.datatree_success is True
+    assert result.parse_error_type is None
+    assert result.dataset_error_type == "RuntimeError"
+    assert "dataset boom" in result.dataset_error_message
+    assert result.dataset_error_traceback is not None
+    assert result.datatree_error_type is None
+
+
+def test_attempt_one_dataset_fail_datatree_fail(monkeypatch):
+    """Both 4a and 4b fail: success=False."""
+    fake_ms = MagicMock(name="ManifestStore")
+    fake_ms.to_virtual_dataset.side_effect = RuntimeError("dataset boom")
+    fake_ms.to_virtual_datatree.side_effect = RuntimeError("datatree boom")
 
     def fake_parser_call(url, registry):
         return fake_ms
@@ -164,10 +210,44 @@ def test_attempt_one_captures_dataset_exception(monkeypatch):
     assert result.success is False
     assert result.parse_success is True
     assert result.dataset_success is False
-    assert result.parse_error_type is None
+    assert result.datatree_success is False
     assert result.dataset_error_type == "RuntimeError"
-    assert "dataset boom" in result.dataset_error_message
-    assert result.dataset_error_traceback is not None
+    assert result.datatree_error_type == "RuntimeError"
+
+
+def test_attempt_one_dataset_fail_datatree_success(monkeypatch):
+    """Parse succeeds, dataset fails, datatree succeeds: success=True, no fingerprint."""
+    fake_dt = MagicMock(name="DataTree")
+    fake_ms = MagicMock(name="ManifestStore")
+    fake_ms.to_virtual_dataset.side_effect = ValueError("CONFLICTING_DIM_SIZES")
+    fake_ms.to_virtual_datatree.return_value = fake_dt
+
+    def fake_parser_call(url, registry):
+        return fake_ms
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
+    )
+    fake_parser = MagicMock(side_effect=fake_parser_call)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
+        lambda family: fake_parser,
+    )
+
+    result = attempt_one(
+        url="s3://bucket/file.nc",
+        family=FormatFamily.NETCDF4,
+        store=object(),
+        timeout_s=5,
+    )
+    assert result.parse_success is True
+    assert result.dataset_success is False
+    assert result.dataset_error_type == "ValueError"
+    assert result.datatree_success is True
+    assert result.datatree_error_type is None
+    assert result.success is True
+    # No fingerprint when only datatree succeeded
+    assert result.fingerprint is None
 
 
 def test_attempt_one_timeout_during_parse(monkeypatch):
@@ -199,6 +279,7 @@ def test_attempt_one_timeout_during_parse(monkeypatch):
     assert result.parse_error_type == "TimeoutError"
     assert result.parse_success is False
     assert result.dataset_success is None
+    assert result.datatree_success is None
 
 
 def test_attempt_one_timeout_during_dataset(monkeypatch):
@@ -212,6 +293,7 @@ def test_attempt_one_timeout_during_dataset(monkeypatch):
         return MagicMock()
 
     fake_ms.to_virtual_dataset.side_effect = slow_to_virtual_dataset
+    fake_ms.to_virtual_datatree.return_value = MagicMock()
 
     def fake_parser_call(url, registry):
         return fake_ms
@@ -238,6 +320,48 @@ def test_attempt_one_timeout_during_dataset(monkeypatch):
     assert result.parse_success is True
     assert result.dataset_success is False
     assert result.dataset_error_type == "TimeoutError"
+
+
+def test_attempt_one_timeout_during_datatree(monkeypatch):
+    """Timeout during datatree phase: parse and dataset succeed, timed_out_phase='datatree'."""
+    import time
+
+    fake_ds = MagicMock(name="Dataset")
+    fake_ms = MagicMock(name="ManifestStore")
+    fake_ms.to_virtual_dataset.return_value = fake_ds
+
+    def slow_to_virtual_datatree():
+        time.sleep(10)
+        return MagicMock()
+
+    fake_ms.to_virtual_datatree.side_effect = slow_to_virtual_datatree
+
+    def fake_parser_call(url, registry):
+        return fake_ms
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
+    )
+    fake_parser = MagicMock(side_effect=fake_parser_call)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
+        lambda family: fake_parser,
+    )
+
+    result = attempt_one(
+        url="s3://bucket/file.nc",
+        family=FormatFamily.NETCDF4,
+        store=object(),
+        timeout_s=1,
+    )
+    assert result.timed_out is True
+    assert result.timed_out_phase == "datatree"
+    assert result.parse_success is True
+    assert result.dataset_success is True
+    assert result.datatree_success is False
+    assert result.datatree_error_type == "TimeoutError"
+    # success=True because dataset succeeded
+    assert result.success is True
 
 
 def test_result_writer_rotates_shards(tmp_results_dir: Path):
@@ -289,6 +413,11 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
     cols["dataset_error_message"].append(None)
     cols["dataset_error_traceback"].append(None)
     cols["dataset_duration_s"].append(0.1)
+    cols["datatree_success"].append(False)
+    cols["datatree_error_type"].append(None)
+    cols["datatree_error_message"].append(None)
+    cols["datatree_error_traceback"].append(None)
+    cols["datatree_duration_s"].append(0.0)
     cols["success"].append(True)
     cols["timed_out"].append(False)
     cols["timed_out_phase"].append(None)
