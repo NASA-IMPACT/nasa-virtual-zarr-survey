@@ -2,138 +2,263 @@
 
 *As-built design of the nasa-virtual-zarr-survey tool, April 2026.*
 
+> **For reviewers:** this document is written for engineers familiar with either CMR / `earthaccess` or VirtualiZarr. Sections labelled **CMR interactions** and **VirtualiZarr interactions** collect the decisions most likely to warrant scrutiny from each audience. The **Open questions for reviewers** section at the end lists specific points where expert input could change the survey's accuracy or scope.
+
 ## Purpose
 
-Measure how many cloud-hosted NASA CMR collections can be opened with `virtualizarr.open_virtual_dataset`, and categorize the failures into actionable buckets (missing parser, variable-length chunks, unsupported codec, auth, etc.). Output a per-collection verdict table and a Markdown report that VirtualiZarr maintainers and NASA DAAC operators can act on.
+Measure, for each cloud-hosted NASA CMR collection of an array-like format, how far the stack gets when asked to virtualize it — broken into three independently-observable phases:
+
+1. **Parsability** — can a VirtualiZarr parser read the file's metadata into a `ManifestStore`?
+2. **Datasetability** — can that `ManifestStore` be materialized into an `xarray.Dataset` via `ManifestStore.to_virtual_dataset()`?
+3. **Cubability** — across N stratified granules of a collection, are the per-granule datasets structurally compatible enough to be concatenated into one coherent virtual cube?
+
+The output is a per-collection verdict table plus a Markdown report that VirtualiZarr maintainers and NASA DAAC operators can act on.
 
 ## Scope
 
-- **In:** NASA CMR collections with `cloud_hosted=True` hosted by EOSDIS DAACs, whose declared format is array-like (NetCDF3/4, HDF4/5, Zarr, GeoTIFF, FITS, DMR++).
-- **Out:** on-prem-only collections, non-array formats (PDF, shapefile, CSV), non-NASA providers.
+**In:** CMR collections with `cloud_hosted=True` hosted by EOSDIS DAAC providers, whose declared or probed format is array-like (NetCDF3/4, HDF4/5, Zarr, GeoTIFF, FITS, DMR++).
 
-## Architecture
+**Out:** on-prem-only collections; non-array formats (PDF, shapefile, CSV, binary); non-NASA providers.
+
+**Explicit non-goals:**
+
+- No data read tests. The survey does not call `.compute()` or `.load()`; only metadata / manifest-level opens are exercised.
+- No performance benchmarking. `duration_s` is recorded only to surface hangs and pathologically slow opens, not to rank parsers.
+- No retries. Flakiness is surfaced as `partial_pass` across the 5 stratified granules rather than hidden.
+- No hierarchical / DataTree handling (tracked as a candidate Phase 4b — "Datatreeability" — see [Known Limitations](#known-limitations)).
+
+## Pipeline
 
 Single CLI `nasa-virtual-zarr-survey` with five phase subcommands plus a `pilot` convenience wrapper. Phases share state through a DuckDB checkpoint DB and a DAAC-partitioned Parquet dataset.
 
 ```
 earthaccess.search_datasets(cloud_hosted=True, provider=<EOSDIS>)
   ↓
-discover → collections (DuckDB)
+discover → collections (DuckDB)                       [Phase 1]
   ↓
-sample   → granules (DuckDB)      (stratified temporal sampling)
+sample   → granules  (DuckDB)                         [Phase 2]
   ↓
-attempt  → results.parquet         (per-granule open_virtual_dataset attempts)
+attempt  → results.parquet, one row per granule       [Phases 3 & 4]
+  ├─ Parsability:   parser(url=url, registry=...)
+  └─ Datasetability: manifest_store.to_virtual_dataset()
   ↓
-report   → report.md
+report   → report.md + figures                        [Phase 5: cubability rollup]
 ```
 
 - `discover` and `sample` are idempotent and safe to re-run.
-- `attempt` is resumable: it skips (collection, granule) pairs already present in the Parquet log.
+- `attempt` is resumable: it skips `(collection, granule)` pairs already present in the Parquet log.
 - `report` is cheap and side-effect-free; re-run after any taxonomy refinement.
 
-## Components
+## Measurement model (the three phases)
 
-All modules live in `src/nasa_virtual_zarr_survey/`.
+Each phase is recorded independently on every per-granule attempt so reviewers can see where in the stack a failure occurs without re-running the pipeline.
 
-### Phases
+### Phase 3 — Parsability
 
-#### Phase 1: `discover.py`
+```python
+parser = dispatch_parser(family)   # HDFParser / NetCDF3Parser / ZarrParser / FITSParser / DMRPPParser / VirtualTIFF
+manifest_store = parser(url=url, registry=registry)
+```
 
-Calls `earthaccess.search_datasets(cloud_hosted=True, provider=<EOSDIS list>, count=<limit>)` and writes one row per collection to DuckDB. Extracts format, DAAC, provider, temporal extent, processing level, and granule count from UMM-JSON. Collections with non-array-like declared formats are persisted with `skip_reason = "non_array_format"` and skipped by later phases.
+Success = the parser returned a `ManifestStore` without raising.
 
-#### Phase 2: `sample.py`
+Parser dispatch (in `attempt.dispatch_parser`):
 
-For each pending collection:
+| Family | Parser |
+|---|---|
+| `NETCDF4`, `HDF5` | `virtualizarr.parsers.hdf.HDFParser` |
+| `NETCDF3` | `virtualizarr.parsers.netcdf3.NetCDF3Parser` |
+| `DMRPP` | `virtualizarr.parsers.dmrpp.DMRPPParser` |
+| `FITS` | `virtualizarr.parsers.fits.FITSParser` |
+| `ZARR` | `virtualizarr.parsers.zarr.ZarrParser` |
+| `GEOTIFF` | `virtual_tiff.VirtualTIFF` (out-of-tree) |
+| `HDF4` | *(no parser — recorded as `NoParserAvailable`)* |
 
-- If the collection has a temporal extent (`time_start` and `time_end` populated), split it into N equal-width bins (default N=5) and issue one `earthaccess.search_data(concept_id, temporal=(start, end), count=1)` per bin. Each returned granule is stored with `stratified=True` and `temporal_bin=0..N-1`.
-- If the temporal extent is missing, fall back to a single `search_data(concept_id, count=N)` call and store the returned granules with `stratified=False` and synthetic `temporal_bin=0..N-1`. This loses stratification guarantees but still provides some heterogeneity coverage for the attempt phase.
+### Phase 4 — Datasetability
 
-The `stratified` flag propagates through the rest of the pipeline so the final report can distinguish genuine temporal coverage from fallback sampling.
+```python
+ds = manifest_store.to_virtual_dataset()
+```
 
-#### Phases 3 and 4: `attempt.py`
+Only attempted if Phase 3 succeeded. Exercises xarray's `open_dataset` path wired to VirtualiZarr's manifest store. Captures failures that only surface once `xarray` tries to flatten / coordinate-align the manifest contents (e.g. `conflicting sizes for dimension`, group-structure mismatches).
 
-Two halves: the per-granule dispatcher (`attempt_one`) and the resume loop (`run_attempt`).
+Recording rule:
 
-**Per-granule (`attempt_one`):**
+- If Phase 3 fails, Phase 4's `dataset_success` is left `NULL` ("not attempted") — **not** `False`. This keeps the parsability signal from being diluted by cascading nulls in downstream aggregates.
+- If Phase 4 fails, it is attributed to the Dataset phase even when the underlying cause is arguably upstream (e.g. a parser that eagerly materialized malformed coords). Reviewers should treat the error message as the ground truth, not the phase label.
 
-- `dispatch_parser(family)` returns a VirtualiZarr parser instance for the format family, or `None` for families VirtualiZarr does not support (HDF4, GeoTIFF).
-- When a parser exists, `attempt_one` calls `virtualizarr.open_virtual_dataset(url, registry, parser)` inside a `ThreadPoolExecutor.submit(...).result(timeout=60)`. On timeout, the future is abandoned (threads leak; acceptable because the run is sequential and parsers restart cleanly between DAACs).
-- All exceptions are caught, serialized (`type(e).__name__`, `str(e)`, truncated traceback), and packaged into an `AttemptResult`. A failed attempt is a valid data point, never raises.
+On Phase 4 success, `extract_fingerprint(ds)` captures a JSON summary of the dataset's structure (see [Fingerprints](#fingerprints)). Failure of fingerprint extraction is swallowed — the attempt is still counted as success.
 
-**Resume loop (`run_attempt`):**
+### Phase 5 — Cubability
 
-- Queries `granules JOIN collections` for rows not yet present in `results.parquet` (via `NOT EXISTS (SELECT 1 FROM read_parquet(...))`).
-- For each pending granule, mints a store via `StoreCache.get_store(provider, url)` and hands off to `attempt_one`.
-- Writes results to a DAAC-partitioned Parquet shard (`results/DAAC=<daac>/part-NNNN.parquet`), rotating every 500 rows. A SIGINT handler flushes the active shard and exits with code 0 so reruns resume cleanly.
-- Emits a heartbeat line to stderr every 500 attempts.
+Run at report time, not at attempt time. For each collection whose `dataset_verdict == "all_pass"` (every attempted granule datasetable), `check_cubability(fingerprints)` runs a sequence of pass/fail checks:
 
-#### Phase 5: `report.py`
+1. Variable name sets match across granules.
+2. Per-variable dtype / dims / codecs match.
+3. A concat dimension can be unambiguously identified (preferring a size-varying dim; falling back to a dim with differing coord value hashes).
+4. All non-concat dim sizes match.
+5. All non-concat coord value hashes match.
+6. Per-variable chunk sizes on non-concat axes match.
+7. Concat-dim coord ranges are monotonic and non-overlapping across granules.
 
-Reads `survey.duckdb` and `results.parquet` via DuckDB (`read_parquet` with Hive partitioning). Emits `report.md` with:
+Verdicts: `FEASIBLE`, `INCOMPATIBLE`, `INCONCLUSIVE` (e.g. ambiguous concat dim, all granules identical), `NOT_ATTEMPTED` (Phase 4 didn't fully pass).
 
-- Totals and per-verdict counts (`all_pass`, `partial_pass`, `all_fail`, `skipped_format`, `sample_failed`)
-- Failure taxonomy counts (via `classify`)
-- Per-DAAC breakdown
-- Per-format-family breakdown
-- Stratification breakdown (stratified / fallback / unsampled)
-- Top 20 raw errors in the `OTHER` bucket (for ongoing taxonomy refinement)
+### Per-granule result record
 
-Verdict rules:
+Every `attempt_one` call produces exactly one `AttemptResult`, serialized as one Parquet row. Key fields:
 
-- `skipped_format`: collection prefiltered during `discover` as non-array
-- `sample_failed`: collection in DB but no granules attempted
-- `all_pass`: every attempted granule succeeded
-- `all_fail`: every attempted granule failed
-- `partial_pass`: some attempts succeeded, some failed (heterogeneity signal)
+| Field | Meaning |
+|---|---|
+| `parse_success`, `parse_error_{type,message,traceback}` | Phase 3 outcome |
+| `parse_duration_s` | Wall time inside `parser(...)` only |
+| `dataset_success` (nullable), `dataset_error_{type,message,traceback}` | Phase 4 outcome; `NULL` when Phase 3 failed |
+| `dataset_duration_s` | Wall time inside `to_virtual_dataset()` only |
+| `success` | `parse_success AND dataset_success == True` |
+| `timed_out`, `timed_out_phase` | 60 s timeout; `timed_out_phase` captures whether the timeout fired during `parse` or `dataset` |
+| `fingerprint` | JSON string, populated only on full success; consumed by the cubability check |
 
-### Helpers
+## CMR interactions
 
-#### `providers.py`
+This section collects the decisions most relevant to a CMR reviewer.
 
-Snapshot of EOSDIS DAAC providers. Ported from `titiler-cmr-compatibility`. Pure function; re-check annually against `https://cmr.earthdata.nasa.gov/search/providers`.
+### Provider universe
 
-#### `formats.py`
+`providers.py::get_eosdis_providers()` returns a hard-coded snapshot of EOSDIS DAAC providers, ported from `titiler-cmr-compatibility`. It is a pure list; re-check annually against `https://cmr.earthdata.nasa.gov/search/providers`.
 
-`FormatFamily` enum (`NETCDF4`, `NETCDF3`, `HDF5`, `HDF4`, `ZARR`, `GEOTIFF`, `FITS`, `DMRPP`) plus `classify_format(declared, url) -> FormatFamily | None`. Maps CMR-declared format strings and file extensions to array-like families. Collections that don't match any family are marked `skipped_format` during `discover`.
+### Discover modes
 
-#### `db.py`
+`discover` has three mutually-exclusive modes:
 
-DuckDB schema for two checkpoint tables: `collections` and `granules`. Uses `CREATE TABLE IF NOT EXISTS` for idempotency. No migrations: the tool is designed to be re-run on a fresh DB when the schema changes.
+- **Default:** `earthaccess.search_datasets(cloud_hosted=True, provider=<EOSDIS list>, count=limit)`. `limit=None` means all.
+- **`--top N`:** top-N collections across all EOSDIS providers, ranked by CMR's `usage_score`.
+- **`--top-per-provider N`:** top-N per provider, concatenated.
 
-#### `auth.py`
+Popularity ranking (`popularity.py`) queries `POST https://cmr.earthdata.nasa.gov/search/collections.json` directly — not via `earthaccess` — because the Python wrapper doesn't expose `sort_key[]=-usage_score`. CMR caps any single page at 2000 rows and does not support paging for this sort, so `num > 2000` raises.
 
-Two caches:
+For top-N modes, the flow is: fetch concept IDs with `usage_score` sort, then batch-fetch UMM-JSON in chunks of 100 via `earthaccess.search_datasets(concept_id=batch)`.
 
-- `DAACStoreCache`: direct-S3 mode. `get_store(provider)` calls `earthaccess.get_s3_credentials(provider=...)` and wraps the result in an `obstore.store.S3Store`. Cached per CMR provider with a 50-minute TTL (credentials expire at 60 minutes).
-- `StoreCache`: unified dispatcher that routes by access mode.
-    - `access="direct"` delegates to `DAACStoreCache`.
-    - `access="external"` logs into EDL, pulls the bearer token from `earthaccess.__auth__.token["access_token"]`, and hands out an `obspec_utils.stores.AiohttpStore` instance per hostname, with `Authorization: Bearer <token>` header.
+### UMM-JSON extraction
 
-Both raise `AuthUnavailable` on empty credentials or missing tokens. The caller records the failure as a per-granule `AuthUnavailable` result rather than aborting the run.
+Per collection (`discover.collection_row_from_umm`):
 
-#### `taxonomy.py`
+- **`format_declared`** — prefer `umm.ArchiveAndDistributionInformation.FileDistributionInformation[*].Format` (the actually distributed format), falling back to `FileArchiveInformation[*].Format` (format as archived).
+- **`daac`** — first `umm.DataCenters[].ShortName`, falling back to `meta.provider-id`.
+- **Temporal extent** — first `umm.TemporalExtents[*].RangeDateTimes[*].{Beginning,Ending}DateTime`. Single-range extents only (we don't walk gaps in discontinuous series).
+- **`processing_level`** — `umm.ProcessingLevel.Id`.
 
-Empirically-derived classifier mapping `(error_type, error_message)` to a `Bucket` value. Seeded from `titiler-cmr-compatibility`'s `IncompatibilityReason` enum plus hypothesized VirtualiZarr-specific buckets, then refined as real errors surface in the `OTHER` bucket of a pilot run.
+Per granule (`sample._extract_*`):
 
-Rules are ordered `(error_type_pattern, error_message_pattern, bucket)` tuples with first-match-wins semantics. See the [Failure Taxonomy](taxonomy.md) reference for per-bucket descriptions, example error strings, and typical next steps.
+- **`data_url`** — first entry from `DataGranule.data_links(access=<mode>)`. See [Access modes](#access-modes).
+- **`size_bytes`** — first `SizeInBytes` (or legacy `Size`) in `umm.DataGranule.ArchiveAndDistributionInformation`.
+- **Format (probe)** — when a collection has no collection-level format declared, `sample` calls `earthaccess.search_data(concept_id=..., count=1)` and reads `umm.DataGranule.ArchiveAndDistributionInformation.Format` to reclassify before sampling in earnest.
 
-#### `__main__.py`
+### Format classification
 
-Click CLI. Subcommands: `version`, `discover`, `sample`, `attempt`, `report`, `pilot`. Common flags across the work phases:
+`formats.classify_format(declared, url)` maps a CMR-declared format string (case-insensitive) or file extension to one of eight `FormatFamily` values. The declared-string mapping is the same one used by `titiler-cmr-compatibility`, extended with `DMR++` and variants.
 
-- `--db PATH`: DuckDB checkpoint file (default `output/survey.duckdb`)
-- `--results PATH`: Parquet results directory (default `output/results`)
-- `--out PATH`: report output path (default `output/report.md`)
-- `--access {direct,external}`: CMR granule access mode; default `direct`
-- `--daac NAME`: restrict to one DAAC
+Collections with no declared format get `skip_reason="format_unknown"` at discover time. `sample` later probes one granule; if the granule's UMM-JSON also lacks a format, or the probed format is non-array, the collection stays skipped. This two-phase probing avoids burning granule queries on thousands of collections at discover time.
 
-The `pilot` subcommand runs all phases end-to-end on a small sample (`--sample N`, default 50) so users can review raw errors and refine `taxonomy.py` before committing to a full survey.
+Collections whose declared format is known but non-array (shapefile, CSV, PDF, etc.) get `skip_reason="non_array_format"` immediately.
 
-Module-level `warnings.filterwarnings` calls at the top of `__main__.py` suppress two noisy upstream warnings (`earthaccess` `DataGranule.size` `FutureWarning`, `zarr` numcodecs `ZarrUserWarning`).
+### Sampling
 
-## Data Model
+For each array-like collection, 5 granules are sampled.
 
-### DuckDB (`survey.duckdb`)
+- **Stratified (preferred):** split the temporal extent into 5 equal bins; for each bin, call `earthaccess.search_data(concept_id, temporal=(bin_start, bin_end), count=1)`. If a bin returns no granules, it is silently dropped (fewer than 5 rows but still `stratified=True`).
+- **Fallback:** if the temporal extent is missing, call `search_data(concept_id, count=5)` and assign synthetic `temporal_bin=0..4` with `stratified=False`.
+
+The `stratified` flag propagates to the Parquet log so the final report can distinguish genuine temporal coverage from fallback sampling.
+
+### Rate-limiting and politeness
+
+No explicit rate limiting. `discover` issues O(1) CMR calls (one paged `search_datasets`, or N/100 concept-id batches in top-N mode). `sample` issues O(collections × 5) granule-search calls. `attempt` hits S3 / DAAC HTTPS gateways directly and does not touch CMR. A full survey is ~10k attempts and runs in ~1 workday.
+
+## VirtualiZarr interactions
+
+This section collects the decisions most relevant to a VirtualiZarr reviewer.
+
+### Why two phases rather than `open_virtual_dataset`
+
+`virtualizarr.open_virtual_dataset(url, registry, parser)` wraps both phases in one call. We split them because the survey's value is discriminating failures. Without the split, a single error column cannot tell a reviewer whether to file a parser issue or an xarray / manifest-store issue.
+
+Concretely, inside `attempt.attempt_one`:
+
+```python
+ms = parser(url=url, registry=registry)      # Phase 3
+ds = ms.to_virtual_dataset()                 # Phase 4
+```
+
+### Registry construction
+
+```python
+# _build_registry
+parsed = urlparse(url)
+scheme = parsed.scheme or "s3"
+bucket = parsed.netloc
+return ObjectStoreRegistry({f"{scheme}://{bucket}": store})
+```
+
+One registry entry per attempt, keyed by `scheme://netloc`. In direct mode the netloc is an S3 bucket; in external mode it is a DAAC HTTPS host. This works because every URL for a given attempt lives under one host / bucket; VirtualiZarr parsers that follow internal references (e.g. DMR++ pointing to a sidecar) within the same host / bucket are naturally covered, but cross-host references are not.
+
+### Timeout mechanism
+
+Each attempt runs inside a daemon `threading.Thread` with a 60-second `done.wait(timeout=60)` barrier:
+
+```python
+thread = threading.Thread(target=_runner, daemon=True)
+thread.start()
+completed = done.wait(timeout=timeout_s)
+```
+
+If the timeout fires, the thread is abandoned. The daemon flag ensures Python exits at process end even if the worker is still blocked on I/O. The per-attempt leak is acceptable because the pipeline is sequential and parser instances are fresh on every attempt.
+
+The phase that was executing when the timeout fired is captured via a shared `phase_ref` list, written only by the worker, so the report can distinguish parse-timeouts from dataset-timeouts.
+
+### Parser instantiation
+
+A fresh parser instance per attempt (`dispatch_parser` always returns `X()`, never a cached instance). This avoids parsers accumulating internal state between granules of different collections and keeps attempts independent.
+
+### Fingerprints
+
+On Phase 4 success, `cubability.extract_fingerprint(ds)` walks the resulting xarray `Dataset` metadata — no data values — and writes a JSON object with:
+
+- `dims: {name: size}`
+- `data_vars: {name: {dtype, dims, chunks, fill_value, codecs}}` where `codecs` is derived from `var.encoding.{compressor, filters, codecs}` (type names only).
+- `coords: {name: {dtype, dims, shape, values_hash, min, max}}` — coord values are hashed (`sha256(arr.tobytes())`) and reduced to sorted-endpoints so inter-granule compatibility can be checked without paying the round-trip cost.
+
+Reviewers should weigh in on whether this is a faithful enough summary for the cubability decisions that depend on it. In particular: chunk shape from `var.chunks[0]` per dim assumes uniform chunking; `codecs` by type name loses parameterization.
+
+### What's not exercised
+
+- `.compute()` / data reads — only metadata-level opens.
+- Writing (e.g. to Icechunk). The survey stops at an in-memory virtual dataset.
+- Concat across granules. Cubability is a *feasibility check*, not an actual combine — no `xr.concat` is ever run.
+
+## Access modes
+
+Two modes are supported end-to-end. `--access` plumbs through `sample` (which URL to store) and `attempt` (which store type to build). The rest of the pipeline is mode-agnostic because the registry keys on `scheme://netloc`.
+
+### `direct` (default)
+
+- Granule URLs are S3 (`s3://bucket/key`), from `DataGranule.data_links(access="direct")`.
+- Requires AWS compute in `us-west-2` (NASA S3 direct access is region-locked).
+- Store: `obstore.store.S3Store`, one per `(provider, bucket)` pair.
+- Credentials are minted per provider via `earthaccess.get_s3_credentials(provider=...)` and cached with a 50-minute TTL (EDL expires them at 60 minutes). On TTL expiry, all cached stores for the provider are invalidated before a new credential is minted.
+- **Forbidden abort:** if five consecutive attempts in direct mode classify as `Bucket.FORBIDDEN` (403 / AccessDenied), the run aborts with a message suggesting `--access external` and reminding the user that sampled URLs differ between modes and must be regenerated. This catches the common "running outside us-west-2" footgun fast.
+
+### `external`
+
+- Granule URLs are HTTPS (`https://<daac-host>/path/file.nc`), from `DataGranule.data_links(access="external")`.
+- Works from anywhere with EDL credentials in `~/.netrc`.
+- Store: `obstore.store.HTTPStore.from_url(f"{scheme}://{host}", default_headers={"Authorization": f"Bearer {edl_token}"})`, cached per `scheme://host`.
+- Token source: after `earthaccess.login(strategy="netrc")`, we pull `earthaccess.__auth__.token["access_token"]`.
+- Many DAAC HTTPS gateways 302-redirect to presigned S3 URLs. This is expected; `HTTPStore`'s default redirect behaviour handles it. See [Known Limitations](#known-limitations) for the caveat about bearer-header retention across redirects.
+
+Both stores raise `AuthUnavailable` on missing credentials / tokens; the caller records the failure as a per-granule `AuthUnavailable` result rather than aborting.
+
+## Data model
+
+### DuckDB (`output/survey.duckdb`)
 
 ```sql
 CREATE TABLE collections (
@@ -142,19 +267,19 @@ CREATE TABLE collections (
   version          TEXT,
   daac             TEXT,
   provider         TEXT,
-  format_family    TEXT,
-  format_declared  TEXT,
+  format_family    TEXT,      -- one of FormatFamily, NULL if unknown / non-array
+  format_declared  TEXT,      -- raw CMR-declared string, for debugging
   num_granules     BIGINT,
   time_start       TIMESTAMP,
   time_end         TIMESTAMP,
   processing_level TEXT,
-  skip_reason      TEXT,
+  skip_reason      TEXT,      -- NULL | 'non_array_format' | 'format_unknown'
   discovered_at    TIMESTAMP
 );
 
 CREATE TABLE granules (
-  collection_concept_id TEXT,
-  granule_concept_id    TEXT,
+  collection_concept_id TEXT NOT NULL,
+  granule_concept_id    TEXT NOT NULL,
   data_url              TEXT,
   temporal_bin          INTEGER,
   size_bytes            BIGINT,
@@ -164,108 +289,165 @@ CREATE TABLE granules (
 );
 ```
 
-### Parquet (`results/DAAC=<daac>/part-NNNN.parquet`)
+Schema creation uses `CREATE TABLE IF NOT EXISTS`. No migrations: schema changes require deleting `output/survey.duckdb` and `output/results/` and re-running.
 
-Append-only per-attempt log. One row per `open_virtual_dataset` call.
+### Parquet (`output/results/DAAC=<daac>/part-NNNN.parquet`)
+
+Append-only per-attempt log. One row per `attempt_one` call. Partitioned by DAAC so partial reprocessing is easy and a crash only risks the active shard's in-memory buffer.
+
+Notable columns (full list in `attempt._SCHEMA_FIELDS`):
 
 | Column | Type | Notes |
 |---|---|---|
-| collection_concept_id | STRING | |
-| granule_concept_id | STRING | |
-| daac | STRING | partition key |
-| format_family | STRING | |
-| parser | STRING | `HDFParser` / `NetCDF3Parser` / `FITSParser` / `DMRPPParser` / `ZarrParser` |
-| success | BOOL | |
-| error_type | STRING | `type(e).__name__`, null on success |
-| error_message | STRING | `str(e)`, truncated to 2 KB |
-| error_traceback | STRING | truncated to 4 KB |
-| duration_s | DOUBLE | wall time including parser init |
-| timed_out | BOOL | true if killed by 60-second timeout |
-| stratified | BOOL | propagated from the granule sampling mode |
-| attempted_at | TIMESTAMP | UTC |
+| `collection_concept_id` | STRING | |
+| `granule_concept_id` | STRING | |
+| `daac` | STRING | partition key |
+| `format_family` | STRING | `FormatFamily.value` |
+| `parser` | STRING | `type(parser).__name__` |
+| `parse_success` | BOOL | Phase 3 |
+| `parse_error_{type,message,traceback}` | STRING | truncated to 2/2/4 KB |
+| `parse_duration_s` | DOUBLE | parser call only |
+| `dataset_success` | BOOL (nullable) | Phase 4; NULL when Phase 3 failed |
+| `dataset_error_{type,message,traceback}` | STRING | |
+| `dataset_duration_s` | DOUBLE | `to_virtual_dataset()` only |
+| `success` | BOOL | parse AND dataset succeeded |
+| `timed_out`, `timed_out_phase` | BOOL, STRING | `"parse"` \| `"dataset"` |
+| `duration_s` | DOUBLE | wall time including dispatch |
+| `stratified` | BOOL | propagated from sampling |
+| `fingerprint` | STRING | JSON; populated only on full success |
+| `attempted_at` | TIMESTAMP | UTC |
 
-Partitioning by DAAC limits blast radius on crash: only the active shard's in-memory buffer is at risk, and per-DAAC shards make partial reprocessing easy.
+Shards rotate every 500 rows (`ResultWriter.shard_size`). A SIGINT handler flushes every DAAC's buffered rows before exiting with code 0, so reruns resume cleanly.
 
-## Access Modes
+### Resume logic
 
-Two modes are supported end-to-end. The flag plumbs through `sample` (which URL to store) and `attempt` (which store type to use). The rest of the pipeline is mode-agnostic because `_build_registry` keys the registry by `scheme://netloc`, naturally handling both `s3://bucket` and `https://host`.
+`_pending_granules` joins `granules` with `collections` and excludes pairs already present in the Parquet log:
 
-### `direct` (default)
+```sql
+WHERE c.skip_reason IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM read_parquet(?, union_by_name=true, hive_partitioning=true) r
+    WHERE r.collection_concept_id = g.collection_concept_id
+      AND r.granule_concept_id   = g.granule_concept_id
+  )
+```
 
-- Granule URLs are S3 (`s3://bucket/key`), obtained via `DataGranule.data_links(access="direct")`.
-- Requires AWS compute in `us-west-2` (NASA S3 direct access is region-locked).
-- Store: `obstore.store.S3Store`, credentials minted per CMR provider by `earthaccess.get_s3_credentials`.
+On the first run, `read_parquet` raises (no files yet); a `try/except` falls back to "all pending granules." Results are ordered by `(daac, collection, temporal_bin)` so per-collection progress lines to stderr are meaningful and shards stay DAAC-local.
 
-### `external`
+## Reporting
 
-- Granule URLs are HTTPS (`https://<daac-host>/path/file.nc`), obtained via `DataGranule.data_links(access="external")`.
-- Works from anywhere with internet access and EDL credentials.
-- Store: `obspec_utils.stores.AiohttpStore`, one instance per hostname, with `Authorization: Bearer <edl_token>` header.
-- Many DAAC HTTPS gateways 302-redirect to presigned S3 URLs; aiohttp's default redirect behavior handles this.
+`report.py` reads `survey.duckdb` and the full Parquet log via DuckDB's `read_parquet` with Hive partitioning. The emitted Markdown contains:
 
-## Sampling Strategy
+- Overview Sankey (collections → parsable → datasetable → cubable).
+- Per-phase verdict tables (`all_pass` / `partial_pass` / `all_fail` / `not_attempted` / `skipped`). `skipped` is assigned at the collection level from `collections.skip_reason`; the other verdicts are derived from the Parquet log.
+- Per-phase failure taxonomy (see [Failure Taxonomy](taxonomy.md)) with both granule and distinct-collection counts.
+- Per-DAAC and per-format-family tables in the form "parsable / datasetable / cubable (% of the previous column)."
+- Stratification breakdown (stratified vs fallback vs unsampled).
+- Top-50 raw errors per phase for the `OTHER` bucket, seeding the next round of taxonomy refinement.
+- Full per-collection table at the end.
 
-For each collection with `skip_reason IS NULL`:
+## Error handling
 
-- **Stratified (preferred):** split the collection's temporal extent into 5 equal bins, sample one granule per bin (`count=1`, `temporal=(bin_start, bin_end)`). Store `stratified=True`.
-- **Fallback:** if the collection lacks a temporal extent in CMR metadata, issue one `search_data(count=5)` call and accept whatever comes back. Store `stratified=False`.
+- **Per-attempt:** all exceptions caught; errors serialized into the Parquet row. Timeouts → `TimeoutError`. Auth failures → `AuthUnavailable`.
+- **No retries.** Flakiness surfaces naturally as `partial_pass` across the 5 stratified granules. Retrying inside `attempt_one` would conflate transient failure with genuine lack of support and muddy the taxonomy.
+- **Process-level SIGINT:** flushes every DAAC's active shard, then `sys.exit(0)`. The next `attempt` run resumes from where it stopped.
+- **Forbidden run-abort:** 5 consecutive direct-mode 403s cause a clean abort with a remediation message. Non-direct runs do not trigger this.
 
-Stratified sampling surfaces intra-collection heterogeneity: collections whose first granule virtualizes successfully but later ones fail (e.g., due to a mid-mission codec change or reprocessing campaign). These show up as `partial_pass` in the report.
+## CLI
 
-## Error Handling
+Click-based. Subcommands: `version`, `discover`, `sample`, `attempt`, `report`, `pilot`, plus a `repro` helper that minimizes any single failure into a runnable script.
 
-- **Per-attempt:** all exceptions caught and serialized. Timeouts produce `TimeoutError`-typed results. Auth failures produce `AuthUnavailable`-typed results.
-- **No retries.** Flakiness surfaces naturally as `partial_pass` across the 5 stratified granules; retrying inside `attempt_one` would conflate transient failure with genuine lack of support and muddy the taxonomy.
-- **Process-level:** SIGINT flushes the active Parquet shard and exits cleanly. The next `attempt` run resumes from where it stopped.
+Common flags across work phases:
 
-## Testing Strategy
+- `--db PATH` — DuckDB checkpoint (default `output/survey.duckdb`)
+- `--results PATH` — Parquet results directory (default `output/results`)
+- `--out PATH` — report output (default `docs/results/index.md`)
+- `--access {direct,external}` — granule access mode (default `direct`)
+- `--daac NAME` — restrict to one DAAC
+
+Discovery-specific:
+
+- `--limit N`, `--top N`, `--top-per-provider N` (mutually exclusive)
+- `--dry-run`, `--skipped`
+
+Attempt-specific:
+
+- `--timeout SECONDS` (default 60)
+- `--shard-size ROWS` (default 500)
+
+The `pilot` subcommand runs all phases end-to-end on a small sample (`--sample N`, default 50) so users can review raw errors and refine `taxonomy.py` before committing to a full survey.
+
+`__main__.py` suppresses three noisy upstream warnings (`earthaccess` `DataGranule.size` `FutureWarning`, Numcodecs / Imagecodecs "not in Zarr v3 spec" `UserWarning`s) to keep stderr meaningful.
+
+## Testing
 
 ### Unit (`tests/unit/`)
 
-71+ tests across eight suites. Every module has mocked tests for its public API. Notable:
+Every module has mocked tests for its public API. Notable suites:
 
-- `test_taxonomy.py` is table-driven with one case per hypothesized bucket; grows as the pilot reveals new patterns.
-- `test_auth.py` covers both direct and external modes with `earthaccess` and `obspec_utils.stores.AiohttpStore` mocked. Does not exercise the real obstore S3 client or real EDL auth.
-- `test_attempt.py::test_run_attempt_resumes` pre-populates a Parquet file and verifies the resume check skips already-attempted granules.
-- `test_sample.py` covers both the stratified-bins branch and the no-temporal-extent fallback.
+- `test_taxonomy.py` — table-driven, one case per hypothesized bucket; grows as the pilot reveals new patterns.
+- `test_auth.py` — both modes mocked at `earthaccess`, `obstore.store.S3Store`, and `HTTPStore`. Does not exercise real S3 or real EDL.
+- `test_attempt.py::test_run_attempt_resumes` — pre-populates a Parquet shard, verifies the resume check skips already-attempted granules.
+- `test_sample.py` — both the stratified-bins branch and the no-temporal-extent fallback.
+- `test_cubability.py` — the seven-step feasibility check, with fixtures for each failing-step case.
 
 ### Integration (`tests/integration/`, opt-in)
 
-One smoke test that runs the full pipeline on 3 collections with real EDL credentials. Skipped cleanly when `~/.netrc` is absent. Not run by default in CI.
+One smoke test that runs the full pipeline on 3 collections with real EDL credentials. Skipped cleanly when `~/.netrc` is absent. Not run in CI.
 
 ## Extensibility
 
 ### Refining the taxonomy
 
-After a pilot run, read `output/report.md` — the "Top 20 Raw Errors in `OTHER`" section surfaces uncategorized errors with counts. For each recurring pattern:
+After a pilot run, read the "Top 50 Raw Errors in `OTHER`" section of `output/report.md`. For each recurring pattern:
 
-- Add a new `Bucket` value in `taxonomy.py` if it represents a novel failure mode.
-- Add a `(type_regex, message_regex, bucket)` rule at the appropriate position in `_RULES` (first match wins).
+- Add a `Bucket` value in `taxonomy.py` if it's a novel failure mode.
+- Add a `(type_regex, message_regex, bucket)` rule at the correct position in `_RULES` (first match wins).
 - Add a test case in `tests/unit/test_taxonomy.py`.
-- Re-run `report` only; no need to re-run `attempt`.
+- Re-run `report`; no need to re-run `attempt`.
 
 ### Adding a format family
 
-- Add a value to `FormatFamily` in `formats.py`.
-- Add declared-string and extension entries to `_DECLARED` and `_EXT`.
-- Add a parser-dispatch branch in `attempt.py::dispatch_parser` if VirtualiZarr supports the format; otherwise it will be recorded as `NO_PARSER`.
+- Add a `FormatFamily` value.
+- Add declared-string and extension entries in `formats._DECLARED` and `_EXT`.
+- Add a parser-dispatch branch in `attempt.dispatch_parser` if VirtualiZarr supports it; otherwise attempts record `NoParserAvailable`.
 
 ### Adding an access mode
 
 - Add a branch in `StoreCache.get_store` and whatever store construction is needed.
-- Propagate the mode through the `--access` flag's `click.Choice`.
-- `sample.py`'s `_extract_url` forwards the mode to `data_links(access=...)`.
-- `_build_registry` already keys on scheme+host and should not need changes unless the new scheme requires a different registry shape.
+- Extend `--access` `click.Choice`.
+- `sample._extract_url` already forwards the mode to `data_links(access=...)`.
+- `_build_registry` keys on `scheme://netloc`; a new scheme should work without changes.
 
-## Known Limitations
+## Known limitations
 
-- **Sequential only.** The run is single-process, single-threaded (apart from the per-attempt worker). Parallelism was deferred; at roughly 5 seconds per attempt and ~10,000 attempts total, the survey takes a workday. If that becomes a problem, the natural partitioning unit is the DAAC.
-- **No schema migrations.** DB schema changes require deleting `output/survey.duckdb` and `output/results/` and re-running. Acceptable for a one-off survey.
-- **Taxonomy drift.** Upstream error messages change. The regex-based classifier needs maintenance whenever VirtualiZarr or its dependencies evolve.
-- **HTTPS redirect behavior is untested.** `external` mode depends on aiohttp following 302 redirects from DAAC gateways to presigned S3 URLs without dropping or misapplying the bearer header. Untested against the full DAAC matrix; edge-case failures will surface as bucketed errors.
-- **VirtualiZarr parser coverage.** HDF4 and GeoTIFF collections land in `NO_PARSER` by design. A future VirtualiZarr release could close these gaps; the survey will pick that up automatically on the next run.
+- **Sequential only.** Single-process, single-threaded apart from the per-attempt timeout worker. At roughly 5 s/attempt and ~10k attempts, a full survey takes a workday. Natural partition for future parallelism is the DAAC.
+- **No schema migrations.** DB schema changes require deleting `output/survey.duckdb` and `output/results/` and re-running.
+- **Taxonomy drift.** Upstream error strings change; the regex-based classifier needs maintenance whenever VirtualiZarr or its dependencies evolve. The `OTHER` bucket plus its raw-error drill-down is the operational mitigation.
+- **External-mode redirects.** `HTTPStore`'s bearer header is attached as a default header per hostname; whether obstore preserves that header across 302 redirects to a different host (e.g. presigned S3) has not been exhaustively tested against the full DAAC matrix. Edge-case failures surface as bucketed errors in the report.
+- **Timeout leaks threads.** A timed-out worker continues to run in the background until the interpreter exits. The daemon flag ensures eventual cleanup but the leaking thread can still hold sockets, memory, or file descriptors for the rest of the run.
+- **Hierarchical datasets.** Collections whose files use HDF5 / NetCDF4 groups fail Phase 4 with `CONFLICTING_DIM_SIZES` or similar; they are candidates for a future Phase 4b (Datatreeability) that would call `to_virtual_datatree()` before giving up. Not implemented here.
+- **Fingerprint lossiness.** The per-granule fingerprint records codec *type names* and assumes uniform chunking along each dim. Collections whose per-variable codec parameters or chunking vary in ways not captured by the fingerprint will pass the cubability check but may still fail a real concat. Flagged explicitly as a trust boundary for reviewers.
+- **VirtualiZarr parser coverage.** HDF4 lands in `NoParserAvailable` by design. Future VirtualiZarr releases that close that gap will be picked up automatically on the next run.
 
-## Related Prior Art
+## Open questions for reviewers
 
-- `titiler-cmr-compatibility` ran a structurally similar survey for tile-generation compatibility. Ported: EOSDIS provider filter, initial taxonomy buckets, collection-metadata fields to record (processing level, short name+version), format/extension mapping, Parquet-incremental-write pattern, per-granule timeout.
-- Kept different: 5 stratified granules vs. their 1 random granule per collection (for heterogeneity detection); `open_virtual_dataset` as the test function vs. their `CMRBackend` tile render (different failure surface).
+CMR experts:
+
+1. Is `FileDistributionInformation.Format → FileArchiveInformation.Format → probe-one-granule` the right precedence, or are there collections where only a product-type field reliably identifies the format?
+2. Are there DAACs where `DataGranule.data_links(access="direct")` returns a non-S3 scheme (e.g. TEA-signed HTTPS treated as "direct"), and should we classify those differently?
+3. Is the EOSDIS provider snapshot in `providers.py` missing any active cloud-hosted DAAC? (Last audited Q1 2026.)
+4. Are there collections where temporal extent splitting is misleading — e.g. reprocessing campaigns that invalidate earlier bins? Should we prefer `reprocessed=true` filtering?
+
+VirtualiZarr experts:
+
+1. Is splitting `parser(...)` from `to_virtual_dataset()` a fair and stable API contract, or do some parsers blur the line (e.g. by deferring work until dataset construction)?
+2. Is the registry shape (`{f"{scheme}://{netloc}": store}`) sufficient for every current parser? DMR++ in particular can reference sidecar URLs — do those need a broader registry?
+3. Is the fingerprint faithful enough for cubability? What's the minimum additional metadata (codec parameters, fill-value comparison, time-unit handling) that would let us trust a `FEASIBLE` verdict as a real concat?
+4. For `VirtualTIFF`: does it integrate with `ObjectStoreRegistry` cleanly, and should we expect different error shapes from it than from the in-tree parsers?
+5. Should failures like `not a valid HDF5 file` after a successful `HDFParser` dispatch be attributed to parser misdispatch (i.e. the declared format was wrong) or to genuine file corruption? The current taxonomy lumps them together under `CANT_OPEN_FILE`.
+
+## Related prior art
+
+- `titiler-cmr-compatibility` ran a structurally similar survey for tile-generation compatibility. Ported: EOSDIS provider filter, initial taxonomy buckets, UMM-JSON fields to record (processing level, short name + version), declared-format / extension mapping, Parquet-incremental-write pattern, per-granule timeout.
+- Diverged: 5 stratified granules vs their 1 random granule per collection (for intra-collection heterogeneity detection); `open_virtual_dataset` split into parse + dataset phases vs their single `CMRBackend` tile-render test (different failure surface); cubability as a third phase vs their single-granule result.
