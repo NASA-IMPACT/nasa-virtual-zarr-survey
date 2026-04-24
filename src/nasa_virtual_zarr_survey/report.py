@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 import duckdb
@@ -19,6 +21,52 @@ from nasa_virtual_zarr_survey.types import Fingerprint, VerdictRow
 
 # `figures` is imported lazily inside run_report so the base install (without
 # the `docs` dependency group) can still import the report module.
+
+
+@dataclass(frozen=True)
+class RunMetadata:
+    """Versions and invocation context stamped on a survey report run."""
+
+    generated_at: str
+    survey_tool_version: str
+    virtualizarr_version: str | None = None
+    zarr_version: str | None = None
+    xarray_version: str | None = None
+    sampling_mode: str | None = None
+
+
+def _package_version(name: str) -> str | None:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version(name)
+    except PackageNotFoundError:
+        return None
+
+
+def _read_sampling_mode(con: duckdb.DuckDBPyConnection) -> str | None:
+    try:
+        row = con.execute(
+            "SELECT value FROM run_meta WHERE key = 'sampling_mode'"
+        ).fetchone()
+    except duckdb.CatalogException:
+        return None
+    return row[0] if row else None
+
+
+def _collect_run_metadata(
+    con: duckdb.DuckDBPyConnection | None,
+    survey_tool_version: str,
+) -> RunMetadata:
+    """Capture versions and sampling mode for a fresh (compute-from-DB) run."""
+    return RunMetadata(
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        survey_tool_version=survey_tool_version,
+        virtualizarr_version=_package_version("virtualizarr"),
+        zarr_version=_package_version("zarr"),
+        xarray_version=_package_version("xarray"),
+        sampling_mode=_read_sampling_mode(con) if con is not None else None,
+    )
 
 
 def _attach_results(con: duckdb.DuckDBPyConnection, results_dir: Path) -> bool:
@@ -343,6 +391,21 @@ def _iframe(name: str) -> str:
     return f'<iframe src="figures/{name}.html" width="100%" height="500" frameborder="0"></iframe>'
 
 
+def _render_metadata_block(meta: RunMetadata) -> list[str]:
+    """Emit a bullet list of run metadata. Skips lines whose value is None."""
+    rows: list[tuple[str, str | None]] = [
+        ("Generated", meta.generated_at),
+        ("Survey tool", meta.survey_tool_version),
+        ("VirtualiZarr", meta.virtualizarr_version),
+        ("Zarr", meta.zarr_version),
+        ("Xarray", meta.xarray_version),
+        ("Sampling mode", meta.sampling_mode),
+    ]
+    lines = [f"- **{label}:** {value}" for label, value in rows if value]
+    lines.append("")
+    return lines
+
+
 def render_report(
     verdicts: list[VerdictRow],
     parse_tax: dict[str, tuple[int, int]],
@@ -353,6 +416,7 @@ def render_report(
     figure_stems: dict[str, Path] | None = None,
     datatree_tax: dict[str, tuple[int, int]] | None = None,
     other_datatree_errors: list[tuple[int, str, str]] | None = None,
+    metadata: RunMetadata | None = None,
 ) -> str:
     """Render the full Markdown report from pre-computed phase verdicts and taxonomy counts.
 
@@ -381,6 +445,9 @@ def render_report(
     total = len(verdicts)
     lines: list[str] = []
     lines.append("# NASA VirtualiZarr Survey Report\n")
+
+    if metadata is not None:
+        lines.extend(_render_metadata_block(metadata))
 
     # Overview section with Sankey
     lines.append("## Overview\n")
@@ -429,8 +496,18 @@ def render_report(
     lines.append(
         f"Per-collection verdicts based on whether the ManifestStore converted to an "
         f"xarray.DataTree. Attempted in parallel with Phase 4a for all collections "
-        f"that parsed successfully (denominator: {parsable_count}). Collections that "
-        f"fail Phase 4a due to `CONFLICTING_DIM_SIZES` often succeed here.\n"
+        f"that parsed successfully (denominator: {parsable_count}).\n"
+    )
+    rescued_by_datatree = sum(
+        1
+        for v in parsable_verdicts
+        if v["dataset_verdict"] != "all_pass"
+        and v["top_bucket"] == Bucket.CONFLICTING_DIM_SIZES.value
+        and v["datatree_verdict"] == "all_pass"
+    )
+    lines.append(
+        f"**Rescued by Phase 4b:** {rescued_by_datatree} collection(s) that failed "
+        f"Phase 4a (`CONFLICTING_DIM_SIZES`) succeeded under Phase 4b.\n"
     )
     lines.extend(_render_verdict_counts(parsable_verdicts, "datatree_verdict"))
     lines.append("")
@@ -606,6 +683,8 @@ def run_report(
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    from nasa_virtual_zarr_survey import __version__
+
     if from_data is not None:
         # Regenerate report purely from committed JSON digest.
         from nasa_virtual_zarr_survey.summary_io import load_summary
@@ -619,6 +698,14 @@ def run_report(
         other_parse_errors = summary.other_parse_errors
         other_dataset_errors = summary.other_dataset_errors
         other_datatree_errors = summary.other_datatree_errors
+        metadata = RunMetadata(
+            generated_at=summary.generated_at,
+            survey_tool_version=summary.survey_tool_version,
+            virtualizarr_version=summary.virtualizarr_version,
+            zarr_version=summary.zarr_version,
+            xarray_version=summary.xarray_version,
+            sampling_mode=summary.sampling_mode,
+        )
     else:
         # Compute from DuckDB + Parquet.
         con = connect(db_path)
@@ -632,10 +719,10 @@ def run_report(
         other_parse_errors = _other_errors_for_phase(con, "parse")
         other_dataset_errors = _other_errors_for_phase(con, "dataset")
         other_datatree_errors = _other_errors_for_phase(con, "datatree")
+        metadata = _collect_run_metadata(con, __version__)
 
         if export_to is not None:
             from nasa_virtual_zarr_survey.summary_io import dump_summary
-            from nasa_virtual_zarr_survey import __version__
 
             dump_summary(
                 export_to,
@@ -647,7 +734,12 @@ def run_report(
                 other_parse_errors=other_parse_errors,
                 other_dataset_errors=other_dataset_errors,
                 other_datatree_errors=other_datatree_errors,
-                survey_tool_version=__version__,
+                survey_tool_version=metadata.survey_tool_version,
+                virtualizarr_version=metadata.virtualizarr_version,
+                zarr_version=metadata.zarr_version,
+                xarray_version=metadata.xarray_version,
+                sampling_mode=metadata.sampling_mode,
+                generated_at=metadata.generated_at,
             )
 
     figure_stems = _figures.generate_all(
@@ -668,5 +760,6 @@ def run_report(
         figure_stems,
         datatree_tax=datatree_tax,
         other_datatree_errors=other_datatree_errors,
+        metadata=metadata,
     )
     out_path.write_text(text)

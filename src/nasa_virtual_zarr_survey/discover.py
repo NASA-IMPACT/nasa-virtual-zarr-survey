@@ -183,6 +183,20 @@ def fetch_collection_dicts(
     return [c.render_dict if hasattr(c, "render_dict") else c for c in results]
 
 
+def _sampling_mode_string(
+    limit: int | None,
+    top_per_provider: int | None,
+    top_total: int | None,
+) -> str:
+    if top_per_provider is not None:
+        return f"top-per-provider={top_per_provider}"
+    if top_total is not None:
+        return f"top={top_total}"
+    if limit is not None:
+        return f"limit={limit}"
+    return "all"
+
+
 def run_discover(
     db_path: Path | str,
     limit: int | None = None,
@@ -202,4 +216,9 @@ def run_discover(
         top_total=top_total,
     )
     persist_collections(con, dicts)
+    mode = _sampling_mode_string(limit, top_per_provider, top_total)
+    con.execute(
+        "INSERT OR REPLACE INTO run_meta (key, value, updated_at) VALUES (?, ?, ?)",
+        ["sampling_mode", mode, datetime.now(timezone.utc)],
+    )
     return len(dicts)

@@ -34,6 +34,12 @@ CREATE TABLE IF NOT EXISTS granules (
     PRIMARY KEY (collection_concept_id, granule_concept_id)
 );
 
+CREATE TABLE IF NOT EXISTS run_meta (
+    key        TEXT PRIMARY KEY,
+    value      TEXT,
+    updated_at TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_collections_daac ON collections(daac);
 CREATE INDEX IF NOT EXISTS idx_granules_collection ON granules(collection_concept_id);
 """

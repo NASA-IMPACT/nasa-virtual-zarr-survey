@@ -296,6 +296,88 @@ def _make_fp(time_hash: str, time_min: int, time_max: int) -> str:
     return fingerprint_to_json(fp)
 
 
+def test_render_report_reports_rescued_by_datatree_count(
+    tmp_db_path, tmp_results_dir, tmp_path
+):
+    """Report's Phase 4b section surfaces the count of collections that failed
+    Phase 4a with CONFLICTING_DIM_SIZES but succeeded at Phase 4b."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute(
+        "INSERT INTO collections VALUES ('CRESCUE','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now())"
+    )
+    con.execute(
+        "INSERT INTO collections VALUES ('CCLEAN','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now())"
+    )
+    con.close()
+
+    now = datetime.now(timezone.utc)
+    rows = [
+        _row(
+            "CRESCUE",
+            "G0",
+            parse_success=True,
+            dataset_success=False,
+            datatree_success=True,
+            dataset_error_type="ValueError",
+            dataset_error_message="conflicting sizes for dimension 'x'",
+            now=now,
+        ),
+        _row(
+            "CRESCUE",
+            "G1",
+            parse_success=True,
+            dataset_success=False,
+            datatree_success=True,
+            dataset_error_type="ValueError",
+            dataset_error_message="conflicting sizes for dimension 'x'",
+            now=now,
+        ),
+        _row("CCLEAN", "G0", parse_success=True, dataset_success=True, now=now),
+    ]
+    _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", rows)
+
+    out = tmp_path / "report.md"
+    run_report(tmp_db_path, tmp_results_dir, out)
+    text = out.read_text()
+    assert (
+        "**Rescued by Phase 4b:** 1 collection(s) that failed Phase 4a "
+        "(`CONFLICTING_DIM_SIZES`) succeeded under Phase 4b." in text
+    )
+
+
+def test_render_report_includes_metadata_block(tmp_db_path, tmp_results_dir, tmp_path):
+    """Report header lists survey tool version, dep versions, and sampling mode."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute(
+        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now())"
+    )
+    con.execute(
+        "INSERT INTO run_meta (key, value, updated_at) VALUES ('sampling_mode', 'top=200', now())"
+    )
+    con.close()
+
+    _write_results(
+        tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet",
+        [_row("C1", "G1")],
+    )
+
+    out = tmp_path / "report.md"
+    run_report(tmp_db_path, tmp_results_dir, out)
+    text = out.read_text()
+
+    # Metadata block sits between the H1 and the Overview section.
+    header, _, rest = text.partition("## Overview")
+    assert "**Generated:**" in header
+    assert "**Survey tool:**" in header
+    assert "**VirtualiZarr:**" in header
+    assert "**Sampling mode:** top=200" in header
+    # Nothing from the first body section leaked into the header.
+    assert "## Phase" not in header
+    assert rest  # guard: Overview section actually present
+
+
 def test_render_report_contains_counts(tmp_db_path, tmp_results_dir, tmp_path):
     con = connect(tmp_db_path)
     init_schema(con)

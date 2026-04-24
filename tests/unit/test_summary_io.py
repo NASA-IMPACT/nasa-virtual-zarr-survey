@@ -162,6 +162,65 @@ def test_load_v1_summary_migrates(tmp_path: Path) -> None:
     assert summary.datatree_taxonomy == {}
     assert summary.other_datatree_errors == []
     assert summary.survey_tool_version == "0.9.0"
+    # v1 -> v3 also defaults the dependency/invocation fields to None.
+    assert summary.virtualizarr_version is None
+    assert summary.zarr_version is None
+    assert summary.xarray_version is None
+    assert summary.sampling_mode is None
+
+
+def test_load_v2_summary_migrates(tmp_path: Path) -> None:
+    """Loading a v2 summary defaults the new v3 metadata fields to None."""
+    v2_payload = {
+        "schema_version": 2,
+        "generated_at": "2026-01-01T00:00:00+00:00",
+        "survey_tool_version": "1.0.0",
+        "verdicts": [],
+        "parse_taxonomy": {},
+        "dataset_taxonomy": {},
+        "datatree_taxonomy": {},
+        "cubability_results": {},
+        "other_parse_errors": [],
+        "other_dataset_errors": [],
+        "other_datatree_errors": [],
+    }
+    p = tmp_path / "v2_summary.json"
+    p.write_text(json.dumps(v2_payload))
+
+    summary = load_summary(p)
+    assert summary.survey_tool_version == "1.0.0"
+    assert summary.virtualizarr_version is None
+    assert summary.zarr_version is None
+    assert summary.xarray_version is None
+    assert summary.sampling_mode is None
+
+
+def test_metadata_fields_roundtrip(tmp_path: Path) -> None:
+    """Versions, sampling mode, and explicit generated_at survive dump/load."""
+    p = tmp_path / "summary.json"
+    dump_summary(
+        p,
+        verdicts=[],
+        parse_taxonomy={},
+        dataset_taxonomy={},
+        datatree_taxonomy={},
+        cubability_results={},
+        other_parse_errors=[],
+        other_dataset_errors=[],
+        other_datatree_errors=[],
+        survey_tool_version="1.2.3",
+        virtualizarr_version="1.3.0",
+        zarr_version="3.0.8",
+        xarray_version="2025.1.0",
+        sampling_mode="top=200",
+        generated_at="2026-04-23T15:42:00+00:00",
+    )
+    summary = load_summary(p)
+    assert summary.generated_at == "2026-04-23T15:42:00+00:00"
+    assert summary.virtualizarr_version == "1.3.0"
+    assert summary.zarr_version == "3.0.8"
+    assert summary.xarray_version == "2025.1.0"
+    assert summary.sampling_mode == "top=200"
 
 
 def test_cubability_result_roundtrip(tmp_path: Path) -> None:

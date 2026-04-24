@@ -15,7 +15,7 @@ from typing import cast
 from nasa_virtual_zarr_survey.cubability import CubabilityResult, CubabilityVerdict
 from nasa_virtual_zarr_survey.types import VerdictRow
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def dump_summary(
@@ -30,6 +30,11 @@ def dump_summary(
     other_dataset_errors: list[tuple[int, str, str]],
     other_datatree_errors: list[tuple[int, str, str]],
     survey_tool_version: str,
+    virtualizarr_version: str | None = None,
+    zarr_version: str | None = None,
+    xarray_version: str | None = None,
+    sampling_mode: str | None = None,
+    generated_at: str | None = None,
 ) -> Path:
     """Serialize everything the report needs to a compact JSON file."""
     cube_serialized = {
@@ -49,8 +54,12 @@ def dump_summary(
 
     payload = {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": generated_at or datetime.now(timezone.utc).isoformat(),
         "survey_tool_version": survey_tool_version,
+        "virtualizarr_version": virtualizarr_version,
+        "zarr_version": zarr_version,
+        "xarray_version": xarray_version,
+        "sampling_mode": sampling_mode,
         "verdicts": verdict_rows,
         "parse_taxonomy": {k: [v[0], v[1]] for k, v in parse_taxonomy.items()},
         "dataset_taxonomy": {k: [v[0], v[1]] for k, v in dataset_taxonomy.items()},
@@ -78,18 +87,24 @@ class LoadedSummary:
     other_datatree_errors: list[tuple[int, str, str]]
     generated_at: str
     survey_tool_version: str
+    virtualizarr_version: str | None = None
+    zarr_version: str | None = None
+    xarray_version: str | None = None
+    sampling_mode: str | None = None
 
 
 def load_summary(path: Path | str) -> LoadedSummary:
     """Parse a summary JSON back into the typed structures used by render_report.
 
-    Supports schema version 2 natively.  A version-1 summary is migrated by
-    synthesizing safe defaults for the new v2 fields (empty datatree structures,
-    ``datatree_verdict = "not_attempted"`` per row).
+    Supports schema versions 1, 2, and 3.  Older versions are migrated by
+    synthesizing safe defaults for newer fields:
+
+    - v1 -> v2: empty datatree structures, ``datatree_verdict = "not_attempted"``.
+    - v2 -> v3: dependency versions and sampling mode default to ``None``.
     """
     data = json.loads(Path(path).read_text())
     version = data.get("schema_version")
-    if version not in (1, SCHEMA_VERSION):
+    if version not in (1, 2, SCHEMA_VERSION):
         raise ValueError(
             f"Unsupported schema_version: {version!r} (expected {SCHEMA_VERSION})"
         )
@@ -126,4 +141,8 @@ def load_summary(path: Path | str) -> LoadedSummary:
         other_datatree_errors=[tuple(e) for e in data.get("other_datatree_errors", [])],  # type: ignore[misc]
         generated_at=data["generated_at"],
         survey_tool_version=data["survey_tool_version"],
+        virtualizarr_version=data.get("virtualizarr_version"),
+        zarr_version=data.get("zarr_version"),
+        xarray_version=data.get("xarray_version"),
+        sampling_mode=data.get("sampling_mode"),
     )
