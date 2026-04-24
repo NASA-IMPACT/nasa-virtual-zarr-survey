@@ -1,8 +1,4 @@
-# nasa-virtual-zarr-survey: Design
-
-*As-built design of the nasa-virtual-zarr-survey tool, April 2026.*
-
-> **For reviewers:** this document is written for engineers familiar with either CMR / `earthaccess` or VirtualiZarr. Sections labelled **CMR interactions** and **VirtualiZarr interactions** collect the decisions most likely to warrant scrutiny from each audience. The **Open questions for reviewers** section at the end lists specific points where expert input could change the survey's accuracy or scope.
+# Survey design
 
 ## Purpose
 
@@ -16,7 +12,7 @@ The output is a per-collection verdict table plus a Markdown report that Virtual
 
 ## Scope
 
-**In:** CMR collections with `cloud_hosted=True` hosted by EOSDIS DAAC providers, whose declared or probed format is array-like (NetCDF3/4, HDF4/5, Zarr, GeoTIFF, FITS, DMR++).
+**In:** CMR collections with `cloud_hosted=True` hosted by EOSDIS DAAC providers, whose declared or probed format is array-like (NetCDF, HDF, Zarr, GeoTIFF, FITS, DMR++).
 
 **Out:** on-prem-only collections; non-array formats (PDF, shapefile, CSV, binary); non-NASA providers.
 
@@ -141,8 +137,6 @@ Every `attempt_one` call produces exactly one `AttemptResult`, serialized as one
 
 ## CMR interactions
 
-This section collects the decisions most relevant to a CMR reviewer.
-
 ### Provider universe
 
 `providers.py::get_eosdis_providers()` returns a hard-coded snapshot of EOSDIS DAAC providers, ported from `titiler-cmr-compatibility`. It is a pure list; re-check annually against `https://cmr.earthdata.nasa.gov/search/providers`.
@@ -196,8 +190,6 @@ The `stratified` flag propagates to the Parquet log so the final report can dist
 No explicit rate limiting. `discover` issues O(1) CMR calls (one paged `search_datasets`, or N/100 concept-id batches in top-N mode). `sample` issues O(collections × 5) granule-search calls. `attempt` hits S3 / DAAC HTTPS gateways directly and does not touch CMR. A full survey is ~10k attempts and runs in ~1 workday.
 
 ## VirtualiZarr interactions
-
-This section collects the decisions most relevant to a VirtualiZarr reviewer.
 
 ### Why two phases rather than `open_virtual_dataset`
 
