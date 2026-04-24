@@ -15,5 +15,3 @@ uv run nasa-virtual-zarr-survey report
 ```
 
 Requires Earthdata Login credentials in `~/.netrc`.
-
-See the design spec at `docs/superpowers/specs/2026-04-20-nasa-virtual-zarr-survey-design.md`.
