@@ -1,0 +1,6 @@
+# Per-collection overrides applied during `attempt`. Each top-level table is
+# keyed by CMR collection concept ID. Allowed sub-keys: parser, dataset,
+# datatree (each an inline table of kwargs), skip_dataset, skip_datatree
+# (booleans), notes (required one-line rationale on every non-empty entry).
+#
+# See docs/design/collection-overrides.md for the schema.

@@ -35,6 +35,7 @@ dev = [
     "mypy>=1.11",
     "types-requests>=2.31",
     "pyarrow-stubs>=17",
+    "tifffile[all]>=2026.4.11",
     {include-group = "docs"},
 ]
 docs = [

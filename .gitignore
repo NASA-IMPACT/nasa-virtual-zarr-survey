@@ -1,6 +1,8 @@
 output/
 .venv/
 .worktrees/
+.plans/
+.claude/
 __pycache__/
 *.pyc
 .pytest_cache/
