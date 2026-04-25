@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import traceback
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,7 +26,15 @@ from virtualizarr.parsers.zarr import ZarrParser
 from nasa_virtual_zarr_survey.auth import AuthUnavailable, StoreCache
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.formats import FormatFamily
+from nasa_virtual_zarr_survey.overrides import (
+    CollectionOverride,
+    OverrideRegistry,
+    apply_to_dataset_call,
+    apply_to_datatree_call,
+)
 from nasa_virtual_zarr_survey.types import PendingGranule
+
+DEFAULT_OVERRIDES_PATH = Path("config/collection_overrides.toml")
 
 
 @dataclass
@@ -73,26 +82,31 @@ class AttemptResult:
 
     # Overall
     success: bool = False  # parse_success AND (dataset_success OR datatree_success)
+    override_applied: bool = False
     timed_out: bool = False
     timed_out_phase: str | None = None  # "parse", "dataset", or "datatree"
     duration_s: float = 0.0
     fingerprint: str | None = None
 
 
-def dispatch_parser(family: FormatFamily) -> Any | None:
+def dispatch_parser(
+    family: FormatFamily,
+    kwargs: Mapping[str, Any] | None = None,
+) -> Any | None:
     """Return a freshly-instantiated VirtualiZarr parser, or None if unsupported."""
+    kw = dict(kwargs or {})
     if family in (FormatFamily.NETCDF4, FormatFamily.HDF5):
-        return HDFParser()
+        return HDFParser(**kw)
     if family is FormatFamily.NETCDF3:
-        return NetCDF3Parser()
+        return NetCDF3Parser(**kw)
     if family is FormatFamily.DMRPP:
-        return DMRPPParser()
+        return DMRPPParser(**kw)
     if family is FormatFamily.FITS:
-        return FITSParser()
+        return FITSParser(**kw)
     if family is FormatFamily.ZARR:
-        return ZarrParser()
+        return ZarrParser(**kw)
     if family is FormatFamily.GEOTIFF:
-        return VirtualTIFF()
+        return VirtualTIFF(**kw)
     return None
 
 
@@ -122,8 +136,10 @@ def attempt_one(
     granule_concept_id: str | None = None,
     daac: str | None = None,
     stratified: bool | None = None,
+    override: CollectionOverride | None = None,
 ) -> AttemptResult:
     """Try to open one granule through both phases. Always returns a result; never raises."""
+    ov = override or CollectionOverride()
     result = AttemptResult(
         collection_concept_id=collection_concept_id,
         granule_concept_id=granule_concept_id,
@@ -131,9 +147,10 @@ def attempt_one(
         format_family=family.value,
         attempted_at=datetime.now(timezone.utc),
         stratified=stratified,
+        override_applied=not ov.is_empty(),
     )
 
-    parser = dispatch_parser(family)
+    parser = dispatch_parser(family, kwargs=ov.parser_kwargs)
     if parser is None:
         result.parse_error_type = "NoParserAvailable"
         result.parse_error_message = (
@@ -177,36 +194,44 @@ def attempt_one(
             return
 
         # Phase 4a: Datasetability
-        try:
-            t = time.monotonic()
-            ds = manifest_ref[0].to_virtual_dataset()
-            result.dataset_duration_s = time.monotonic() - t
-            dataset_ref.append(ds)
-            result.dataset_success = True
-        except BaseException as exc:
-            tb_str = _truncate(traceback.format_exc(), 4096)
-            result.dataset_success = False
-            result.dataset_error_type = type(exc).__name__
-            result.dataset_error_message = _truncate(str(exc), 2048)
-            result.dataset_error_traceback = tb_str
-        finally:
+        if ov.skip_dataset:
+            result.dataset_success = None  # signals "skipped via override"
             dataset_done.set()
+        else:
+            try:
+                t = time.monotonic()
+                ds = apply_to_dataset_call(manifest_ref[0], ov.dataset_kwargs)
+                result.dataset_duration_s = time.monotonic() - t
+                dataset_ref.append(ds)
+                result.dataset_success = True
+            except BaseException as exc:
+                tb_str = _truncate(traceback.format_exc(), 4096)
+                result.dataset_success = False
+                result.dataset_error_type = type(exc).__name__
+                result.dataset_error_message = _truncate(str(exc), 2048)
+                result.dataset_error_traceback = tb_str
+            finally:
+                dataset_done.set()
 
         # Phase 4b: Datatreeability
-        try:
-            t = time.monotonic()
-            dt = manifest_ref[0].to_virtual_datatree()
-            result.datatree_duration_s = time.monotonic() - t
-            datatree_ref.append(dt)
-            result.datatree_success = True
-        except BaseException as exc:
-            tb_str = _truncate(traceback.format_exc(), 4096)
-            result.datatree_success = False
-            result.datatree_error_type = type(exc).__name__
-            result.datatree_error_message = _truncate(str(exc), 2048)
-            result.datatree_error_traceback = tb_str
-        finally:
+        if ov.skip_datatree:
+            result.datatree_success = None
             datatree_done.set()
+        else:
+            try:
+                t = time.monotonic()
+                dt = apply_to_datatree_call(manifest_ref[0], ov.datatree_kwargs)
+                result.datatree_duration_s = time.monotonic() - t
+                datatree_ref.append(dt)
+                result.datatree_success = True
+            except BaseException as exc:
+                tb_str = _truncate(traceback.format_exc(), 4096)
+                result.datatree_success = False
+                result.datatree_error_type = type(exc).__name__
+                result.datatree_error_message = _truncate(str(exc), 2048)
+                result.datatree_error_traceback = tb_str
+            finally:
+                datatree_done.set()
 
     # Daemon thread: if the worker hangs on a blocking I/O call we still want
     # the interpreter to exit cleanly once the outer process is done.
@@ -287,6 +312,7 @@ _SCHEMA_FIELDS: dict[str, pa.DataType] = {
     "datatree_error_traceback": pa.string(),
     "datatree_duration_s": pa.float64(),
     "success": pa.bool_(),
+    "override_applied": pa.bool_(),
     "timed_out": pa.bool_(),
     "timed_out_phase": pa.string(),
     "duration_s": pa.float64(),
@@ -349,6 +375,7 @@ class ResultWriter:
             cols["datatree_error_traceback"].append(r.datatree_error_traceback)
             cols["datatree_duration_s"].append(r.datatree_duration_s)
             cols["success"].append(r.success)
+            cols["override_applied"].append(r.override_applied)
             cols["timed_out"].append(r.timed_out)
             cols["timed_out_phase"].append(r.timed_out_phase)
             cols["duration_s"].append(r.duration_s)
@@ -364,7 +391,10 @@ class ResultWriter:
 
 
 def _pending_granules(
-    con, results_dir: Path, only_daac: str | None
+    con,
+    results_dir: Path,
+    only_daac: str | None,
+    only_collection: str | None = None,
 ) -> list[PendingGranule]:
     """Return granule rows for which no Parquet row exists yet."""
     results_glob = str(results_dir / "**" / "*.parquet")
@@ -389,6 +419,9 @@ def _pending_granules(
     if only_daac:
         q += " AND c.daac = ?"
         params.append(only_daac)
+    if only_collection:
+        q += " AND c.concept_id = ?"
+        params.append(only_collection)
     q += " ORDER BY c.daac, c.concept_id, g.temporal_bin"
 
     try:
@@ -405,6 +438,9 @@ def _pending_granules(
         if only_daac:
             fallback += " AND c.daac = ?"
             params2.append(only_daac)
+        if only_collection:
+            fallback += " AND c.concept_id = ?"
+            params2.append(only_collection)
         fallback += " ORDER BY c.daac, c.concept_id, g.temporal_bin"
         rows = con.execute(fallback, params2).fetchall()
 
@@ -429,7 +465,11 @@ def run_attempt(
     timeout_s: int = 60,
     shard_size: int = 500,
     only_daac: str | None = None,
+    only_collection: str | None = None,
     access: Literal["direct", "external"] = "direct",
+    cache_dir: Path | None = None,
+    cache_max_bytes: int = 50 * 1024**3,
+    overrides_path: Path | str = DEFAULT_OVERRIDES_PATH,
 ) -> int:
     """Attempt every pending granule. Returns count attempted in this call."""
     con = connect(db_path)
@@ -437,9 +477,25 @@ def run_attempt(
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    pending = _pending_granules(con, results_dir, only_daac)
+    override_registry = OverrideRegistry.from_toml(overrides_path)
+    format_for: dict[str, FormatFamily] = {}
+    for cid, fam_str in con.execute(
+        "SELECT concept_id, format_family FROM collections "
+        "WHERE format_family IS NOT NULL"
+    ).fetchall():
+        try:
+            format_for[cid] = FormatFamily(fam_str)
+        except ValueError:
+            continue
+    override_registry.validate(format_for=format_for)
+
+    pending = _pending_granules(con, results_dir, only_daac, only_collection)
     writer = ResultWriter(results_dir, shard_size=shard_size)
-    cache = StoreCache(access=access)
+    cache = StoreCache(
+        access=access,
+        cache_dir=cache_dir,
+        cache_max_bytes=cache_max_bytes,
+    )
 
     def _sigint(_sig, _frm):
         writer.close()
@@ -526,6 +582,9 @@ def run_attempt(
                     granule_concept_id=row["granule_concept_id"],
                     daac=row["daac"],
                     stratified=row["stratified"],
+                    override=override_registry.for_collection(
+                        row["collection_concept_id"]
+                    ),
                 )
         writer.append(result)
         n += 1

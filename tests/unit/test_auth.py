@@ -186,3 +186,99 @@ def test_store_cache_external_mode(monkeypatch):
         "default_headers": {"Authorization": "Bearer BEARER_XYZ"}
     }
     assert created[1]["url"] == "https://host-b.example"
+
+
+def test_store_cache_no_cache_returns_underlying_store(monkeypatch, tmp_path):
+    from nasa_virtual_zarr_survey.auth import StoreCache
+    from nasa_virtual_zarr_survey.cache import DiskCachingReadableStore
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
+    )
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials",
+        lambda provider: {
+            "accessKeyId": "AK",
+            "secretAccessKey": "SK",
+            "sessionToken": "TK",
+        },
+    )
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth._build_s3_store",
+        lambda creds, bucket: f"S3({bucket})",
+    )
+
+    cache = StoreCache(access="direct")  # cache_dir=None
+    s = cache.get_store(provider="PODAAC", url="s3://b/key.nc")
+    assert s == "S3(b)"
+    assert not isinstance(s, DiskCachingReadableStore)
+
+
+def test_store_cache_with_cache_dir_wraps_s3_store(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    from nasa_virtual_zarr_survey.auth import StoreCache
+    from nasa_virtual_zarr_survey.cache import DiskCachingReadableStore
+
+    assert isinstance(tmp_path, Path)
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
+    )
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials",
+        lambda provider: {
+            "accessKeyId": "AK",
+            "secretAccessKey": "SK",
+            "sessionToken": "TK",
+        },
+    )
+    # _build_s3_store must return something the wrapper treats as a real store.
+    # We don't exercise reads here, so any object is fine — the wrapper only
+    # touches it on get/get_range/head, which we don't call.
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth._build_s3_store",
+        lambda creds, bucket: object(),
+    )
+
+    cache = StoreCache(access="direct", cache_dir=tmp_path, cache_max_bytes=1_000_000)
+    s = cache.get_store(provider="PODAAC", url="s3://my-bucket/key.nc")
+    assert isinstance(s, DiskCachingReadableStore)
+    # Same bucket -> same wrapped instance (cached by bucket).
+    s2 = cache.get_store(provider="PODAAC", url="s3://my-bucket/other.nc")
+    assert s is s2
+
+
+def test_store_cache_with_cache_dir_wraps_https_store(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    from nasa_virtual_zarr_survey.auth import StoreCache
+    from nasa_virtual_zarr_survey.cache import DiskCachingReadableStore
+
+    assert isinstance(tmp_path, Path)
+
+    class FakeAuth:
+        token = {"access_token": "BEARER_XYZ"}
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
+    )
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.auth.earthaccess.__auth__", FakeAuth, raising=False
+    )
+
+    class FakeHTTPStore:
+        @classmethod
+        def from_url(cls, url, *, client_options=None, **_):  # type: ignore[no-untyped-def]
+            inst = cls()
+            inst.url = url
+            return inst
+
+    monkeypatch.setattr("obstore.store.HTTPStore", FakeHTTPStore)
+
+    cache = StoreCache(access="external", cache_dir=tmp_path, cache_max_bytes=1_000_000)
+    s = cache.get_store(provider="PODAAC", url="https://h.example/path.nc")
+    assert isinstance(s, DiskCachingReadableStore)
+    # Same host -> same wrapped instance.
+    s2 = cache.get_store(provider="PODAAC", url="https://h.example/other.nc")
+    assert s is s2

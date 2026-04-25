@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
 from urllib.parse import urlparse
 
 import earthaccess
+
+from nasa_virtual_zarr_survey.cache import CacheSizeTracker, DiskCachingReadableStore
 
 if TYPE_CHECKING:
     from obstore.store import HTTPStore, S3Store
@@ -92,13 +95,29 @@ def _build_s3_store(creds: dict[str, str], bucket: str) -> S3Store:
 
 @dataclass
 class StoreCache:
-    """Unified dispatcher for 'direct' (S3) and 'external' (HTTPS) access modes."""
+    """Unified dispatcher for 'direct' (S3) and 'external' (HTTPS) access modes.
+
+    Optionally wraps every returned store in ``DiskCachingReadableStore`` so
+    fetched bytes persist across runs.
+    """
 
     access: Literal["direct", "external"] = "direct"
+    cache_dir: Path | None = None
+    cache_max_bytes: int = 50 * 1024**3
     _s3: DAACStoreCache = field(default_factory=DAACStoreCache)
     _http: dict[str, HTTPStore] = field(default_factory=dict)
+    _wrapped: dict[tuple[str, str], DiskCachingReadableStore] = field(
+        default_factory=dict
+    )
     _token: str | None = None
     _logged_in: bool = False
+    _tracker: CacheSizeTracker | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        if self.cache_dir is not None:
+            self._tracker = CacheSizeTracker(
+                self.cache_dir, max_bytes=self.cache_max_bytes
+            )
 
     def _ensure_login(self) -> None:
         if not self._logged_in:
@@ -113,29 +132,62 @@ class StoreCache:
                     "earthaccess.login() did not produce a bearer token; check ~/.netrc"
                 )
 
-    def get_store(self, *, provider: str, url: str) -> S3Store | HTTPStore:
+    def get_store(
+        self, *, provider: str, url: str
+    ) -> "S3Store | HTTPStore | DiskCachingReadableStore":
         """Return a store capable of reading `url` for the given CMR `provider`."""
         parsed = urlparse(url)
         if self.access == "direct":
+            if parsed.scheme != "s3":
+                raise AuthUnavailable(
+                    f"--access direct expects s3:// URLs, got {url!r}. "
+                    "The granules table likely has stale URLs from a previous "
+                    "--access external sample. Delete output/survey.duckdb and "
+                    "re-run sample."
+                )
             # For S3 URLs the bucket is the netloc.
             bucket = parsed.netloc
             if not bucket:
                 raise AuthUnavailable(f"cannot extract S3 bucket from url {url!r}")
-            return self._s3.get_store(provider=provider, bucket=bucket)
+            inner = self._s3.get_store(provider=provider, bucket=bucket)
+            return self._maybe_wrap(("s3", bucket), inner, prefix=f"s3://{bucket}")
 
-        # external: one HTTPStore per hostname, with Authorization as a default header.
+        if parsed.scheme not in ("http", "https"):
+            raise AuthUnavailable(
+                f"--access external expects http(s):// URLs, got {url!r}. "
+                "The granules table likely has stale URLs from a previous "
+                "--access direct sample. Delete output/survey.duckdb and "
+                "re-run sample with --access external."
+            )
+
+        # external: HTTPStore per host.
         key = f"{parsed.scheme}://{parsed.netloc}"
         store = self._http.get(key)
-        if store is not None:
-            return store
-        self._ensure_login()
-        from obstore.store import HTTPStore
+        if store is None:
+            self._ensure_login()
+            from obstore.store import HTTPStore
 
-        store = HTTPStore.from_url(
-            key,
-            client_options={
-                "default_headers": {"Authorization": f"Bearer {self._token}"},
-            },
-        )
-        self._http[key] = store
-        return store
+            store = HTTPStore.from_url(
+                key,
+                client_options={
+                    "default_headers": {"Authorization": f"Bearer {self._token}"},
+                },
+            )
+            self._http[key] = store
+        return self._maybe_wrap((parsed.scheme, parsed.netloc), store, prefix=key)
+
+    def _maybe_wrap(
+        self,
+        wrap_key: tuple[str, str],
+        inner,  # type: ignore[no-untyped-def]
+        *,
+        prefix: str,
+    ):  # type: ignore[no-untyped-def]
+        if self._tracker is None:
+            return inner
+        existing = self._wrapped.get(wrap_key)
+        if existing is not None:
+            return existing
+        wrapped = DiskCachingReadableStore(inner, prefix=prefix, tracker=self._tracker)
+        self._wrapped[wrap_key] = wrapped
+        return wrapped

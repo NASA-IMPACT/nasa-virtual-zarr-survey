@@ -8,10 +8,13 @@ that reproduces the error outside the survey harness.
 from __future__ import annotations
 
 import textwrap
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
+
+from nasa_virtual_zarr_survey.overrides import CollectionOverride
 
 
 @dataclass
@@ -81,7 +84,17 @@ def _indent(text: str, prefix: str = "    ") -> str:
     return textwrap.indent(text, prefix)
 
 
-def generate_script(row: FailureRow) -> str:  # noqa: C901  (acceptable complexity)
+def _render_kwargs(kw: Mapping[str, Any]) -> str:
+    """Render a kwargs dict as the inside of a function call: 'a=1, b="x"'."""
+    if not kw:
+        return ""
+    return ", ".join(f"{k}={v!r}" for k, v in kw.items())
+
+
+def generate_script(  # noqa: C901  (acceptable complexity)
+    row: FailureRow,
+    override: CollectionOverride | None = None,
+) -> str:
     """Render a self-contained Python script that reproduces *row*'s failure."""
     url = row.data_url
     is_s3 = url.startswith("s3://")
@@ -149,6 +162,14 @@ def generate_script(row: FailureRow) -> str:  # noqa: C901  (acceptable complexi
     registry_key = _registry_key(url)
     script_name = f"repro_{row.granule_concept_id}.py"
 
+    ov = override or CollectionOverride()
+    parser_kwargs_str = _render_kwargs(ov.parser_kwargs)
+    if parser_kwargs_str:
+        parser_construction = parser_construction.replace(
+            "()", f"({parser_kwargs_str})"
+        )
+    dataset_kwargs_str = _render_kwargs(ov.dataset_kwargs)
+
     # ------------------------------------------------------------------
     # Docstring
     # ------------------------------------------------------------------
@@ -210,7 +231,7 @@ def generate_script(row: FailureRow) -> str:  # noqa: C901  (acceptable complexi
         )
 
     # ------------------------------------------------------------------
-    # Main body
+    # Main body (attempt phase)
     # ------------------------------------------------------------------
     if row.phase == "parse":
         call_lines = (
@@ -220,21 +241,51 @@ def generate_script(row: FailureRow) -> str:  # noqa: C901  (acceptable complexi
     else:
         call_lines = (
             "    manifest_store = parser(url=url, registry=registry)\n"
-            "    ds = manifest_store.to_virtual_dataset()\n"
+            f"    ds = manifest_store.to_virtual_dataset({dataset_kwargs_str})\n"
             '    print("Dataset construction succeeded:")\n'
             "    print(ds)\n"
         )
 
     body = (
         f"def main() -> None:\n"
+        f"    import argparse\n"
+        f"    from pathlib import Path\n"
+        f"\n"
+        f"    parser_cli = argparse.ArgumentParser(description=__doc__)\n"
+        f"    mode = parser_cli.add_mutually_exclusive_group()\n"
+        f'    mode.add_argument("--inspect", action="store_true", help="structure dump only")\n'
+        f'    mode.add_argument("--attempt", action="store_true", help="virtualization attempt only")\n'
+        f'    parser_cli.add_argument("--cache", action="store_true", help="enable on-disk granule cache")\n'
+        f'    parser_cli.add_argument("--cache-dir", type=Path, default=Path.home() / ".cache" / "nasa-virtual-zarr-survey")\n'
+        f'    parser_cli.add_argument("--cache-max-size", type=int, default=50 * 1024**3, help="bytes")\n'
+        f"    args = parser_cli.parse_args()\n"
+        f"    do_inspect = not args.attempt\n"
+        f"    do_attempt = not args.inspect\n"
+        f"\n"
         f'    earthaccess.login(strategy="netrc")\n'
         f"    {store_construction}\n"
         f"\n"
+        f"    if args.cache:\n"
+        f"        from nasa_virtual_zarr_survey.cache import (\n"
+        f"            CacheSizeTracker,\n"
+        f"            DiskCachingReadableStore,\n"
+        f"        )\n"
+        f"\n"
+        f"        tracker = CacheSizeTracker(args.cache_dir, max_bytes=args.cache_max_size)\n"
+        f"        store = DiskCachingReadableStore(\n"
+        f"            store, prefix={registry_key!r}, tracker=tracker\n"
+        f"        )\n"
+        f"\n"
         f"    url = {url!r}\n"
         f"    registry = ObjectStoreRegistry({{{registry_key!r}: store}})\n"
+        f"    family = FormatFamily({row.format_family!r})\n"
         f"\n"
-        f"    parser = {parser_construction}\n"
-        f"{call_lines}"
+        f"    if do_inspect:\n"
+        f"        inspect_url(url=url, family=family, store=store)\n"
+        f"\n"
+        f"    if do_attempt:\n"
+        f"        parser = {parser_construction}\n"
+        f"{textwrap.indent(call_lines, '    ')}"
         f"\n"
         f"\n"
         f'if __name__ == "__main__":\n'
@@ -248,6 +299,8 @@ def generate_script(row: FailureRow) -> str:  # noqa: C901  (acceptable complexi
         + "import earthaccess\n"
         + f"{store_import}\n"
         + "from obspec_utils.registry import ObjectStoreRegistry\n"
+        + "from nasa_virtual_zarr_survey.formats import FormatFamily\n"
+        + "from nasa_virtual_zarr_survey.inspect import inspect_url\n"
         + f"{parser_import}\n"
         + "\n"
         + "\n"

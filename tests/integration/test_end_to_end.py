@@ -39,4 +39,6 @@ def test_pilot_three_collections(edl_available, tmp_path):
     run_report(db, results, out)
 
     assert out.exists()
-    assert "Verdicts" in out.read_text()
+    text = out.read_text()
+    assert "## Overview" in text
+    assert "Per-collection verdicts" in text

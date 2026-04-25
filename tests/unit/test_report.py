@@ -447,7 +447,7 @@ def test_render_report_contains_counts(tmp_db_path, tmp_results_dir, tmp_path):
     assert "Phase 3: Parsability" in text
     assert "Phase 4a: Datasetability" in text
     assert "Phase 4b: Datatreeability" in text
-    assert "Phase 5: Virtual Store Feasibility" in text
+    assert "Phase 5: Cubability" in text
     assert "all_pass" in text
     assert "PODAAC" in text
     assert "NetCDF4" in text

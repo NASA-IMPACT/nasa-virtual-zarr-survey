@@ -81,7 +81,7 @@ See the [design document](design/architecture.md) for the full walk-through. Sho
 1. `discover` enumerates CMR collections into DuckDB.
 2. `sample` picks up to N granules per collection, stratified across each collection's temporal extent.
 3. `attempt` runs Phase 3 (Parsability) and Phase 4 (Datasetability) on each granule, writing results to partitioned Parquet.
-4. `report` rolls up verdicts, runs Phase 5 (Virtual Store Feasibility / Cubability) on fingerprints, applies the taxonomy classifier, and renders `report.md`.
+4. `report` rolls up verdicts, runs Phase 5 (Cubability) on fingerprints, applies the taxonomy classifier, and renders `report.md`.
 
 ## Common extension tasks
 
@@ -106,6 +106,54 @@ After a pilot run, open `output/report.md` and scroll to "Top 20 Raw Errors in `
 1. Add a branch in `auth.StoreCache.get_store` plus any store construction the new mode needs.
 2. Expose it through the `--access` `click.Choice` in `__main__.py` for the `sample`, `attempt`, and `pilot` commands.
 3. `sample._extract_url` already forwards the mode to `earthaccess.DataGranule.data_links(access=...)`, so usually no change is needed there.
+
+## Inspecting the local cache
+
+When `--cache` is enabled, fetched granule bytes are persisted under `~/.cache/nasa-virtual-zarr-survey/` (or whatever `--cache-dir` was set to). The layout is:
+
+```
+<cache_dir>/<scheme>/<host>/<sha256(url)>
+```
+
+`<scheme>` and `<host>` come from `urlparse(url)`, and the file name is the SHA-256 of the granule's data URL exactly as stored in `granules.data_url`. Listing a single bucket or host shows every cached entry for that target:
+
+```bash
+ls -lh ~/.cache/nasa-virtual-zarr-survey/s3/podaac-ops-cumulus-protected/
+```
+
+To find the cache path for a specific granule, look up its URL in the DuckDB and hash it:
+
+```bash
+url=$(duckdb output/survey.duckdb -noheader -list -s \
+  "SELECT data_url FROM granules WHERE granule_concept_id = 'G123-XYZ';")
+
+python3 -c "
+import sys, hashlib
+from urllib.parse import urlparse
+url = sys.argv[1]
+p = urlparse(url)
+print(f'~/.cache/nasa-virtual-zarr-survey/{p.scheme}/{p.netloc}/{hashlib.sha256(url.encode()).hexdigest()}')
+" "$url"
+```
+
+To go the other direction, given a cache file name, find the granule by hashing every URL in the `granules` table and matching:
+
+```bash
+duckdb output/survey.duckdb -noheader -list -s \
+  "SELECT granule_concept_id, data_url FROM granules;" \
+  | python3 -c "
+import sys, hashlib
+target = sys.argv[1]
+for line in sys.stdin:
+    gid, _, url = line.partition('|')
+    if hashlib.sha256(url.strip().encode()).hexdigest() == target:
+        print(gid, url.strip())
+" "<sha256-from-filename>"
+```
+
+To clear the cache, delete the directory: `rm -rf ~/.cache/nasa-virtual-zarr-survey/`. The total size is bounded by the `--cache-max-size` cap; once exceeded, the survey logs a warning once per process and falls through to direct fetches without caching new granules. Existing cache entries continue to serve reads.
+
+See the "Local granule cache" section of `docs/design/architecture.md` for the full layout and trade-offs.
 
 ## Code style
 

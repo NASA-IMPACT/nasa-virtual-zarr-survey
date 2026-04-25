@@ -185,6 +185,8 @@ For each array-like collection, 5 granules are sampled.
 
 The `stratified` flag propagates to the Parquet log so the final report can distinguish genuine temporal coverage from fallback sampling.
 
+Each granule row also records the `access_mode` it was sampled under (`direct` or `external`). On a re-run with a different `--access`, `run_sample` deletes existing rows whose mode does not match and re-samples those collections so the URL scheme in the granules table always agrees with the requested mode. A warning is logged listing the affected collections so the operator knows existing rows in `output/results/*.parquet` still reference the old URLs.
+
 ### Rate-limiting and politeness
 
 No explicit rate limiting. `discover` issues O(1) CMR calls (one paged `search_datasets`, or N/100 concept-id batches in top-N mode). `sample` issues O(collections × 5) granule-search calls. `attempt` hits S3 / DAAC HTTPS gateways directly and does not touch CMR. A full survey is ~10k attempts and runs in ~1 workday.
@@ -274,6 +276,179 @@ Two modes are supported end-to-end. `--access` plumbs through `sample` (which UR
 
 Both stores raise `AuthUnavailable` on missing credentials / tokens; the caller records the failure as a per-granule `AuthUnavailable` result rather than aborting.
 
+## Local granule cache
+
+Re-running `attempt` after a VirtualiZarr bump, a taxonomy refinement, or a new override means re-fetching bytes for every sampled granule. The same applies to `repro` iteration on a single granule's parser kwargs and to `pilot --sample N` while developing taxonomy rules. Most failures the survey records are properties of the granule (parser bug, malformed file, unsupported codec) rather than the network path, so caching fetched bytes between iterations does not mask the signal.
+
+A new module `cache.py` provides `DiskCachingReadableStore`, an `obspec` wrapper that persists fetched bytes to `<cache_dir>/<scheme>/<host>/<sha256(scheme://host/path)>`. `auth.StoreCache.get_store` wraps every constructed store in it when caching is enabled, so `_build_registry` and the rest of the pipeline are unchanged. Three CLI flags on `attempt`, `pilot`, and generated repro scripts:
+
+- `--cache / --no-cache` — default off. The cache silently consumes disk; opt-in.
+- `--cache-dir PATH` — default `~/.cache/nasa-virtual-zarr-survey/`. Honors `NASA_VZ_SURVEY_CACHE_DIR`.
+- `--cache-max-size SIZE` — default `50GB`, accepts human-readable strings (`50GB`, `2.5TB`).
+
+### Cache key
+
+`sha256(scheme://host/path)`. Stable for the survey's purposes: granule URLs do not change for a given concept ID across runs. `direct` and `external` access modes produce different URLs for the same logical granule and so end up with different cache entries — correct, since DAAC HTTPS gateways often redirect to presigned S3 and the bytes returned can differ.
+
+### Data flow
+
+A read through a wrapped store:
+
+1. Caller asks `wrapped.get(path)` or `wrapped.get_range(path, start, end)`.
+2. Compute `local_path = cache_dir / scheme / host / sha256(scheme://host/path)`.
+3. **Cache hit** (file exists): serve from the local file, no network.
+4. **Cache miss**:
+   - `head(path)` against the underlying store to learn the object size.
+   - If `current_size + object_size <= max_bytes`: fetch the full object via `store.get(path)`, write atomically (`*.tmp` + `os.replace`), update the in-memory size counter under a `threading.Lock`, then serve the read from disk.
+   - If the cap would be exceeded: log a warning once per process, fall through to the underlying store without caching. Survey continues.
+
+The `head`-before-fetch costs one extra round trip per cache miss but is the only way to honor the cap without speculatively writing then deleting. On `DiskCachingReadableStore` init, the cache dir is walked once to compute current size from disk — authoritative, slightly slow on a 50 GB cache, runs once per process.
+
+### Cap warning
+
+Printed once per process to stderr when the cap is first exceeded:
+
+```
+[cache] cache size 49.8 GB exceeds cap 50.0 GB;
+        further granules will not be cached.
+        clear the cache with `rm -rf <cache_dir>`
+        or pass --cache-max-size to raise the cap.
+```
+
+`<cache_dir>` is interpolated from the actual `--cache-dir` so the message is copy-pasteable.
+
+### Failure modes
+
+- **Cache dir not writable** (read-only FS, permission error on first write): log once, fall through to direct fetches. Survey still completes, uncached.
+- **Disk full mid-write**: catch `OSError`, delete the partial `*.tmp`, log warning, fall through.
+- **Underlying store error during a cache-miss fetch**: propagated unchanged. The wrapper is transparent — no negative caching.
+- **Concurrent writers** across worktrees: atomic `*.tmp` + `os.replace` ensures readers always see a complete file or none. The in-process `Lock` covers size accounting only.
+- **Stale `.tmp`** from a crashed prior run: ignored on read, overwritten on next write.
+
+### Caveats
+
+- *First-fetch timeout interaction.* With `--cache` on, the first read of a granule downloads the full file even when the parser only needs a few MB. That fetch happens inside the parse phase under `--timeout` (default 60 s), so granules whose full size is hundreds of MB on a slow link can newly time out. Mitigation: raise `--timeout` for the first cached run; subsequent runs serve from disk.
+- *First-run wall time.* The first cached run downloads more bytes than an uncached run; the break-even is iteration two.
+- *Sequential safety only.* Atomic rename + in-process lock is sufficient for single-process runs and occasional worktree overlap, not a future ProcessPool.
+
+### Non-goals
+
+- Range-level caching. v1 is whole-granule; if a parser only reads 5 MB of a 1 GB HDF5 file, v1 still downloads the full GB on first miss. Range-level caching can come later if profiling shows giant files dominate.
+- Negative caching. Failed responses (403, 404, timeouts) are never written.
+- Auto-eviction. Append-only; the operator clears the cache when the cap warning fires.
+- Cross-process locking. Atomic writes are sufficient for the workloads we care about.
+- Caching at non-granule layers (CMR JSON responses, EDL credentials). Cheap relative to granule fetches and out of scope.
+- Built-in `cache info` / `cache clear` subcommands. `du -sh` and `rm -rf` against `<cache_dir>` suffice.
+
+## Per-collection overrides
+
+`attempt.py` constructs every parser with default arguments and calls `manifest_store.to_virtual_dataset()` and `to_virtual_datatree()` with no kwargs. Many CMR collections that fail under that naive call shape would parse cleanly with the right kwargs — `group=` for an HDF5 file whose science variables live under a sub-group, `drop_variables=` to skip a single variable with a compound dtype, or `skip_dataset = true` for a collection whose dimension structure cannot be flattened. Without an override layer, the survey re-records the same failure on every run and the institutional knowledge ("collection C123 needs `group='science'`") lives only in operator memory.
+
+The override mechanism lets an operator run the survey naively, debug a failure with `repro`, and record the fix in a checked-in artifact that future `attempt` runs pick up automatically. The artifact is diff-able and PR-reviewable so it doubles as the survey's "lessons learned" register.
+
+### Configuration file
+
+`config/collection_overrides.toml`, checked in. Each top-level table is keyed by CMR collection concept ID:
+
+```toml
+[C1996881146-POCLOUD]
+parser = { group = "science", drop_variables = ["status_flag"] }
+dataset = { loadable_variables = [] }
+notes = "Top-level group has no array vars; descend to /science."
+
+[C2208418228-POCLOUD]
+skip_dataset = true
+notes = "to_virtual_dataset raises ConflictingDimSizes; datatree path works."
+
+[C2746966926-LPCLOUD]
+skip_dataset = true
+skip_datatree = true
+notes = "Tracked: https://github.com/zarr-developers/VirtualiZarr/issues/1234"
+```
+
+### Validation rules at load time
+
+Loaded eagerly at the top of `run_attempt`, so a malformed entry fails the run before any granule is touched.
+
+1. Top-level keys match `^C\d+-[A-Z]+$`.
+2. Per-collection sub-keys limited to: `parser`, `dataset`, `datatree`, `skip_dataset`, `skip_datatree`, `notes`. Anything else rejected.
+3. `parser` / `dataset` / `datatree` values must be inline tables (or absent).
+4. `parser` kwarg names checked against the dispatched parser's `__init__` signature for that collection's format family. A `group=` on a `NoParserAvailable` family is an error.
+5. `dataset` kwargs validated against `ManifestStore.to_virtual_dataset`'s signature; `datatree` against `to_virtual_datatree`'s.
+6. `skip_dataset = true` combined with `dataset = {...}` is an error (contradictory). Same for datatree.
+7. `notes` is required on any non-empty entry — a one-line rationale for review.
+
+`nasa-virtual-zarr-survey validate-overrides` runs the rules standalone and prints `OK` or the first error with a useful pointer.
+
+### Module layout
+
+`overrides.py` is the only new code surface for the mechanism:
+
+- `OverrideRegistry.from_toml(path) -> OverrideRegistry` parses and validates.
+- `registry.for_collection(concept_id) -> CollectionOverride` returns an immutable record carrying `parser_kwargs`, `dataset_kwargs`, `datatree_kwargs`, `skip_dataset`, `skip_datatree`. A miss returns the empty default.
+- `apply_to_parser(parser_cls, kwargs)`, `apply_to_dataset_call(manifest_store, kwargs)`, `apply_to_datatree_call(manifest_store, kwargs)` are used by both `attempt_one` and the repro renderer so application logic lives in one place.
+
+`attempt_one` accepts `override: CollectionOverride | None = None` (defaulting to no-op); `run_attempt` loads the registry once at startup and passes the matching override into each call. The worker thread and timeout logic are untouched.
+
+### Effect on results
+
+`AttemptResult` and the Parquet schema gain a single new column, `override_applied: bool`, true when any kwarg or skip flag was used. The report distinguishes "succeeded naively" from "succeeded with an override" — different signals to a downstream reader. Override kwargs themselves are *not* serialized into Parquet; the TOML file plus the git SHA at run time are the canonical record.
+
+### Non-goals
+
+- Per-granule overrides. The granularity is collection only.
+- A CLI to edit the override file. TOML is short and structured; a CLI for "set a key in a TOML file" is friction.
+- Backporting overrides to existing failed result rows. A re-run after editing the file is the supported workflow.
+
+## Repro and structural inspection
+
+`repro.py` generates a self-contained Python script per failing granule that reproduces the failing operation against the same URL, parser, and kwargs the survey used. The renderer reads `collection_overrides.toml` and bakes any existing overrides into the script, so the repro mirrors current attempt behavior; `--no-overrides` forces the script to mirror an unconfigured run, useful when first investigating a regression.
+
+When run, the generated script first dumps the file's structure *before* attempting the failing operation. This turns each repro into a datasheet for the granule and is the largest investment in debuggability the design makes. The new module `inspect.py` dispatches per `FormatFamily`:
+
+- **HDF5 / NetCDF4** — `h5py` walk: per group, list datasets with `shape`, `dtype`, `chunks`, `compression`, `compression_opts`, attached dim scales, fillvalue, top 10 attrs.
+- **Zarr** — open via `zarr-python`, dump `zarr.json` hierarchy: arrays with shape/dtype/chunks/codecs and group attrs.
+- **NetCDF3** — `netCDF4` (or `scipy.io.netcdf`) for dims, vars, and attrs.
+- **GeoTIFF / COG** — `tifffile`: IFDs, predictor, compression, tile/strip layout, photometric, GeoKeys.
+- **DMR++** — parse the XML and dump shape/dtype/chunk/filter info.
+- **FITS** — `astropy.io.fits.info()` plus per-HDU header extract.
+
+Two principles: the inspector reads through the same `obstore` `S3Store` / `HTTPStore` the parser uses (no separate auth path), and output is human-readable text *and* machine-parseable — a JSON blob block at the end of stdout, fenced with `<<<INSPECT_JSON_BEGIN>>>` ... `<<<INSPECT_JSON_END>>>` sentinels for downstream tooling.
+
+Generated repro scripts accept a small `argparse` interface:
+
+```text
+uv run python repro_G456.py             # default: inspect, then attempt
+uv run python repro_G456.py --inspect   # structure dump only
+uv run python repro_G456.py --attempt   # virtualization only
+```
+
+`--inspect` is useful when virtualization hangs, times out, or 403s. `--attempt` is useful when iterating quickly on kwargs after reading the structure once.
+
+### The debug loop
+
+1. Naive `attempt` records `C123-DAAC` failing with e.g. `CONFLICTING_DIM_SIZES`, `override_applied = false`.
+2. `nasa-virtual-zarr-survey repro C123-DAAC` emits `repro_G456.py` with current overrides baked in (or `--no-overrides`).
+3. Run the script. Structure dump prints, then the failing operation. Edit kwargs in the script until something works, or conclude it is an upstream bug.
+4. Hand-edit `config/collection_overrides.toml`; add a section for `C123-DAAC` with `notes` linking to the repro filename or upstream issue.
+5. `validate-overrides` to confirm.
+6. Re-run scoped: `attempt --collection C123-DAAC` (the per-collection equivalent of `--daac`). Existing `_pending_granules` logic skips already-attempted granules, so a re-attempt requires removing that collection's rows from the Parquet log first — the manual operation is `find output/results/ -name '*.parquet' -delete` for a small survey.
+7. Full re-run records `override_applied = true`.
+
+### Bucket triage
+
+The inspector is sufficient for hand-debugging the High and Medium failure buckets:
+
+| Category | Bucket | Fix kind | Inspector helps? |
+|---|---|---|---|
+| High | `GROUP_STRUCTURE` | `parser.group=` | Yes — group name is in the dump. |
+| High | `CONFLICTING_DIM_SIZES` | `skip_dataset` or deeper `parser.group=` | Yes — group dim shapes visible. |
+| Medium | `COMPOUND_DTYPE` / `STRING_DTYPE` | `drop_variables=[offending]` | Yes — dtype column flags the offender. |
+| Medium | `UNDEFINED_FILL_VALUE` | `drop_variables=[offending]` | Yes — fillvalue column flags the offender. |
+| Medium | `UNSUPPORTED_CODEC` / `UNSUPPORTED_FILTER` | `drop_variables=` workaround OR upstream issue | Partial — inspector names the codec; real fix is upstream. |
+| Issue-only | `SHARDING_UNSUPPORTED`, `VARIABLE_CHUNKS`, `NON_STANDARD_HDF5`, `AMBIGUOUS_ARRAY_TRUTH` | Upstream issue | Inspector helps draft the issue body; no kwarg fix exists. |
+| Low | `TIMEOUT`, `FORBIDDEN`, `NETWORK_ERROR`, `NO_PARSER`, `CANT_OPEN_FILE`, `SAMPLE_INVALID`, `AUTH_UNAVAILABLE` | Environmental or upstream | Inspector adds nothing. |
+
 ## Data model
 
 ### DuckDB (`output/survey.duckdb`)
@@ -303,6 +478,7 @@ CREATE TABLE granules (
   size_bytes            BIGINT,
   sampled_at            TIMESTAMP,
   stratified            BOOLEAN,
+  access_mode           TEXT NOT NULL,  -- 'direct' | 'external'
   PRIMARY KEY (collection_concept_id, granule_concept_id)
 );
 ```
@@ -373,7 +549,7 @@ On the first run, `read_parquet` raises (no files yet); a `try/except` falls bac
 
 ## CLI
 
-Click-based. Subcommands: `version`, `discover`, `sample`, `attempt`, `report`, `pilot`, plus a `repro` helper that minimizes any single failure into a runnable script.
+Click-based. Subcommands: `version`, `discover`, `sample`, `attempt`, `report`, `pilot`, `repro` (minimizes any single failure into a runnable script), and `validate-overrides` (loads `config/collection_overrides.toml` and prints `OK` or the first validation error).
 
 Common flags across work phases:
 
@@ -382,6 +558,7 @@ Common flags across work phases:
 - `--out PATH` — report output (default `docs/results/index.md`)
 - `--access {direct,external}` — granule access mode (default `direct`)
 - `--daac NAME` — restrict to one DAAC
+- `--collection CONCEPT_ID` — restrict to one collection (per-collection equivalent of `--daac`)
 
 Discovery-specific:
 
@@ -392,6 +569,17 @@ Attempt-specific:
 
 - `--timeout SECONDS` (default 60)
 - `--shard-size ROWS` (default 500)
+
+Cache-related, on `attempt`, `pilot`, and generated repro scripts:
+
+- `--cache / --no-cache` — default off
+- `--cache-dir PATH` — default `~/.cache/nasa-virtual-zarr-survey/` (also `NASA_VZ_SURVEY_CACHE_DIR`)
+- `--cache-max-size SIZE` — default `50GB`, accepts human-readable strings
+
+Repro-specific (on the `repro` subcommand and the generated scripts):
+
+- `--no-overrides` — generate / run as if `collection_overrides.toml` were empty
+- `--inspect` / `--attempt` — on the generated script, run only the structure dump or only the virtualization (mutually exclusive; default runs both)
 
 The `pilot` subcommand runs all phases end-to-end on a small sample (`--sample N`, default 50) so users can review raw errors and refine `taxonomy.py` before committing to a full survey.
 
@@ -404,10 +592,15 @@ The `pilot` subcommand runs all phases end-to-end on a small sample (`--sample N
 Every module has mocked tests for its public API. Notable suites:
 
 - `test_taxonomy.py` — table-driven, one case per hypothesized bucket; grows as the pilot reveals new patterns.
-- `test_auth.py` — both modes mocked at `earthaccess`, `obstore.store.S3Store`, and `HTTPStore`. Does not exercise real S3 or real EDL.
+- `test_auth.py` — both modes mocked at `earthaccess`, `obstore.store.S3Store`, and `HTTPStore`. Does not exercise real S3 or real EDL. Also covers `StoreCache(cache_dir=...)` wrapping returned stores in `DiskCachingReadableStore`.
 - `test_attempt.py::test_run_attempt_resumes` — pre-populates a Parquet shard, verifies the resume check skips already-attempted granules.
+- `test_attempt.py` (cache + override paths) — second-run with `--cache --cache-dir` issues zero network calls to the underlying store; `override_applied` is recorded correctly when an override is matched.
 - `test_sample.py` — both the stratified-bins branch and the no-temporal-extent fallback.
 - `test_cubability.py` — the seven-step feasibility check, with fixtures for each failing-step case.
+- `test_overrides.py` — round-trips a representative TOML; rejects typo concept IDs, hallucinated kwarg names, contradictory `skip_dataset` + `dataset = {...}`, unknown top-level keys, missing `notes`. `for_collection` returns empty defaults for unknown IDs.
+- `test_inspect.py` — tiny generated fixtures in `tests/fixtures/inspect/` (HDF5, Zarr v3, NetCDF3, GeoTIFF, DMR++); asserts the dumped tree contains expected keys and snapshots the fenced JSON blob portion.
+- `test_cache.py` — round-trip `get` then `get` again serves from disk; `get_range` after a full `get` serves from cache; cap exceeded → no file written, fall through, warning logged once; two `DiskCachingReadableStore` instances against the same dir share state; atomic write under simulated crash leaves only `*.tmp`; underlying store error during a cache-miss fetch leaves no `*.tmp` and propagates.
+- `test_repro.py` — generated scripts pass `python -m py_compile`, contain `argparse` and the mode dispatch, and bake the right kwargs in when overrides exist for the collection. End-to-end: write a TOML override, generate a repro, exec it against a local fixture URL, assert `--inspect` and `--attempt` both work.
 
 ### Integration (`tests/integration/`, opt-in)
 

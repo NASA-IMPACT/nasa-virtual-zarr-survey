@@ -184,6 +184,45 @@ def test_generate_script_phase_labels():
     assert "Datasetability (Phase 4)" in generate_script(dataset_row)
 
 
+def test_generated_script_accepts_cache_flags() -> None:
+    from nasa_virtual_zarr_survey.repro import FailureRow, generate_script
+
+    row = FailureRow(
+        collection_concept_id="C123-DAAC",
+        granule_concept_id="G456-DAAC",
+        daac="DAAC",
+        provider="POCLOUD",
+        format_family="NETCDF4",
+        parser="HDFParser",
+        data_url="s3://bucket/path/file.nc",
+        phase="parse",
+        error_type="OSError",
+        error_message="boom",
+        error_traceback=None,
+        bucket="CANT_OPEN_FILE",
+    )
+    script = generate_script(row)
+    # Argparse for cache flags is present.
+    assert "--cache" in script
+    assert "--cache-dir" in script
+    assert "--cache-max-size" in script
+    # Wrapper import only present when cache flag triggers — but we always emit
+    # the import so the script type-checks.
+    assert "DiskCachingReadableStore" in script
+    # Script compiles.
+    import py_compile
+    import tempfile
+    from pathlib import Path as _P
+
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+        f.write(script)
+        path = _P(f.name)
+    try:
+        py_compile.compile(str(path), doraise=True)
+    finally:
+        path.unlink()
+
+
 # ---------------------------------------------------------------------------
 # find_failures tests
 # ---------------------------------------------------------------------------
@@ -203,11 +242,11 @@ def test_find_failures_by_collection(tmp_db_path: Path, tmp_results_dir: Path):
     # Also insert granule rows so data_url can be joined.
     now = datetime.now(timezone.utc)
     con.execute(
-        "INSERT INTO granules VALUES ('C1', 'G0', 'https://ex/good.nc', 0, NULL, ?, true)",
+        "INSERT INTO granules VALUES ('C1', 'G0', 'https://ex/good.nc', 0, NULL, ?, true, 'external')",
         [now],
     )
     con.execute(
-        "INSERT INTO granules VALUES ('C1', 'G1', 'https://ex/bad.nc', 1, NULL, ?, true)",
+        "INSERT INTO granules VALUES ('C1', 'G1', 'https://ex/bad.nc', 1, NULL, ?, true, 'external')",
         [now],
     )
     con.close()
@@ -242,6 +281,7 @@ def test_find_failures_by_collection(tmp_db_path: Path, tmp_results_dir: Path):
         cols["datatree_error_traceback"].append(None)
         cols["datatree_duration_s"].append(0.0)
         cols["success"].append(pass_)
+        cols["override_applied"].append(False)
         cols["timed_out"].append(False)
         cols["timed_out_phase"].append(None)
         cols["duration_s"].append(0.2)
@@ -271,7 +311,7 @@ def test_find_failures_by_granule(tmp_db_path: Path, tmp_results_dir: Path):
         "('C2', 'n', '1', 'NSIDC', 'NSIDC', 'HDF5', 'HDF5', 1, NULL, NULL, 'L2', NULL, now())"
     )
     con.execute(
-        "INSERT INTO granules VALUES ('C2', 'G-target', 's3://bucket/file.h5', 0, NULL, ?, true)",
+        "INSERT INTO granules VALUES ('C2', 'G-target', 's3://bucket/file.h5', 0, NULL, ?, true, 'direct')",
         [now],
     )
     con.close()
@@ -302,6 +342,7 @@ def test_find_failures_by_granule(tmp_db_path: Path, tmp_results_dir: Path):
     cols["datatree_error_traceback"].append(None)
     cols["datatree_duration_s"].append(0.0)
     cols["success"].append(False)
+    cols["override_applied"].append(False)
     cols["timed_out"].append(False)
     cols["timed_out_phase"].append(None)
     cols["duration_s"].append(0.5)
@@ -331,7 +372,7 @@ def test_find_failures_by_bucket(tmp_db_path: Path, tmp_results_dir: Path):
     )
     for i in range(2):
         con.execute(
-            f"INSERT INTO granules VALUES ('C3', 'G3-{i}', 'https://ex/file{i}.nc', {i}, NULL, ?, true)",
+            f"INSERT INTO granules VALUES ('C3', 'G3-{i}', 'https://ex/file{i}.nc', {i}, NULL, ?, true, 'external')",
             [now],
         )
     con.close()
@@ -368,6 +409,7 @@ def test_find_failures_by_bucket(tmp_db_path: Path, tmp_results_dir: Path):
         cols["datatree_error_traceback"].append(None)
         cols["datatree_duration_s"].append(0.0)
         cols["success"].append(False)
+        cols["override_applied"].append(False)
         cols["timed_out"].append(False)
         cols["timed_out_phase"].append(None)
         cols["duration_s"].append(0.1)
@@ -405,7 +447,7 @@ def test_find_failures_phase_filter(tmp_db_path: Path, tmp_results_dir: Path):
         "('C4', 'n', '1', 'ORNL', 'ORNL', 'NetCDF4', 'NetCDF-4', 1, NULL, NULL, 'L4', NULL, now())"
     )
     con.execute(
-        "INSERT INTO granules VALUES ('C4', 'G4', 'https://ex/f.nc', 0, NULL, ?, true)",
+        "INSERT INTO granules VALUES ('C4', 'G4', 'https://ex/f.nc', 0, NULL, ?, true, 'external')",
         [now],
     )
     con.close()
@@ -437,6 +479,7 @@ def test_find_failures_phase_filter(tmp_db_path: Path, tmp_results_dir: Path):
     cols["datatree_error_traceback"].append(None)
     cols["datatree_duration_s"].append(0.0)
     cols["success"].append(False)
+    cols["override_applied"].append(False)
     cols["timed_out"].append(False)
     cols["timed_out_phase"].append(None)
     cols["duration_s"].append(0.3)
@@ -460,3 +503,110 @@ def test_find_failures_phase_filter(tmp_db_path: Path, tmp_results_dir: Path):
     assert len(dataset_rows) == 1
     assert dataset_rows[0].phase == "dataset"
     assert dataset_rows[0].error_type == "ValueError"
+
+
+# ---------------------------------------------------------------------------
+# Override + inspector integration
+# ---------------------------------------------------------------------------
+
+
+def test_generated_script_includes_override_kwargs() -> None:
+    from nasa_virtual_zarr_survey.overrides import CollectionOverride
+
+    row = _row(phase="dataset", parser="HDFParser", data_url="s3://bucket/key.nc")
+    override = CollectionOverride(
+        parser_kwargs={"group": "science"},
+        dataset_kwargs={"loadable_variables": []},
+        notes="t",
+    )
+    src = generate_script(row, override=override)
+    assert "group='science'" in src
+    assert "loadable_variables=[]" in src
+    assert "to_virtual_dataset" in src
+
+
+def test_generated_script_without_override_omits_kwargs() -> None:
+    row = _row(phase="dataset")
+    src = generate_script(row)
+    # The dataset call still appears, just with empty parens.
+    assert "to_virtual_dataset()" in src
+
+
+def test_generated_script_has_argparse_mode_flag() -> None:
+    row = _row()
+    src = generate_script(row)
+    assert "import argparse" in src
+    assert "--inspect" in src
+    assert "--attempt" in src
+    assert "from nasa_virtual_zarr_survey.inspect import inspect_url" in src
+    assert "from nasa_virtual_zarr_survey.formats import FormatFamily" in src
+
+
+def test_generated_script_compiles() -> None:
+    """A generated script must be syntactically valid Python."""
+    src = generate_script(_row())
+    compile(src, "<repro_test>", "exec")
+
+
+def test_repro_cli_no_overrides_skips_kwargs(tmp_path, monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    from nasa_virtual_zarr_survey.__main__ import cli
+    from nasa_virtual_zarr_survey import repro as repro_mod
+
+    row = _row(
+        collection_concept_id="C1-POCLOUD",
+        granule_concept_id="G1",
+        format_family="NetCDF4",
+        parser="HDFParser",
+        data_url="s3://b/k",
+    )
+    monkeypatch.setattr(repro_mod, "find_failures", lambda *a, **k: [row])
+
+    monkeypatch.chdir(tmp_path)
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / "collection_overrides.toml").write_text(
+        '[C1-POCLOUD]\nparser = { group = "science" }\nnotes = "t"\n'
+    )
+
+    out_dir = tmp_path / "out"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["repro", "C1-POCLOUD", "--no-overrides", "--out", str(out_dir)],
+    )
+    assert result.exit_code == 0, result.output
+    [path] = list(out_dir.glob("*.py"))
+    text = path.read_text()
+    assert "group='science'" not in text
+
+
+def test_repro_cli_default_bakes_overrides_in(tmp_path, monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    from nasa_virtual_zarr_survey.__main__ import cli
+    from nasa_virtual_zarr_survey import repro as repro_mod
+
+    row = _row(
+        collection_concept_id="C1-POCLOUD",
+        granule_concept_id="G1",
+        format_family="NetCDF4",
+        parser="HDFParser",
+        data_url="s3://b/k",
+    )
+    monkeypatch.setattr(repro_mod, "find_failures", lambda *a, **k: [row])
+
+    monkeypatch.chdir(tmp_path)
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / "collection_overrides.toml").write_text(
+        '[C1-POCLOUD]\nparser = { group = "science" }\nnotes = "t"\n'
+    )
+
+    out_dir = tmp_path / "out"
+    runner = CliRunner()
+    result = runner.invoke(cli, ["repro", "C1-POCLOUD", "--out", str(out_dir)])
+    assert result.exit_code == 0, result.output
+    [path] = list(out_dir.glob("*.py"))
+    assert "group='science'" in path.read_text()

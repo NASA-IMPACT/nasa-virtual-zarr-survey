@@ -34,6 +34,7 @@ class GranuleInfo(TypedDict):
     size_bytes: int | None
     sampled_at: datetime
     stratified: bool
+    access_mode: str
 
 
 class PendingGranule(TypedDict):

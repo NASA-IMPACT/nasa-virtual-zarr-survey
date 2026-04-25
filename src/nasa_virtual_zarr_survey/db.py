@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS granules (
     size_bytes            BIGINT,
     sampled_at            TIMESTAMP,
     stratified            BOOLEAN,
+    access_mode           TEXT NOT NULL,
     PRIMARY KEY (collection_concept_id, granule_concept_id)
 );
 
@@ -51,5 +52,8 @@ def connect(path: Path | str) -> duckdb.DuckDBPyConnection:
 
 
 def init_schema(con: duckdb.DuckDBPyConnection) -> None:
-    """Create tables and indexes if they don't exist. Idempotent."""
+    """Create tables and indexes if they don't exist. Idempotent.
+
+    Schema changes require deleting `output/survey.duckdb` and re-running.
+    """
     con.execute(_SCHEMA_SQL)

@@ -7,7 +7,7 @@ Surveys cloud-hosted NASA CMR collections for VirtualiZarr compatibility. The pi
 3. **Parsability** (Phase 3): the VirtualiZarr parser can produce a `ManifestStore` from a granule URL.
 4a. **Datasetability** (Phase 4a): the `ManifestStore` can be converted to an `xarray.Dataset`.
 4b. **Datatreeability** (Phase 4b): the `ManifestStore` can be converted to an `xarray.DataTree`. Attempted in parallel with 4a; captures hierarchical files that fail 4a with `CONFLICTING_DIM_SIZES`.
-5. **Virtual Store Feasibility / Cubability** (Phase 5): the per-granule datasets can be combined into a coherent virtual store. Gated on Phase 4a `all_pass` (tree-only collections are not yet cubable).
+5. **Cubability** (Phase 5): the per-granule datasets can be combined into a coherent virtual store. Gated on Phase 4a `all_pass` (tree-only collections are not yet cubable).
 
 Failures in each phase are categorized into an empirically-derived taxonomy so VirtualiZarr maintainers and NASA DAAC operators can prioritize gaps.
 

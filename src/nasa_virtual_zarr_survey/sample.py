@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -13,6 +14,9 @@ from nasa_virtual_zarr_survey.types import GranuleInfo, SampleCollection
 
 if TYPE_CHECKING:
     from earthaccess.results import DataGranule
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def temporal_bins(
@@ -119,6 +123,7 @@ def sample_one_collection(
                     size_bytes=_extract_size(g),
                     sampled_at=now,
                     stratified=False,
+                    access_mode=access,
                 )
             )
         return rows
@@ -141,6 +146,7 @@ def sample_one_collection(
                 size_bytes=_extract_size(g),
                 sampled_at=now,
                 stratified=True,
+                access_mode=access,
             )
         )
     return rows
@@ -153,9 +159,58 @@ def run_sample(
     *,
     access: str = "direct",
 ) -> int:
-    """Sample granules for every pending collection. Returns total granules written."""
+    """Sample granules for every pending collection. Returns total granules written.
+
+    Re-samples any collection whose existing granule rows were captured under a
+    different access mode, so the URL scheme in the granules table always
+    matches the requested mode.
+    """
     con = connect(db_path)
     init_schema(con)
+
+    # Detect collections with mismatched-mode granules so we can warn the
+    # operator about stale rows in the parquet results log before overwriting
+    # the granules table.
+    stale_query = """
+        SELECT DISTINCT collection_concept_id
+        FROM granules
+        WHERE access_mode != ?
+    """
+    stale_params: list[Any] = [access]
+    if only_daac:
+        stale_query += """
+            AND collection_concept_id IN (
+                SELECT concept_id FROM collections WHERE daac = ?
+            )
+        """
+        stale_params.append(only_daac)
+    stale_collections = [
+        r[0] for r in con.execute(stale_query, stale_params).fetchall()
+    ]
+
+    if stale_collections:
+        delete_query = "DELETE FROM granules WHERE access_mode != ?"
+        delete_params: list[Any] = [access]
+        if only_daac:
+            delete_query += """
+                AND collection_concept_id IN (
+                    SELECT concept_id FROM collections WHERE daac = ?
+                )
+            """
+            delete_params.append(only_daac)
+        con.execute(delete_query, delete_params)
+        _LOGGER.warning(
+            "re-sampling %d collection(s) under access=%r because their granules "
+            "table rows were captured under a different mode: %s. "
+            "Existing rows in output/results/*.parquet for these collections "
+            "still reference the old URLs; if you want attempt to re-fetch them "
+            "under the new mode, also delete those parquet rows.",
+            len(stale_collections),
+            access,
+            ", ".join(stale_collections[:10])
+            + (" ..." if len(stale_collections) > 10 else ""),
+        )
+
     q = """
         SELECT concept_id, time_start, time_end, num_granules, daac, skip_reason
         FROM collections
@@ -191,7 +246,10 @@ def run_sample(
         rows = sample_one_collection(coll, n_bins=n_bins, access=access)
         for r in rows:
             con.execute(
-                """INSERT OR IGNORE INTO granules VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT OR IGNORE INTO granules
+                   (collection_concept_id, granule_concept_id, data_url,
+                    temporal_bin, size_bytes, sampled_at, stratified, access_mode)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     r["collection_concept_id"],
                     r["granule_concept_id"],
@@ -200,6 +258,7 @@ def run_sample(
                     r["size_bytes"],
                     r["sampled_at"],
                     r["stratified"],
+                    r["access_mode"],
                 ],
             )
             total += 1

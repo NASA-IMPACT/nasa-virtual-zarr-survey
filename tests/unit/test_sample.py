@@ -354,3 +354,95 @@ def test_run_sample_skips_unresolvable_format_unknown(tmp_db_path: Path, monkeyp
         "SELECT format_family, format_declared, skip_reason FROM collections WHERE concept_id='C_PDF'"
     ).fetchone()
     assert row == (None, "PDF", "non_array_format")
+
+
+# ---------------------------------------------------------------------------
+# Re-sample on access mode mismatch
+# ---------------------------------------------------------------------------
+
+
+def test_run_sample_resamples_when_access_mode_changes(
+    tmp_db_path: Path, monkeypatch, caplog
+):
+    """Existing direct-mode rows are deleted and re-sampled when access=external."""
+    import logging
+
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute("""
+        INSERT INTO collections VALUES
+        ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,
+         TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
+         'L3', NULL, now())
+    """)
+    # Pre-populate with direct-mode rows.
+    con.execute(
+        "INSERT INTO granules VALUES "
+        "('C1','G0','s3://b/0.nc',0,100,now(),FALSE,'direct')"
+    )
+    con.execute(
+        "INSERT INTO granules VALUES "
+        "('C1','G1','s3://b/1.nc',1,100,now(),FALSE,'direct')"
+    )
+
+    class G:
+        def __init__(self, gid: str):
+            self.gid = gid
+
+        def __getitem__(self, k):
+            return {"meta": {"concept-id": self.gid}}[k]
+
+        def data_links(self, access="direct"):
+            return [f"https://ex/{self.gid}.nc"]
+
+    counter = iter(range(100))
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data",
+        lambda **_: [G(f"NEW{next(counter)}")],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="nasa_virtual_zarr_survey.sample"):
+        n = run_sample(tmp_db_path, n_bins=2, access="external")
+
+    assert n == 2
+    # Old direct-mode rows were deleted; new external-mode rows are present.
+    rows = con.execute(
+        "SELECT data_url, access_mode FROM granules ORDER BY data_url"
+    ).fetchall()
+    assert all(url.startswith("https://") for url, _ in rows)
+    assert all(mode == "external" for _, mode in rows)
+
+    # Operator was warned about stale parquet rows.
+    assert any("re-sampling 1 collection" in r.getMessage() for r in caplog.records)
+
+
+def test_run_sample_skips_when_already_in_requested_mode(
+    tmp_db_path: Path, monkeypatch
+):
+    """Existing rows in the requested mode are kept; no re-sample, no warning."""
+
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute("""
+        INSERT INTO collections VALUES
+        ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,
+         NULL, NULL, 'L3', NULL, now())
+    """)
+    con.execute(
+        "INSERT INTO granules VALUES "
+        "('C1','G0','s3://b/0.nc',0,100,now(),FALSE,'direct')"
+    )
+
+    called = {"n": 0}
+
+    def fake_search_data(**_):
+        called["n"] += 1
+        raise AssertionError("should not search when granules already exist in mode")
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data", fake_search_data
+    )
+
+    n = run_sample(tmp_db_path, n_bins=2, access="direct")
+    assert n == 0
+    assert called["n"] == 0

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import shutil
 import warnings
 from pathlib import Path
 from typing import Literal, cast
@@ -37,6 +39,72 @@ warnings.filterwarnings(
 DEFAULT_DB = Path("output/survey.duckdb")
 DEFAULT_RESULTS = Path("output/results")
 DEFAULT_REPORT = Path("docs/results/index.md")
+DEFAULT_CACHE_DIR = Path.home() / ".cache" / "nasa-virtual-zarr-survey"
+DEFAULT_CACHE_MAX_BYTES = 50 * 1024**3
+
+
+_SIZE_RE = re.compile(r"^\s*([\d_.]+)\s*([KMGT]B?)?\s*$", re.IGNORECASE)
+_SIZE_UNITS = {
+    None: 1,
+    "K": 1024,
+    "KB": 1024,
+    "M": 1024**2,
+    "MB": 1024**2,
+    "G": 1024**3,
+    "GB": 1024**3,
+    "T": 1024**4,
+    "TB": 1024**4,
+}
+
+
+def _parse_size(value: str) -> int:
+    """Parse a human-friendly byte count: '50GB', '500MB', '1024'."""
+    m = _SIZE_RE.match(value)
+    if not m:
+        raise click.BadParameter(f"unrecognized size: {value!r}")
+    number = float(m.group(1).replace("_", ""))
+    unit = m.group(2).upper() if m.group(2) else None
+    return int(number * _SIZE_UNITS[unit])
+
+
+def _cache_options(f):
+    """Apply --cache, --cache-dir, --cache-max-size to a Click command.
+
+    Decorators are applied bottom-up, so to keep the original `--help` order
+    (cache, cache-dir, cache-max-size) the option closest to the function
+    must be applied last.
+    """
+    f = click.option(
+        "--cache-max-size",
+        "cache_max_size",
+        type=str,
+        default="50GB",
+        help="Soft cap on total cache size; supports human-readable units "
+        "(e.g. 50GB, 500MB).",
+    )(f)
+    f = click.option(
+        "--cache-dir",
+        type=click.Path(path_type=Path),
+        default=None,
+        envvar="NASA_VZ_SURVEY_CACHE_DIR",
+        help=f"Cache directory (default: {DEFAULT_CACHE_DIR}).",
+    )(f)
+    f = click.option(
+        "--cache/--no-cache",
+        "use_cache",
+        default=False,
+        help="Cache fetched granule bytes to disk so repeat runs hit local "
+        "disk instead of re-fetching.",
+    )(f)
+    return f
+
+
+def _resolve_cache_params(
+    use_cache: bool, cache_dir: Path | None, cache_max_size: str
+) -> tuple[Path | None, int]:
+    """Return ``(effective_cache_dir, cache_max_bytes)`` for ``run_attempt``."""
+    effective_cache_dir = (cache_dir or DEFAULT_CACHE_DIR) if use_cache else None
+    return effective_cache_dir, _parse_size(cache_max_size)
 
 
 def _discover_summary(db_path: Path) -> str:
@@ -336,11 +404,26 @@ def sample(db_path: Path, n_bins: int, daac: str | None, access: str) -> None:
 @click.option("--shard-size", type=int, default=500)
 @click.option("--daac", type=str, default=None, help="Restrict to one DAAC.")
 @click.option(
+    "--collection",
+    "only_collection",
+    type=str,
+    default=None,
+    help="Restrict to one CMR collection concept ID.",
+)
+@click.option(
     "--access",
     type=click.Choice(["direct", "external"]),
     default="direct",
     help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
     "'external' uses HTTPS URLs with EDL bearer token.",
+)
+@_cache_options
+@click.option(
+    "--overrides",
+    "overrides_path",
+    type=click.Path(path_type=Path),
+    default=Path("config/collection_overrides.toml"),
+    help="Path to the per-collection overrides TOML file.",
 )
 def attempt(
     db_path: Path,
@@ -348,20 +431,68 @@ def attempt(
     timeout_s: int,
     shard_size: int,
     daac: str | None,
+    only_collection: str | None,
     access: str,
+    use_cache: bool,
+    cache_dir: Path | None,
+    cache_max_size: str,
+    overrides_path: Path,
 ) -> None:
     """Phases 3 and 4 (attempt): parsability + datasetability per granule; write Parquet rows."""
     from nasa_virtual_zarr_survey.attempt import run_attempt
 
+    effective_cache_dir, cache_max_bytes = _resolve_cache_params(
+        use_cache, cache_dir, cache_max_size
+    )
     n = run_attempt(
         db_path,
         results_dir,
         timeout_s=timeout_s,
         shard_size=shard_size,
         only_daac=daac,
+        only_collection=only_collection,
         access=cast(AccessMode, access),
+        cache_dir=effective_cache_dir,
+        cache_max_bytes=cache_max_bytes,
+        overrides_path=overrides_path,
     )
     click.echo(_attempt_summary(db_path, results_dir, n))
+
+
+@cli.command(name="validate-overrides")
+@click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path),
+    default=Path("config/collection_overrides.toml"),
+)
+def validate_overrides_cmd(db_path: Path, config_path: Path) -> None:
+    """Validate the override TOML against the collections in the survey DB."""
+    from nasa_virtual_zarr_survey.db import connect, init_schema
+    from nasa_virtual_zarr_survey.formats import FormatFamily
+    from nasa_virtual_zarr_survey.overrides import OverrideError, OverrideRegistry
+
+    reg = OverrideRegistry.from_toml(config_path)
+    con = connect(db_path)
+    init_schema(con)
+    format_for: dict[str, FormatFamily] = {}
+    for cid, fam_str in con.execute(
+        "SELECT concept_id, format_family FROM collections "
+        "WHERE format_family IS NOT NULL"
+    ).fetchall():
+        try:
+            format_for[cid] = FormatFamily(fam_str)
+        except ValueError:
+            continue
+    try:
+        reg.validate(format_for=format_for)
+    except OverrideError as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(
+        f"OK: validated {len(reg._by_id)} override entries against "
+        f"{len(format_for)} collections"
+    )
 
 
 @cli.command()
@@ -448,6 +579,14 @@ def report(
     help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
     "'external' uses HTTPS URLs with EDL bearer token.",
 )
+@_cache_options
+@click.option(
+    "--clean",
+    is_flag=True,
+    default=False,
+    help="Delete the DuckDB and results directory before running, for a true "
+    "end-to-end run that does not reuse prior shards.",
+)
 def pilot(
     db_path: Path,
     results_dir: Path,
@@ -458,6 +597,10 @@ def pilot(
     n_bins: int,
     timeout_s: int,
     access: str,
+    use_cache: bool,
+    cache_dir: Path | None,
+    cache_max_size: str,
+    clean: bool,
 ) -> None:
     """Run discover, sample, attempt, report on a small sample for taxonomy review."""
     from nasa_virtual_zarr_survey.discover import run_discover
@@ -467,6 +610,18 @@ def pilot(
 
     if top_total is not None and top_per_provider is not None:
         raise click.UsageError("--top and --top-per-provider are mutually exclusive")
+
+    if clean:
+        targets = [p for p in (db_path, results_dir) if p.exists()]
+        if targets:
+            click.echo("--clean will delete:")
+            for p in targets:
+                click.echo(f"  {p}")
+            click.confirm("Proceed?", abort=True, default=False)
+            if db_path.exists():
+                db_path.unlink()
+            if results_dir.exists():
+                shutil.rmtree(results_dir)
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -481,9 +636,21 @@ def pilot(
     access_mode = cast(AccessMode, access)
     run_sample(db_path, n_bins=n_bins, access=access_mode)
     click.echo(_sample_summary(db_path))
-    n_att = run_attempt(db_path, results_dir, timeout_s=timeout_s, access=access_mode)
+    effective_cache_dir, cache_max_bytes = _resolve_cache_params(
+        use_cache, cache_dir, cache_max_size
+    )
+    n_att = run_attempt(
+        db_path,
+        results_dir,
+        timeout_s=timeout_s,
+        access=access_mode,
+        cache_dir=effective_cache_dir,
+        cache_max_bytes=cache_max_bytes,
+    )
     click.echo(_attempt_summary(db_path, results_dir, n_att))
-    run_report(db_path, results_dir, out_path)
+    summary_path = out_path.parent / "summary.json"
+    run_report(db_path, results_dir, out_path, export_to=summary_path)
+    click.echo(f"Wrote {out_path} and {summary_path}")
     click.echo(
         f"Pilot complete. Review errors in {results_dir}, refine taxonomy.py, then run full pipeline."
     )
@@ -522,6 +689,20 @@ def pilot(
     default=None,
     help="Directory to write .py files. Defaults to stdout.",
 )
+@click.option(
+    "--overrides",
+    "overrides_path",
+    type=click.Path(path_type=Path),
+    default=Path("config/collection_overrides.toml"),
+    help="Path to the per-collection overrides TOML file.",
+)
+@click.option(
+    "--no-overrides",
+    "no_overrides",
+    is_flag=True,
+    default=False,
+    help="Render the repro without baking in any configured overrides.",
+)
 @click.argument("concept_id", required=False)
 def repro(
     db_path: Path,
@@ -530,11 +711,14 @@ def repro(
     phase: str | None,
     limit: int | None,
     out_dir: Path | None,
+    overrides_path: Path,
+    no_overrides: bool,
     concept_id: str | None,
 ) -> None:
     """Emit a self-contained reproducer Python script for a failing granule."""
     from typing import Literal
 
+    from nasa_virtual_zarr_survey.overrides import OverrideRegistry
     from nasa_virtual_zarr_survey.repro import find_failures, generate_script
 
     if (concept_id is None) == (bucket is None):
@@ -559,18 +743,23 @@ def repro(
     if not rows:
         raise click.UsageError("No matching failures found.")
 
+    reg = None if no_overrides else OverrideRegistry.from_toml(overrides_path)
+
+    def _override_for(row):
+        return None if reg is None else reg.for_collection(row.collection_concept_id)
+
     if out_dir is None:
         for i, row in enumerate(rows, 1):
             if len(rows) > 1:
                 click.echo(
                     f"# --- SCRIPT {i}/{len(rows)}: {row.granule_concept_id} ({row.bucket}) ---"
                 )
-            click.echo(generate_script(row))
+            click.echo(generate_script(row, override=_override_for(row)))
     else:
         out_dir.mkdir(parents=True, exist_ok=True)
         for row in rows:
             path = out_dir / f"repro_{row.granule_concept_id}.py"
-            path.write_text(generate_script(row))
+            path.write_text(generate_script(row, override=_override_for(row)))
             click.echo(f"wrote {path}")
 
 

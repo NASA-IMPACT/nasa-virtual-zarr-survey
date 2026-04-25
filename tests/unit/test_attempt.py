@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -94,7 +94,7 @@ def test_attempt_one_success(monkeypatch):
     fake_parser.__class__.__name__ = "HDFParser"
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family: fake_parser,
+        lambda family, **_: fake_parser,
     )
 
     result = attempt_one(
@@ -125,7 +125,7 @@ def test_attempt_one_captures_parse_exception(monkeypatch):
     fake_parser = MagicMock(side_effect=fake_parser_call)
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family: fake_parser,
+        lambda family, **_: fake_parser,
     )
 
     result = attempt_one(
@@ -162,7 +162,7 @@ def test_attempt_one_captures_dataset_exception(monkeypatch):
     fake_parser = MagicMock(side_effect=fake_parser_call)
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family: fake_parser,
+        lambda family, **_: fake_parser,
     )
 
     result = attempt_one(
@@ -198,7 +198,7 @@ def test_attempt_one_dataset_fail_datatree_fail(monkeypatch):
     fake_parser = MagicMock(side_effect=fake_parser_call)
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family: fake_parser,
+        lambda family, **_: fake_parser,
     )
 
     result = attempt_one(
@@ -231,7 +231,7 @@ def test_attempt_one_dataset_fail_datatree_success(monkeypatch):
     fake_parser = MagicMock(side_effect=fake_parser_call)
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family: fake_parser,
+        lambda family, **_: fake_parser,
     )
 
     result = attempt_one(
@@ -264,7 +264,7 @@ def test_attempt_one_timeout_during_parse(monkeypatch):
     fake_parser = MagicMock(side_effect=fake_parser_call)
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family: fake_parser,
+        lambda family, **_: fake_parser,
     )
 
     result = attempt_one(
@@ -304,7 +304,7 @@ def test_attempt_one_timeout_during_dataset(monkeypatch):
     fake_parser = MagicMock(side_effect=fake_parser_call)
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family: fake_parser,
+        lambda family, **_: fake_parser,
     )
 
     result = attempt_one(
@@ -345,7 +345,7 @@ def test_attempt_one_timeout_during_datatree(monkeypatch):
     fake_parser = MagicMock(side_effect=fake_parser_call)
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family: fake_parser,
+        lambda family, **_: fake_parser,
     )
 
     result = attempt_one(
@@ -383,10 +383,10 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
          NULL, NULL, 'L3', NULL, now())
     """)
     con.execute(
-        "INSERT INTO granules VALUES ('C1','G1','s3://b/a.nc',0,100,now(),TRUE)"
+        "INSERT INTO granules VALUES ('C1','G1','s3://b/a.nc',0,100,now(),TRUE,'direct')"
     )
     con.execute(
-        "INSERT INTO granules VALUES ('C1','G2','s3://b/b.nc',1,100,now(),TRUE)"
+        "INSERT INTO granules VALUES ('C1','G2','s3://b/b.nc',1,100,now(),TRUE,'direct')"
     )
     con.close()
 
@@ -419,6 +419,7 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
     cols["datatree_error_traceback"].append(None)
     cols["datatree_duration_s"].append(0.0)
     cols["success"].append(True)
+    cols["override_applied"].append(False)
     cols["timed_out"].append(False)
     cols["timed_out_phase"].append(None)
     cols["duration_s"].append(0.2)
@@ -464,7 +465,7 @@ def test_run_attempt_aborts_on_consecutive_forbidden(
     """)
     for i in range(10):
         con.execute(
-            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',{i},100,now(),TRUE)"
+            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',{i},100,now(),TRUE,'direct')"
         )
     con.close()
 
@@ -511,7 +512,7 @@ def test_run_attempt_does_not_abort_on_mixed_failures(
     """)
     for i in range(10):
         con.execute(
-            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',{i},100,now(),TRUE)"
+            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',{i},100,now(),TRUE,'direct')"
         )
     con.close()
 
@@ -556,3 +557,198 @@ def test_run_attempt_does_not_abort_on_mixed_failures(
         tmp_db_path, tmp_results_dir, timeout_s=5, shard_size=500, access="direct"
     )
     assert n == 10
+
+
+def test_run_attempt_passes_cache_params_to_store_cache(tmp_path: Path):
+    from nasa_virtual_zarr_survey.attempt import run_attempt
+    from nasa_virtual_zarr_survey.db import connect, init_schema
+
+    db_path = tmp_path / "survey.duckdb"
+    results_dir = tmp_path / "results"
+    con = connect(db_path)
+    init_schema(con)
+    con.close()
+
+    cache_dir = tmp_path / "cache"
+    captured = {}
+
+    real_init = __import__(
+        "nasa_virtual_zarr_survey.attempt", fromlist=["StoreCache"]
+    ).StoreCache.__init__
+
+    def spy_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        captured["args"] = args
+        return real_init(self, *args, **kwargs)
+
+    with patch("nasa_virtual_zarr_survey.attempt.StoreCache.__init__", spy_init):
+        run_attempt(
+            db_path,
+            results_dir,
+            timeout_s=1,
+            access="direct",
+            cache_dir=cache_dir,
+            cache_max_bytes=12345,
+        )
+
+    assert captured.get("cache_dir") == cache_dir
+    assert captured.get("cache_max_bytes") == 12345
+
+
+# ---------------------------------------------------------------------------
+# Override integration
+# ---------------------------------------------------------------------------
+
+
+def test_attempt_one_threads_override_through(monkeypatch) -> None:
+    from nasa_virtual_zarr_survey import attempt as attempt_mod
+    from nasa_virtual_zarr_survey.overrides import CollectionOverride
+
+    captured: dict = {}
+
+    class FakeParser:
+        def __init__(
+            self,
+            group: str | None = None,
+            drop_variables: list[str] | None = None,
+        ) -> None:
+            captured["init"] = {
+                "group": group,
+                "drop_variables": drop_variables,
+            }
+
+        def __call__(self, *, url: str, registry):
+            return FakeManifest()
+
+    class FakeManifest:
+        def to_virtual_dataset(self, **kw):
+            captured["dataset"] = kw
+            return object()
+
+        def to_virtual_datatree(self, **kw):
+            captured["datatree"] = kw
+            return object()
+
+    monkeypatch.setattr(
+        attempt_mod,
+        "dispatch_parser",
+        lambda fam, kwargs=None: FakeParser(**(kwargs or {})),
+    )
+    monkeypatch.setattr(attempt_mod, "_build_registry", lambda store, url: object())
+
+    override = CollectionOverride(
+        parser_kwargs={"group": "science"},
+        dataset_kwargs={"loadable_variables": []},
+        datatree_kwargs={"loadable_variables": []},
+        notes="test",
+    )
+    result = attempt_one(
+        url="s3://bucket/key",
+        family=FormatFamily.HDF5,
+        store=object(),
+        timeout_s=10,
+        override=override,
+    )
+    assert captured["init"] == {"group": "science", "drop_variables": None}
+    assert captured["dataset"] == {"loadable_variables": []}
+    assert captured["datatree"] == {"loadable_variables": []}
+    assert result.parse_success
+    assert result.dataset_success is True
+    assert result.datatree_success is True
+    assert result.override_applied is True
+
+
+def test_attempt_one_skip_dataset_skips_phase(monkeypatch) -> None:
+    from nasa_virtual_zarr_survey import attempt as attempt_mod
+    from nasa_virtual_zarr_survey.overrides import CollectionOverride
+
+    class FakeParser:
+        def __init__(self, **kw) -> None:
+            pass
+
+        def __call__(self, *, url: str, registry):
+            return FakeManifest()
+
+    class FakeManifest:
+        def to_virtual_dataset(self, **kw):
+            raise AssertionError("should not be called when skip_dataset=True")
+
+        def to_virtual_datatree(self, **kw):
+            return object()
+
+    monkeypatch.setattr(
+        attempt_mod,
+        "dispatch_parser",
+        lambda fam, kwargs=None: FakeParser(**(kwargs or {})),
+    )
+    monkeypatch.setattr(attempt_mod, "_build_registry", lambda store, url: object())
+
+    result = attempt_one(
+        url="s3://bucket/key",
+        family=FormatFamily.HDF5,
+        store=object(),
+        timeout_s=10,
+        override=CollectionOverride(skip_dataset=True, notes="datatree-only"),
+    )
+    assert result.parse_success
+    assert result.dataset_success is None
+    assert result.datatree_success is True
+    # success requires parse + (dataset OR datatree) — datatree alone counts.
+    assert result.success is True
+    assert result.override_applied is True
+
+
+def test_attempt_result_serializes_override_applied(tmp_path) -> None:
+    w = ResultWriter(tmp_path, shard_size=1)
+    w.append(
+        AttemptResult(
+            daac="X",
+            attempted_at=datetime.now(timezone.utc),
+            override_applied=True,
+        )
+    )
+    w.close()
+
+    [path] = list(tmp_path.glob("**/*.parquet"))
+    table = pq.read_table(path)
+    assert "override_applied" in table.schema.names
+    assert table.column("override_applied").to_pylist() == [True]
+
+
+def test_pending_granules_filters_by_collection(tmp_path) -> None:
+    from nasa_virtual_zarr_survey.attempt import _pending_granules
+
+    con = connect(str(tmp_path / "db.duckdb"))
+    init_schema(con)
+    con.execute(
+        "INSERT INTO collections (concept_id, daac, provider, format_family, "
+        "skip_reason) VALUES "
+        "(?, ?, ?, ?, NULL), (?, ?, ?, ?, NULL)",
+        ["C1-X", "X", "P", "NetCDF4", "C2-Y", "Y", "P", "NetCDF4"],
+    )
+    con.execute(
+        "INSERT INTO granules (collection_concept_id, granule_concept_id, "
+        "data_url, temporal_bin, stratified, access_mode) VALUES "
+        "(?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)",
+        [
+            "C1-X",
+            "G1",
+            "s3://a/1",
+            0,
+            True,
+            "direct",
+            "C2-Y",
+            "G2",
+            "s3://b/2",
+            0,
+            True,
+            "direct",
+        ],
+    )
+    rows = _pending_granules(
+        con,
+        results_dir=tmp_path / "results",
+        only_daac=None,
+        only_collection="C1-X",
+    )
+    assert [r["collection_concept_id"] for r in rows] == ["C1-X"]

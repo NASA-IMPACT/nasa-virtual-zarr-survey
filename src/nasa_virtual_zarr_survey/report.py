@@ -471,7 +471,7 @@ def render_report(
     Sections emitted, in order: Overview (Sankey), totals (with funnel figure),
     Phase 3 (Parsability, with parse taxonomy figure), Phase 4a (Datasetability,
     with dataset taxonomy figure), Phase 4b (Datatreeability, with datatree
-    taxonomy figure), Phase 5 (Virtual Store Feasibility),
+    taxonomy figure), Phase 5 (Cubability),
     incompatibility reasons drill-down, By DAAC table (with by_daac figure),
     By Format Family table (with by_format figure), Stratification breakdown,
     raw-error drill-downs for each phase's ``OTHER`` bucket, and the full
@@ -568,13 +568,13 @@ def render_report(
         lines.append(_iframe("taxonomy_datatree"))
         lines.append("")
 
-    # Phase 5: Virtual Store Feasibility
+    # Phase 5: Cubability
     datasetable_count = sum(
         1
         for v in verdicts
         if v["parse_verdict"] == "all_pass" and v["dataset_verdict"] == "all_pass"
     )
-    lines.append("## Phase 5: Virtual Store Feasibility\n")
+    lines.append("## Phase 5: Cubability\n")
     lines.append(
         f"For collections whose all sampled granules produced xarray.Datasets "
         f"(denominator: {datasetable_count}), whether the granules can be combined "
@@ -601,7 +601,7 @@ def render_report(
             examples_by_reason.setdefault(r.reason, []).append(cid)
 
     if incompatible_reasons or inconclusive_reasons:
-        lines.append("### Virtual Store Incompatibility Reasons\n")
+        lines.append("### Cubability Incompatibility Reasons\n")
         lines.append(
             "| Verdict | Reason | Collections | Example IDs |\n|---|---|---:|---|"
         )
