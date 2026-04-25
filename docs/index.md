@@ -58,6 +58,16 @@ To see what would be fetched without writing to the DB:
 uv run nasa-virtual-zarr-survey discover --top 20 --dry-run
 ```
 
+### Caching granule bytes
+
+Iterating on the taxonomy or report code without re-downloading granules is much faster with a local cache. Add `--cache` to any command that fetches granules to persist fetched bytes under `~/.cache/nasa-virtual-zarr-survey/`:
+
+```bash
+uv run nasa-virtual-zarr-survey pilot --cache --top 5 --n-bins 3 --access external
+```
+
+Override the location with `--cache-dir` or `NASA_VZ_SURVEY_CACHE_DIR`, and bound total size with `--cache-max-size`. See the contributing guide for cache layout and inspection tips.
+
 ## Architecture at a glance
 
 ```
@@ -75,7 +85,3 @@ cubability (Phase 5) + report render
 State is persisted in a DuckDB database (`output/survey.duckdb`) for checkpoint data, and in DAAC-partitioned Parquet shards (`output/results/`) for the append-only per-attempt log. Both phases are resumable.
 
 For a full design walk-through see the [design document](design/architecture.md).
-
-## License
-
-Distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.

@@ -1,35 +1,35 @@
 # nasa-virtual-zarr-survey
 
-Surveys cloud-hosted NASA CMR collections for VirtualiZarr compatibility.
+Surveys cloud-hosted NASA CMR collections for VirtualiZarr compatibility, so VirtualiZarr maintainers and NASA DAAC operators can see at a glance which collections are usable as virtual Zarr stores today and which need work.
 
-## Usage
+The pipeline runs in five phases:
+
+1. **Discover** collections from CMR.
+2. **Sample** granules stratified across each collection's temporal extent.
+3. **Parsability**: can VirtualiZarr produce a `ManifestStore` from a granule URL?
+4. **Datasetability** / **Datatreeability**: can the `ManifestStore` be loaded as an `xarray.Dataset` or `xarray.DataTree`?
+5. **Cubability**: can per-granule datasets be combined into one coherent virtual store?
+
+Each failure is bucketed into an empirical taxonomy so the long tail can be triaged.
+
+## Quick start
 
 ```bash
 uv sync
-uv run nasa-virtual-zarr-survey pilot --sample 50
-# review output/results/ by hand, refine src/nasa_virtual_zarr_survey/taxonomy.py
-uv run nasa-virtual-zarr-survey discover
-uv run nasa-virtual-zarr-survey sample
-uv run nasa-virtual-zarr-survey attempt
-uv run nasa-virtual-zarr-survey report
+uv run nasa-virtual-zarr-survey pilot --top 20 --n-bins 2 --access external
 ```
 
-Requires Earthdata Login credentials in `~/.netrc`.
+Requires Earthdata Login credentials in `~/.netrc`. Use `--access direct` instead when running on AWS us-west-2 compute.
 
-### End-to-end smoke test
+## Documentation
 
-To exercise the full pipeline from a clean slate and refresh the docs (`docs/results/index.md` + `docs/results/summary.json`):
+The full documentation site is at <https://nasa-impact.github.io/nasa-virtual-zarr-survey/>:
 
-```bash
-uv run nasa-virtual-zarr-survey pilot --clean --top 5 --n-bins 3 --access external
-```
+- [Usage and run modes](https://nasa-impact.github.io/nasa-virtual-zarr-survey/): pilot, per-phase commands, granule cache, etc.
+- [Latest survey results](https://nasa-impact.github.io/nasa-virtual-zarr-survey/results/): figures and per-collection breakdowns.
+- [Architecture](https://nasa-impact.github.io/nasa-virtual-zarr-survey/design/architecture/) and [taxonomy design](https://nasa-impact.github.io/nasa-virtual-zarr-survey/design/taxonomy/).
+- [Contributing](https://nasa-impact.github.io/nasa-virtual-zarr-survey/contributing/): dev setup, tests, regenerating committed figures, extending the taxonomy.
 
-`--clean` lists the paths it would delete and prompts for confirmation before wiping `output/survey.duckdb` and `output/results/`. The run hits live CMR and granule URLs, so it needs network and EDL credentials.
+## License
 
-For repeat runs (e.g., iterating on the taxonomy or report code without re-downloading granules), add `--cache` to persist fetched bytes under `~/.cache/nasa-virtual-zarr-survey/` (override with `--cache-dir` or `NASA_VZ_SURVEY_CACHE_DIR`):
-
-```bash
-uv run nasa-virtual-zarr-survey pilot --clean --cache --top 5 --n-bins 3 --access external
-```
-
-`--clean` does not touch the granule cache, so cached bytes from prior runs are reused across `--clean` invocations.
+Distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.

@@ -74,14 +74,21 @@ Documentation conventions:
 - Use commas, colons, or parentheses for aside-style punctuation.
 - Do not reference paths outside the project repo (they will break when the repo is published).
 
-## Pipeline overview
+## End-to-end smoke test
 
-See the [design document](design/architecture.md) for the full walk-through. Short version:
+To exercise the full pipeline from a clean slate and refresh the committed docs (`docs/results/index.md` and `docs/results/summary.json`):
 
-1. `discover` enumerates CMR collections into DuckDB.
-2. `sample` picks up to N granules per collection, stratified across each collection's temporal extent.
-3. `attempt` runs Phase 3 (Parsability) and Phase 4 (Datasetability) on each granule, writing results to partitioned Parquet.
-4. `report` rolls up verdicts, runs Phase 5 (Cubability) on fingerprints, applies the taxonomy classifier, and renders `report.md`.
+```bash
+uv run nasa-virtual-zarr-survey pilot --clean --top 5 --n-bins 3 --access external
+```
+
+`--clean` lists the paths it would delete and prompts for confirmation before wiping `output/survey.duckdb` and `output/results/`. The run hits live CMR and granule URLs, so it needs network and EDL credentials. `--clean` does not touch the granule cache, so cached bytes from prior runs are reused; combine with `--cache` to keep iteration fast:
+
+```bash
+uv run nasa-virtual-zarr-survey pilot --clean --cache --top 5 --n-bins 3 --access external
+```
+
+The pipeline itself is documented in the [design document](design/architecture.md).
 
 ## Common extension tasks
 

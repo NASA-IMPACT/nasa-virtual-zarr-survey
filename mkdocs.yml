@@ -4,7 +4,7 @@ repo_name: nasa-virtual-zarr-survey
 repo_url: https://github.com/NASA-IMPACT/nasa-virtual-zarr-survey
 site_description: Survey cloud-hosted NASA CMR collections for VirtualiZarr compatibility.
 site_author: Max Jones
-site_url: !ENV [READTHEDOCS_CANONICAL_URL, "https://nasa-virtual-zarr-survey.readthedocs.io"]
+site_url: https://nasa-impact.github.io/nasa-virtual-zarr-survey/
 docs_dir: docs
 
 extra:
