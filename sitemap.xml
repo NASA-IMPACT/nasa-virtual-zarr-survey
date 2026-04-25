@@ -1,47 +1,47 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
-         <loc>https://nasa-virtual-zarr-survey.readthedocs.io/</loc>
-         <lastmod>2026-04-24</lastmod>
+         <loc>https://nasa-impact.github.io/nasa-virtual-zarr-survey/</loc>
+         <lastmod>2026-04-25</lastmod>
     </url>
     <url>
-         <loc>https://nasa-virtual-zarr-survey.readthedocs.io/contributing/</loc>
-         <lastmod>2026-04-24</lastmod>
+         <loc>https://nasa-impact.github.io/nasa-virtual-zarr-survey/contributing/</loc>
+         <lastmod>2026-04-25</lastmod>
     </url>
     <url>
-         <loc>https://nasa-virtual-zarr-survey.readthedocs.io/api/attempt/</loc>
-         <lastmod>2026-04-24</lastmod>
+         <loc>https://nasa-impact.github.io/nasa-virtual-zarr-survey/api/attempt/</loc>
+         <lastmod>2026-04-25</lastmod>
     </url>
     <url>
-         <loc>https://nasa-virtual-zarr-survey.readthedocs.io/api/cubability/</loc>
-         <lastmod>2026-04-24</lastmod>
+         <loc>https://nasa-impact.github.io/nasa-virtual-zarr-survey/api/cubability/</loc>
+         <lastmod>2026-04-25</lastmod>
     </url>
     <url>
-         <loc>https://nasa-virtual-zarr-survey.readthedocs.io/api/discover/</loc>
-         <lastmod>2026-04-24</lastmod>
+         <loc>https://nasa-impact.github.io/nasa-virtual-zarr-survey/api/discover/</loc>
+         <lastmod>2026-04-25</lastmod>
     </url>
     <url>
-         <loc>https://nasa-virtual-zarr-survey.readthedocs.io/api/report/</loc>
-         <lastmod>2026-04-24</lastmod>
+         <loc>https://nasa-impact.github.io/nasa-virtual-zarr-survey/api/report/</loc>
+         <lastmod>2026-04-25</lastmod>
     </url>
     <url>
-         <loc>https://nasa-virtual-zarr-survey.readthedocs.io/api/sample/</loc>
-         <lastmod>2026-04-24</lastmod>
+         <loc>https://nasa-impact.github.io/nasa-virtual-zarr-survey/api/sample/</loc>
+         <lastmod>2026-04-25</lastmod>
     </url>
     <url>
-         <loc>https://nasa-virtual-zarr-survey.readthedocs.io/api/taxonomy/</loc>
-         <lastmod>2026-04-24</lastmod>
+         <loc>https://nasa-impact.github.io/nasa-virtual-zarr-survey/api/taxonomy/</loc>
+         <lastmod>2026-04-25</lastmod>
     </url>
     <url>
-         <loc>https://nasa-virtual-zarr-survey.readthedocs.io/design/architecture/</loc>
-         <lastmod>2026-04-24</lastmod>
+         <loc>https://nasa-impact.github.io/nasa-virtual-zarr-survey/design/architecture/</loc>
+         <lastmod>2026-04-25</lastmod>
     </url>
     <url>
-         <loc>https://nasa-virtual-zarr-survey.readthedocs.io/design/taxonomy/</loc>
-         <lastmod>2026-04-24</lastmod>
+         <loc>https://nasa-impact.github.io/nasa-virtual-zarr-survey/design/taxonomy/</loc>
+         <lastmod>2026-04-25</lastmod>
     </url>
     <url>
-         <loc>https://nasa-virtual-zarr-survey.readthedocs.io/results/</loc>
-         <lastmod>2026-04-24</lastmod>
+         <loc>https://nasa-impact.github.io/nasa-virtual-zarr-survey/results/</loc>
+         <lastmod>2026-04-25</lastmod>
     </url>
 </urlset>

@@ -12,7 +12,7 @@
         <meta name="author" content="Max Jones">
       
       
-        <link rel="canonical" href="https://nasa-virtual-zarr-survey.readthedocs.io/contributing/">
+        <link rel="canonical" href="https://nasa-impact.github.io/nasa-virtual-zarr-survey/contributing/">
       
       
         <link rel="prev" href="../api/taxonomy/">
@@ -861,10 +861,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#pipeline-overview" class="md-nav__link">
+  <a href="#end-to-end-smoke-test" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Pipeline overview
+        End-to-end smoke test
       
     </span>
   </a>
@@ -918,6 +918,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inspecting-the-local-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspecting the local cache
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1039,10 +1050,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#pipeline-overview" class="md-nav__link">
+  <a href="#end-to-end-smoke-test" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Pipeline overview
+        End-to-end smoke test
       
     </span>
   </a>
@@ -1096,6 +1107,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inspecting-the-local-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspecting the local cache
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1194,14 +1216,14 @@ uv<span class="w"> </span>run<span class="w"> </span>--group<span class="w"> </s
 <li>Use commas, colons, or parentheses for aside-style punctuation.</li>
 <li>Do not reference paths outside the project repo (they will break when the repo is published).</li>
 </ul>
-<h2 id="pipeline-overview">Pipeline overview<a class="headerlink" href="#pipeline-overview" title="Permanent link">&para;</a></h2>
-<p>See the <a href="../design/architecture/">design document</a> for the full walk-through. Short version:</p>
-<ol>
-<li><code>discover</code> enumerates CMR collections into DuckDB.</li>
-<li><code>sample</code> picks up to N granules per collection, stratified across each collection's temporal extent.</li>
-<li><code>attempt</code> runs Phase 3 (Parsability) and Phase 4 (Datasetability) on each granule, writing results to partitioned Parquet.</li>
-<li><code>report</code> rolls up verdicts, runs Phase 5 (Virtual Store Feasibility / Cubability) on fingerprints, applies the taxonomy classifier, and renders <code>report.md</code>.</li>
-</ol>
+<h2 id="end-to-end-smoke-test">End-to-end smoke test<a class="headerlink" href="#end-to-end-smoke-test" title="Permanent link">&para;</a></h2>
+<p>To exercise the full pipeline from a clean slate and refresh the committed docs (<code>docs/results/index.md</code> and <code>docs/results/summary.json</code>):</p>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>nasa-virtual-zarr-survey<span class="w"> </span>pilot<span class="w"> </span>--clean<span class="w"> </span>--top<span class="w"> </span><span class="m">5</span><span class="w"> </span>--n-bins<span class="w"> </span><span class="m">3</span><span class="w"> </span>--access<span class="w"> </span>external
+</code></pre></div>
+<p><code>--clean</code> lists the paths it would delete and prompts for confirmation before wiping <code>output/survey.duckdb</code> and <code>output/results/</code>. The run hits live CMR and granule URLs, so it needs network and EDL credentials. <code>--clean</code> does not touch the granule cache, so cached bytes from prior runs are reused; combine with <code>--cache</code> to keep iteration fast:</p>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>nasa-virtual-zarr-survey<span class="w"> </span>pilot<span class="w"> </span>--clean<span class="w"> </span>--cache<span class="w"> </span>--top<span class="w"> </span><span class="m">5</span><span class="w"> </span>--n-bins<span class="w"> </span><span class="m">3</span><span class="w"> </span>--access<span class="w"> </span>external
+</code></pre></div>
+<p>The pipeline itself is documented in the <a href="../design/architecture/">design document</a>.</p>
 <h2 id="common-extension-tasks">Common extension tasks<a class="headerlink" href="#common-extension-tasks" title="Permanent link">&para;</a></h2>
 <h3 id="refining-the-taxonomy">Refining the taxonomy<a class="headerlink" href="#refining-the-taxonomy" title="Permanent link">&para;</a></h3>
 <p>After a pilot run, open <code>output/report.md</code> and scroll to "Top 20 Raw Errors in <code>OTHER</code>". Each recurring uncategorized error is a candidate for a new rule:</p>
@@ -1224,6 +1246,39 @@ uv<span class="w"> </span>run<span class="w"> </span>--group<span class="w"> </s
 <li>Expose it through the <code>--access</code> <code>click.Choice</code> in <code>__main__.py</code> for the <code>sample</code>, <code>attempt</code>, and <code>pilot</code> commands.</li>
 <li><code>sample._extract_url</code> already forwards the mode to <code>earthaccess.DataGranule.data_links(access=...)</code>, so usually no change is needed there.</li>
 </ol>
+<h2 id="inspecting-the-local-cache">Inspecting the local cache<a class="headerlink" href="#inspecting-the-local-cache" title="Permanent link">&para;</a></h2>
+<p>When <code>--cache</code> is enabled, fetched granule bytes are persisted under <code>~/.cache/nasa-virtual-zarr-survey/</code> (or whatever <code>--cache-dir</code> was set to). The layout is:</p>
+<div class="highlight"><pre><span></span><code>&lt;cache_dir&gt;/&lt;scheme&gt;/&lt;host&gt;/&lt;sha256(url)&gt;
+</code></pre></div>
+<p><code>&lt;scheme&gt;</code> and <code>&lt;host&gt;</code> come from <code>urlparse(url)</code>, and the file name is the SHA-256 of the granule's data URL exactly as stored in <code>granules.data_url</code>. Listing a single bucket or host shows every cached entry for that target:</p>
+<div class="highlight"><pre><span></span><code>ls<span class="w"> </span>-lh<span class="w"> </span>~/.cache/nasa-virtual-zarr-survey/s3/podaac-ops-cumulus-protected/
+</code></pre></div>
+<p>To find the cache path for a specific granule, look up its URL in the DuckDB and hash it:</p>
+<div class="highlight"><pre><span></span><code><span class="nv">url</span><span class="o">=</span><span class="k">$(</span>duckdb<span class="w"> </span>output/survey.duckdb<span class="w"> </span>-noheader<span class="w"> </span>-list<span class="w"> </span>-s<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;SELECT data_url FROM granules WHERE granule_concept_id = &#39;G123-XYZ&#39;;&quot;</span><span class="k">)</span>
+
+python3<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<span class="s2">import sys, hashlib</span>
+<span class="s2">from urllib.parse import urlparse</span>
+<span class="s2">url = sys.argv[1]</span>
+<span class="s2">p = urlparse(url)</span>
+<span class="s2">print(f&#39;~/.cache/nasa-virtual-zarr-survey/{p.scheme}/{p.netloc}/{hashlib.sha256(url.encode()).hexdigest()}&#39;)</span>
+<span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$url</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p>To go the other direction, given a cache file name, find the granule by hashing every URL in the <code>granules</code> table and matching:</p>
+<div class="highlight"><pre><span></span><code>duckdb<span class="w"> </span>output/survey.duckdb<span class="w"> </span>-noheader<span class="w"> </span>-list<span class="w"> </span>-s<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">&quot;SELECT granule_concept_id, data_url FROM granules;&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="p">|</span><span class="w"> </span>python3<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<span class="s2">import sys, hashlib</span>
+<span class="s2">target = sys.argv[1]</span>
+<span class="s2">for line in sys.stdin:</span>
+<span class="s2">    gid, _, url = line.partition(&#39;|&#39;)</span>
+<span class="s2">    if hashlib.sha256(url.strip().encode()).hexdigest() == target:</span>
+<span class="s2">        print(gid, url.strip())</span>
+<span class="s2">&quot;</span><span class="w"> </span><span class="s2">&quot;&lt;sha256-from-filename&gt;&quot;</span>
+</code></pre></div>
+<p>To clear the cache, delete the directory: <code>rm -rf ~/.cache/nasa-virtual-zarr-survey/</code>. The total size is bounded by the <code>--cache-max-size</code> cap; once exceeded, the survey logs a warning once per process and falls through to direct fetches without caching new granules. Existing cache entries continue to serve reads.</p>
+<p>See the "Local granule cache" section of <code>docs/design/architecture.md</code> for the full layout and trade-offs.</p>
 <h2 id="code-style">Code style<a class="headerlink" href="#code-style" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Small, focused files. Each module in <code>src/nasa_virtual_zarr_survey/</code> has one clear responsibility.</li>

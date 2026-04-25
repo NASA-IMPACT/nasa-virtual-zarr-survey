@@ -12,7 +12,7 @@
         <meta name="author" content="Max Jones">
       
       
-        <link rel="canonical" href="https://nasa-virtual-zarr-survey.readthedocs.io/results/">
+        <link rel="canonical" href="https://nasa-impact.github.io/nasa-virtual-zarr-survey/results/">
       
       
         <link rel="prev" href="..">
@@ -897,30 +897,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#phase-5-virtual-store-feasibility" class="md-nav__link">
+  <a href="#phase-5-cubability" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Phase 5: Virtual Store Feasibility
+        Phase 5: Cubability
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Phase 5: Virtual Store Feasibility">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#virtual-store-incompatibility-reasons" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Virtual Store Incompatibility Reasons
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1023,17 +1006,17 @@
 
 <h1 id="nasa-virtualizarr-survey-report">NASA VirtualiZarr Survey Report<a class="headerlink" href="#nasa-virtualizarr-survey-report" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Generated:</strong> 2026-04-24T02:06:19.944364+00:00</li>
-<li><strong>Survey tool:</strong> 0.1.dev36+g85bf5a483.d20260424</li>
+<li><strong>Generated:</strong> 2026-04-25T22:59:40.038639+00:00</li>
+<li><strong>Survey tool:</strong> 0.1.dev53+g44a4d250a.d20260425</li>
 <li><strong>VirtualiZarr:</strong> 2.5.1</li>
 <li><strong>Zarr:</strong> 3.1.6</li>
 <li><strong>Xarray:</strong> 2026.2.0</li>
-<li><strong>Sampling mode:</strong> top=5</li>
+<li><strong>Sampling mode:</strong> top=2</li>
 </ul>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <iframe src="figures/sankey.html" width="100%" height="500" frameborder="0"></iframe>
 
-<p>Total collections: <strong>5</strong></p>
+<p>Total collections: <strong>2</strong></p>
 <iframe src="figures/funnel.html" width="100%" height="500" frameborder="0"></iframe>
 
 <h2 id="skipped-collections-by-declared-format">Skipped collections by declared format<a class="headerlink" href="#skipped-collections-by-declared-format" title="Permanent link">&para;</a></h2>
@@ -1065,10 +1048,6 @@
 </thead>
 <tbody>
 <tr>
-<td>all_pass</td>
-<td style="text-align: right;">3</td>
-</tr>
-<tr>
 <td>all_fail</td>
 <td style="text-align: right;">1</td>
 </tr>
@@ -1090,7 +1069,7 @@
 <tbody>
 <tr>
 <td>UNDEFINED_FILL_VALUE</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">3</td>
 <td style="text-align: right;">1</td>
 </tr>
 </tbody>
@@ -1098,7 +1077,7 @@
 <iframe src="figures/taxonomy_parse.html" width="100%" height="500" frameborder="0"></iframe>
 
 <h2 id="phase-4a-datasetability">Phase 4a: Datasetability<a class="headerlink" href="#phase-4a-datasetability" title="Permanent link">&para;</a></h2>
-<p>Per-collection verdicts based on whether the ManifestStore converted to an xarray.Dataset. Denominator: 3 collections whose sampled granules all parsed successfully.</p>
+<p>Per-collection verdicts based on whether the ManifestStore converted to an xarray.Dataset. Denominator: 0 collections whose sampled granules all parsed successfully.</p>
 <table>
 <thead>
 <tr>
@@ -1108,8 +1087,8 @@
 </thead>
 <tbody>
 <tr>
-<td>all_pass</td>
-<td style="text-align: right;">3</td>
+<td></td>
+<td></td>
 </tr>
 </tbody>
 </table>
@@ -1118,7 +1097,7 @@
 <iframe src="figures/taxonomy_dataset.html" width="100%" height="500" frameborder="0"></iframe>
 
 <h2 id="phase-4b-datatreeability">Phase 4b: Datatreeability<a class="headerlink" href="#phase-4b-datatreeability" title="Permanent link">&para;</a></h2>
-<p>Per-collection verdicts based on whether the ManifestStore converted to an xarray.DataTree. Attempted in parallel with Phase 4a for all collections that parsed successfully (denominator: 3).</p>
+<p>Per-collection verdicts based on whether the ManifestStore converted to an xarray.DataTree. Attempted in parallel with Phase 4a for all collections that parsed successfully (denominator: 0).</p>
 <p><strong>Rescued by Phase 4b:</strong> 0 collection(s) that failed Phase 4a (<code>CONFLICTING_DIM_SIZES</code>) succeeded under Phase 4b.</p>
 <table>
 <thead>
@@ -1129,36 +1108,17 @@
 </thead>
 <tbody>
 <tr>
-<td>all_pass</td>
-<td style="text-align: right;">2</td>
-</tr>
-<tr>
-<td>all_fail</td>
-<td style="text-align: right;">1</td>
+<td></td>
+<td></td>
 </tr>
 </tbody>
 </table>
 <h3 id="datatree-failure-taxonomy">Datatree Failure Taxonomy<a class="headerlink" href="#datatree-failure-taxonomy" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Bucket</th>
-<th style="text-align: right;">Granules</th>
-<th style="text-align: right;">Collections</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>CONFLICTING_DIM_SIZES</td>
-<td style="text-align: right;">5</td>
-<td style="text-align: right;">1</td>
-</tr>
-</tbody>
-</table>
+<p><em>No failures.</em></p>
 <iframe src="figures/taxonomy_datatree.html" width="100%" height="500" frameborder="0"></iframe>
 
-<h2 id="phase-5-virtual-store-feasibility">Phase 5: Virtual Store Feasibility<a class="headerlink" href="#phase-5-virtual-store-feasibility" title="Permanent link">&para;</a></h2>
-<p>For collections whose all sampled granules produced xarray.Datasets (denominator: 3), whether the granules can be combined into a coherent virtual store.</p>
+<h2 id="phase-5-cubability">Phase 5: Cubability<a class="headerlink" href="#phase-5-cubability" title="Permanent link">&para;</a></h2>
+<p>For collections whose all sampled granules produced xarray.Datasets (denominator: 0), whether the granules can be combined into a coherent virtual store.</p>
 <table>
 <thead>
 <tr>
@@ -1168,43 +1128,8 @@
 </thead>
 <tbody>
 <tr>
-<td>INCONCLUSIVE</td>
-<td style="text-align: right;">3</td>
-</tr>
-<tr>
 <td>NOT_ATTEMPTED</td>
 <td style="text-align: right;">2</td>
-</tr>
-</tbody>
-</table>
-<h3 id="virtual-store-incompatibility-reasons">Virtual Store Incompatibility Reasons<a class="headerlink" href="#virtual-store-incompatibility-reasons" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Verdict</th>
-<th>Reason</th>
-<th style="text-align: right;">Collections</th>
-<th>Example IDs</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>INCONCLUSIVE</td>
-<td>all granules identical; cannot identify concat dim</td>
-<td style="text-align: right;">1</td>
-<td>C1667168435-LARC_ASDC</td>
-</tr>
-<tr>
-<td>INCONCLUSIVE</td>
-<td>fewer than 2 fingerprints</td>
-<td style="text-align: right;">1</td>
-<td>C1996546500-GHRC_DAAC</td>
-</tr>
-<tr>
-<td>INCONCLUSIVE</td>
-<td>ambiguous concat dim: ['number_of_lines', 'number_of_scans']</td>
-<td style="text-align: right;">1</td>
-<td>C2105091501-LAADS</td>
 </tr>
 </tbody>
 </table>
@@ -1230,32 +1155,11 @@
 <td>n/a</td>
 </tr>
 <tr>
-<td>NASA/GSFC/SED/ESD/HBSL/BISB/LAADS</td>
-<td>1/1 (100%)</td>
-<td>1/1 (100%)</td>
-<td>1/1 (100%)</td>
-<td>0/1 (0%)</td>
-</tr>
-<tr>
 <td>NASA/GSFC/SED/ESD/TISL/GESDISC</td>
 <td>0/1 (0%)</td>
 <td>n/a</td>
 <td>n/a</td>
 <td>n/a</td>
-</tr>
-<tr>
-<td>NASA/LARC/SD/ASDC</td>
-<td>1/1 (100%)</td>
-<td>1/1 (100%)</td>
-<td>0/1 (0%)</td>
-<td>0/1 (0%)</td>
-</tr>
-<tr>
-<td>NASA/MSFC/GHRC</td>
-<td>1/1 (100%)</td>
-<td>1/1 (100%)</td>
-<td>1/1 (100%)</td>
-<td>0/1 (0%)</td>
 </tr>
 </tbody>
 </table>
@@ -1275,17 +1179,10 @@
 <tbody>
 <tr>
 <td>HDF5</td>
-<td>&frac12; (50%)</td>
-<td>1/1 (100%)</td>
 <td>0/1 (0%)</td>
-<td>0/1 (0%)</td>
-</tr>
-<tr>
-<td>NetCDF4</td>
-<td>2/2 (100%)</td>
-<td>2/2 (100%)</td>
-<td>2/2 (100%)</td>
-<td>0/2 (0%)</td>
+<td>n/a</td>
+<td>n/a</td>
+<td>n/a</td>
 </tr>
 <tr>
 <td>UNKNOWN</td>
@@ -1315,9 +1212,9 @@
 </tr>
 <tr>
 <td>fallback</td>
-<td style="text-align: right;">4</td>
-<td style="text-align: right;">3</td>
-<td style="text-align: right;">3</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
 </tr>
 <tr>
 <td>unsampled</td>
@@ -1360,16 +1257,6 @@
 <td>-</td>
 </tr>
 <tr>
-<td>C2105091501-LAADS</td>
-<td>NASA/GSFC/SED/ESD/HBSL/BISB/LAADS</td>
-<td>NetCDF4</td>
-<td>all_pass</td>
-<td>all_pass</td>
-<td>all_pass</td>
-<td>INCONCLUSIVE</td>
-<td>-</td>
-</tr>
-<tr>
 <td>C2723754847-GES_DISC</td>
 <td>NASA/GSFC/SED/ESD/TISL/GESDISC</td>
 <td>HDF5</td>
@@ -1378,26 +1265,6 @@
 <td>not_attempted</td>
 <td>NOT_ATTEMPTED</td>
 <td>UNDEFINED_FILL_VALUE</td>
-</tr>
-<tr>
-<td>C1667168435-LARC_ASDC</td>
-<td>NASA/LARC/SD/ASDC</td>
-<td>HDF5</td>
-<td>all_pass</td>
-<td>all_pass</td>
-<td>all_fail</td>
-<td>INCONCLUSIVE</td>
-<td>-</td>
-</tr>
-<tr>
-<td>C1996546500-GHRC_DAAC</td>
-<td>NASA/MSFC/GHRC</td>
-<td>NetCDF4</td>
-<td>all_pass</td>
-<td>all_pass</td>
-<td>all_pass</td>
-<td>INCONCLUSIVE</td>
-<td>-</td>
 </tr>
 </tbody>
 </table>

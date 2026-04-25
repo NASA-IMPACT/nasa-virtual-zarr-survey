@@ -12,7 +12,7 @@
         <meta name="author" content="Max Jones">
       
       
-        <link rel="canonical" href="https://nasa-virtual-zarr-survey.readthedocs.io/">
+        <link rel="canonical" href="https://nasa-impact.github.io/nasa-virtual-zarr-survey/">
       
       
       
@@ -412,6 +412,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#caching-granule-bytes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Caching granule bytes
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -422,17 +433,6 @@
     <span class="md-ellipsis">
       
         Architecture at a glance
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#license" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        License
       
     </span>
   </a>
@@ -972,6 +972,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#caching-granule-bytes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Caching granule bytes
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -982,17 +993,6 @@
     <span class="md-ellipsis">
       
         Architecture at a glance
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#license" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        License
       
     </span>
   </a>
@@ -1027,7 +1027,7 @@
 <li><strong>Parsability</strong> (Phase 3): the VirtualiZarr parser can produce a <code>ManifestStore</code> from a granule URL.
 4a. <strong>Datasetability</strong> (Phase 4a): the <code>ManifestStore</code> can be converted to an <code>xarray.Dataset</code>.
 4b. <strong>Datatreeability</strong> (Phase 4b): the <code>ManifestStore</code> can be converted to an <code>xarray.DataTree</code>. Attempted in parallel with 4a; captures hierarchical files that fail 4a with <code>CONFLICTING_DIM_SIZES</code>.</li>
-<li><strong>Virtual Store Feasibility / Cubability</strong> (Phase 5): the per-granule datasets can be combined into a coherent virtual store. Gated on Phase 4a <code>all_pass</code> (tree-only collections are not yet cubable).</li>
+<li><strong>Cubability</strong> (Phase 5): the per-granule datasets can be combined into a coherent virtual store. Gated on Phase 4a <code>all_pass</code> (tree-only collections are not yet cubable).</li>
 </ol>
 <p>Failures in each phase are categorized into an empirically-derived taxonomy so VirtualiZarr maintainers and NASA DAAC operators can prioritize gaps.</p>
 <h2 id="getting-started">Getting started<a class="headerlink" href="#getting-started" title="Permanent link">&para;</a></h2>
@@ -1058,6 +1058,11 @@ uv<span class="w"> </span>run<span class="w"> </span>nasa-virtual-zarr-survey<sp
 <p>To see what would be fetched without writing to the DB:</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>nasa-virtual-zarr-survey<span class="w"> </span>discover<span class="w"> </span>--top<span class="w"> </span><span class="m">20</span><span class="w"> </span>--dry-run
 </code></pre></div>
+<h3 id="caching-granule-bytes">Caching granule bytes<a class="headerlink" href="#caching-granule-bytes" title="Permanent link">&para;</a></h3>
+<p>Iterating on the taxonomy or report code without re-downloading granules is much faster with a local cache. Add <code>--cache</code> to any command that fetches granules to persist fetched bytes under <code>~/.cache/nasa-virtual-zarr-survey/</code>:</p>
+<div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>nasa-virtual-zarr-survey<span class="w"> </span>pilot<span class="w"> </span>--cache<span class="w"> </span>--top<span class="w"> </span><span class="m">5</span><span class="w"> </span>--n-bins<span class="w"> </span><span class="m">3</span><span class="w"> </span>--access<span class="w"> </span>external
+</code></pre></div>
+<p>Override the location with <code>--cache-dir</code> or <code>NASA_VZ_SURVEY_CACHE_DIR</code>, and bound total size with <code>--cache-max-size</code>. See the contributing guide for cache layout and inspection tips.</p>
 <h2 id="architecture-at-a-glance">Architecture at a glance<a class="headerlink" href="#architecture-at-a-glance" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>earthaccess.search_datasets(...)        (Phase 1: discover)
   ↓
@@ -1071,8 +1076,6 @@ cubability (Phase 5) + report render
 </code></pre></div>
 <p>State is persisted in a DuckDB database (<code>output/survey.duckdb</code>) for checkpoint data, and in DAAC-partitioned Parquet shards (<code>output/results/</code>) for the append-only per-attempt log. Both phases are resumable.</p>
 <p>For a full design walk-through see the <a href="design/architecture/">design document</a>.</p>
-<h2 id="license">License<a class="headerlink" href="#license" title="Permanent link">&para;</a></h2>
-<p>Distributed under the terms of the <a href="https://spdx.org/licenses/MIT.html">MIT</a> license.</p>
 
 
 

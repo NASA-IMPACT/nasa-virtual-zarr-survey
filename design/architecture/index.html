@@ -12,7 +12,7 @@
         <meta name="author" content="Max Jones">
       
       
-        <link rel="canonical" href="https://nasa-virtual-zarr-survey.readthedocs.io/design/architecture/">
+        <link rel="canonical" href="https://nasa-impact.github.io/nasa-virtual-zarr-survey/design/architecture/">
       
       
         <link rel="prev" href="../../results/">
@@ -803,6 +803,200 @@
     <span class="md-ellipsis">
       
         external
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#local-granule-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local granule cache
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Local granule cache">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cache-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cap-warning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cap warning
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#failure-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#caveats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Caveats
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-goals
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#per-collection-overrides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-collection overrides
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Per-collection overrides">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validation-rules-at-load-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation rules at load time
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#module-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Module layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#effect-on-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Effect on results
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#non-goals_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-goals
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#repro-and-structural-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repro and structural inspection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Repro and structural inspection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-debug-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The debug loop
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bucket-triage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bucket triage
       
     </span>
   </a>
@@ -1663,6 +1857,200 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#local-granule-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local granule cache
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Local granule cache">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cache-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cap-warning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cap warning
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#failure-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#caveats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Caveats
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-goals
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#per-collection-overrides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-collection overrides
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Per-collection overrides">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validation-rules-at-load-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation rules at load time
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#module-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Module layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#effect-on-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Effect on results
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#non-goals_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-goals
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#repro-and-structural-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repro and structural inspection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Repro and structural inspection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-debug-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The debug loop
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bucket-triage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bucket triage
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#data-model" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2091,6 +2479,7 @@ report   → report.md + figures                        [Phase 5: cubability rol
 <li><strong>Fallback:</strong> if the temporal extent is missing, call <code>search_data(concept_id, count=5)</code> and assign synthetic <code>temporal_bin=0..4</code> with <code>stratified=False</code>.</li>
 </ul>
 <p>The <code>stratified</code> flag propagates to the Parquet log so the final report can distinguish genuine temporal coverage from fallback sampling.</p>
+<p>Each granule row also records the <code>access_mode</code> it was sampled under (<code>direct</code> or <code>external</code>). On a re-run with a different <code>--access</code>, <code>run_sample</code> deletes existing rows whose mode does not match and re-samples those collections so the URL scheme in the granules table always agrees with the requested mode. A warning is logged listing the affected collections so the operator knows existing rows in <code>output/results/*.parquet</code> still reference the old URLs.</p>
 <h3 id="rate-limiting-and-politeness">Rate-limiting and politeness<a class="headerlink" href="#rate-limiting-and-politeness" title="Permanent link">&para;</a></h3>
 <p>No explicit rate limiting. <code>discover</code> issues O(1) CMR calls (one paged <code>search_datasets</code>, or N/100 concept-id batches in top-N mode). <code>sample</code> issues O(collections × 5) granule-search calls. <code>attempt</code> hits S3 / DAAC HTTPS gateways directly and does not touch CMR. A full survey is ~10k attempts and runs in ~1 workday.</p>
 <h2 id="virtualizarr-interactions">VirtualiZarr interactions<a class="headerlink" href="#virtualizarr-interactions" title="Permanent link">&para;</a></h2>
@@ -2155,6 +2544,190 @@ report   → report.md + figures                        [Phase 5: cubability rol
 <li>Many DAAC HTTPS gateways 302-redirect to presigned S3 URLs. This is expected; <code>HTTPStore</code>'s default redirect behaviour handles it. See <a href="#known-limitations">Known Limitations</a> for the caveat about bearer-header retention across redirects.</li>
 </ul>
 <p>Both stores raise <code>AuthUnavailable</code> on missing credentials / tokens; the caller records the failure as a per-granule <code>AuthUnavailable</code> result rather than aborting.</p>
+<h2 id="local-granule-cache">Local granule cache<a class="headerlink" href="#local-granule-cache" title="Permanent link">&para;</a></h2>
+<p>Re-running <code>attempt</code> after a VirtualiZarr bump, a taxonomy refinement, or a new override means re-fetching bytes for every sampled granule. The same applies to <code>repro</code> iteration on a single granule's parser kwargs and to <code>pilot --sample N</code> while developing taxonomy rules. Most failures the survey records are properties of the granule (parser bug, malformed file, unsupported codec) rather than the network path, so caching fetched bytes between iterations does not mask the signal.</p>
+<p>A new module <code>cache.py</code> provides <code>DiskCachingReadableStore</code>, an <code>obspec</code> wrapper that persists fetched bytes to <code>&lt;cache_dir&gt;/&lt;scheme&gt;/&lt;host&gt;/&lt;sha256(scheme://host/path)&gt;</code>. <code>auth.StoreCache.get_store</code> wraps every constructed store in it when caching is enabled, so <code>_build_registry</code> and the rest of the pipeline are unchanged. Three CLI flags on <code>attempt</code>, <code>pilot</code>, and generated repro scripts:</p>
+<ul>
+<li><code>--cache / --no-cache</code> — default off. The cache silently consumes disk; opt-in.</li>
+<li><code>--cache-dir PATH</code> — default <code>~/.cache/nasa-virtual-zarr-survey/</code>. Honors <code>NASA_VZ_SURVEY_CACHE_DIR</code>.</li>
+<li><code>--cache-max-size SIZE</code> — default <code>50GB</code>, accepts human-readable strings (<code>50GB</code>, <code>2.5TB</code>).</li>
+</ul>
+<h3 id="cache-key">Cache key<a class="headerlink" href="#cache-key" title="Permanent link">&para;</a></h3>
+<p><code>sha256(scheme://host/path)</code>. Stable for the survey's purposes: granule URLs do not change for a given concept ID across runs. <code>direct</code> and <code>external</code> access modes produce different URLs for the same logical granule and so end up with different cache entries — correct, since DAAC HTTPS gateways often redirect to presigned S3 and the bytes returned can differ.</p>
+<h3 id="data-flow">Data flow<a class="headerlink" href="#data-flow" title="Permanent link">&para;</a></h3>
+<p>A read through a wrapped store:</p>
+<ol>
+<li>Caller asks <code>wrapped.get(path)</code> or <code>wrapped.get_range(path, start, end)</code>.</li>
+<li>Compute <code>local_path = cache_dir / scheme / host / sha256(scheme://host/path)</code>.</li>
+<li><strong>Cache hit</strong> (file exists): serve from the local file, no network.</li>
+<li><strong>Cache miss</strong>:</li>
+<li><code>head(path)</code> against the underlying store to learn the object size.</li>
+<li>If <code>current_size + object_size &lt;= max_bytes</code>: fetch the full object via <code>store.get(path)</code>, write atomically (<code>*.tmp</code> + <code>os.replace</code>), update the in-memory size counter under a <code>threading.Lock</code>, then serve the read from disk.</li>
+<li>If the cap would be exceeded: log a warning once per process, fall through to the underlying store without caching. Survey continues.</li>
+</ol>
+<p>The <code>head</code>-before-fetch costs one extra round trip per cache miss but is the only way to honor the cap without speculatively writing then deleting. On <code>DiskCachingReadableStore</code> init, the cache dir is walked once to compute current size from disk — authoritative, slightly slow on a 50 GB cache, runs once per process.</p>
+<h3 id="cap-warning">Cap warning<a class="headerlink" href="#cap-warning" title="Permanent link">&para;</a></h3>
+<p>Printed once per process to stderr when the cap is first exceeded:</p>
+<div class="highlight"><pre><span></span><code>[cache] cache size 49.8 GB exceeds cap 50.0 GB;
+        further granules will not be cached.
+        clear the cache with `rm -rf &lt;cache_dir&gt;`
+        or pass --cache-max-size to raise the cap.
+</code></pre></div>
+<p><code>&lt;cache_dir&gt;</code> is interpolated from the actual <code>--cache-dir</code> so the message is copy-pasteable.</p>
+<h3 id="failure-modes">Failure modes<a class="headerlink" href="#failure-modes" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Cache dir not writable</strong> (read-only FS, permission error on first write): log once, fall through to direct fetches. Survey still completes, uncached.</li>
+<li><strong>Disk full mid-write</strong>: catch <code>OSError</code>, delete the partial <code>*.tmp</code>, log warning, fall through.</li>
+<li><strong>Underlying store error during a cache-miss fetch</strong>: propagated unchanged. The wrapper is transparent — no negative caching.</li>
+<li><strong>Concurrent writers</strong> across worktrees: atomic <code>*.tmp</code> + <code>os.replace</code> ensures readers always see a complete file or none. The in-process <code>Lock</code> covers size accounting only.</li>
+<li><strong>Stale <code>.tmp</code></strong> from a crashed prior run: ignored on read, overwritten on next write.</li>
+</ul>
+<h3 id="caveats">Caveats<a class="headerlink" href="#caveats" title="Permanent link">&para;</a></h3>
+<ul>
+<li><em>First-fetch timeout interaction.</em> With <code>--cache</code> on, the first read of a granule downloads the full file even when the parser only needs a few MB. That fetch happens inside the parse phase under <code>--timeout</code> (default 60 s), so granules whose full size is hundreds of MB on a slow link can newly time out. Mitigation: raise <code>--timeout</code> for the first cached run; subsequent runs serve from disk.</li>
+<li><em>First-run wall time.</em> The first cached run downloads more bytes than an uncached run; the break-even is iteration two.</li>
+<li><em>Sequential safety only.</em> Atomic rename + in-process lock is sufficient for single-process runs and occasional worktree overlap, not a future ProcessPool.</li>
+</ul>
+<h3 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Range-level caching. v1 is whole-granule; if a parser only reads 5 MB of a 1 GB HDF5 file, v1 still downloads the full GB on first miss. Range-level caching can come later if profiling shows giant files dominate.</li>
+<li>Negative caching. Failed responses (403, 404, timeouts) are never written.</li>
+<li>Auto-eviction. Append-only; the operator clears the cache when the cap warning fires.</li>
+<li>Cross-process locking. Atomic writes are sufficient for the workloads we care about.</li>
+<li>Caching at non-granule layers (CMR JSON responses, EDL credentials). Cheap relative to granule fetches and out of scope.</li>
+<li>Built-in <code>cache info</code> / <code>cache clear</code> subcommands. <code>du -sh</code> and <code>rm -rf</code> against <code>&lt;cache_dir&gt;</code> suffice.</li>
+</ul>
+<h2 id="per-collection-overrides">Per-collection overrides<a class="headerlink" href="#per-collection-overrides" title="Permanent link">&para;</a></h2>
+<p><code>attempt.py</code> constructs every parser with default arguments and calls <code>manifest_store.to_virtual_dataset()</code> and <code>to_virtual_datatree()</code> with no kwargs. Many CMR collections that fail under that naive call shape would parse cleanly with the right kwargs — <code>group=</code> for an HDF5 file whose science variables live under a sub-group, <code>drop_variables=</code> to skip a single variable with a compound dtype, or <code>skip_dataset = true</code> for a collection whose dimension structure cannot be flattened. Without an override layer, the survey re-records the same failure on every run and the institutional knowledge ("collection C123 needs <code>group='science'</code>") lives only in operator memory.</p>
+<p>The override mechanism lets an operator run the survey naively, debug a failure with <code>repro</code>, and record the fix in a checked-in artifact that future <code>attempt</code> runs pick up automatically. The artifact is diff-able and PR-reviewable so it doubles as the survey's "lessons learned" register.</p>
+<h3 id="configuration-file">Configuration file<a class="headerlink" href="#configuration-file" title="Permanent link">&para;</a></h3>
+<p><code>config/collection_overrides.toml</code>, checked in. Each top-level table is keyed by CMR collection concept ID:</p>
+<div class="highlight"><pre><span></span><code><span class="k">[C1996881146-POCLOUD]</span>
+<span class="n">parser</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">group</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;science&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">drop_variables</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;status_flag&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+<span class="n">dataset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">loadable_variables</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[]</span><span class="w"> </span><span class="p">}</span>
+<span class="n">notes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Top-level group has no array vars; descend to /science.&quot;</span>
+
+<span class="k">[C2208418228-POCLOUD]</span>
+<span class="n">skip_dataset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="n">notes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;to_virtual_dataset raises ConflictingDimSizes; datatree path works.&quot;</span>
+
+<span class="k">[C2746966926-LPCLOUD]</span>
+<span class="n">skip_dataset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="n">skip_datatree</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="n">notes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Tracked: https://github.com/zarr-developers/VirtualiZarr/issues/1234&quot;</span>
+</code></pre></div>
+<h3 id="validation-rules-at-load-time">Validation rules at load time<a class="headerlink" href="#validation-rules-at-load-time" title="Permanent link">&para;</a></h3>
+<p>Loaded eagerly at the top of <code>run_attempt</code>, so a malformed entry fails the run before any granule is touched.</p>
+<ol>
+<li>Top-level keys match <code>^C\d+-[A-Z]+$</code>.</li>
+<li>Per-collection sub-keys limited to: <code>parser</code>, <code>dataset</code>, <code>datatree</code>, <code>skip_dataset</code>, <code>skip_datatree</code>, <code>notes</code>. Anything else rejected.</li>
+<li><code>parser</code> / <code>dataset</code> / <code>datatree</code> values must be inline tables (or absent).</li>
+<li><code>parser</code> kwarg names checked against the dispatched parser's <code>__init__</code> signature for that collection's format family. A <code>group=</code> on a <code>NoParserAvailable</code> family is an error.</li>
+<li><code>dataset</code> kwargs validated against <code>ManifestStore.to_virtual_dataset</code>'s signature; <code>datatree</code> against <code>to_virtual_datatree</code>'s.</li>
+<li><code>skip_dataset = true</code> combined with <code>dataset = {...}</code> is an error (contradictory). Same for datatree.</li>
+<li><code>notes</code> is required on any non-empty entry — a one-line rationale for review.</li>
+</ol>
+<p><code>nasa-virtual-zarr-survey validate-overrides</code> runs the rules standalone and prints <code>OK</code> or the first error with a useful pointer.</p>
+<h3 id="module-layout">Module layout<a class="headerlink" href="#module-layout" title="Permanent link">&para;</a></h3>
+<p><code>overrides.py</code> is the only new code surface for the mechanism:</p>
+<ul>
+<li><code>OverrideRegistry.from_toml(path) -&gt; OverrideRegistry</code> parses and validates.</li>
+<li><code>registry.for_collection(concept_id) -&gt; CollectionOverride</code> returns an immutable record carrying <code>parser_kwargs</code>, <code>dataset_kwargs</code>, <code>datatree_kwargs</code>, <code>skip_dataset</code>, <code>skip_datatree</code>. A miss returns the empty default.</li>
+<li><code>apply_to_parser(parser_cls, kwargs)</code>, <code>apply_to_dataset_call(manifest_store, kwargs)</code>, <code>apply_to_datatree_call(manifest_store, kwargs)</code> are used by both <code>attempt_one</code> and the repro renderer so application logic lives in one place.</li>
+</ul>
+<p><code>attempt_one</code> accepts <code>override: CollectionOverride | None = None</code> (defaulting to no-op); <code>run_attempt</code> loads the registry once at startup and passes the matching override into each call. The worker thread and timeout logic are untouched.</p>
+<h3 id="effect-on-results">Effect on results<a class="headerlink" href="#effect-on-results" title="Permanent link">&para;</a></h3>
+<p><code>AttemptResult</code> and the Parquet schema gain a single new column, <code>override_applied: bool</code>, true when any kwarg or skip flag was used. The report distinguishes "succeeded naively" from "succeeded with an override" — different signals to a downstream reader. Override kwargs themselves are <em>not</em> serialized into Parquet; the TOML file plus the git SHA at run time are the canonical record.</p>
+<h3 id="non-goals_1">Non-goals<a class="headerlink" href="#non-goals_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Per-granule overrides. The granularity is collection only.</li>
+<li>A CLI to edit the override file. TOML is short and structured; a CLI for "set a key in a TOML file" is friction.</li>
+<li>Backporting overrides to existing failed result rows. A re-run after editing the file is the supported workflow.</li>
+</ul>
+<h2 id="repro-and-structural-inspection">Repro and structural inspection<a class="headerlink" href="#repro-and-structural-inspection" title="Permanent link">&para;</a></h2>
+<p><code>repro.py</code> generates a self-contained Python script per failing granule that reproduces the failing operation against the same URL, parser, and kwargs the survey used. The renderer reads <code>collection_overrides.toml</code> and bakes any existing overrides into the script, so the repro mirrors current attempt behavior; <code>--no-overrides</code> forces the script to mirror an unconfigured run, useful when first investigating a regression.</p>
+<p>When run, the generated script first dumps the file's structure <em>before</em> attempting the failing operation. This turns each repro into a datasheet for the granule and is the largest investment in debuggability the design makes. The new module <code>inspect.py</code> dispatches per <code>FormatFamily</code>:</p>
+<ul>
+<li><strong>HDF5 / NetCDF4</strong> — <code>h5py</code> walk: per group, list datasets with <code>shape</code>, <code>dtype</code>, <code>chunks</code>, <code>compression</code>, <code>compression_opts</code>, attached dim scales, fillvalue, top 10 attrs.</li>
+<li><strong>Zarr</strong> — open via <code>zarr-python</code>, dump <code>zarr.json</code> hierarchy: arrays with shape/dtype/chunks/codecs and group attrs.</li>
+<li><strong>NetCDF3</strong> — <code>netCDF4</code> (or <code>scipy.io.netcdf</code>) for dims, vars, and attrs.</li>
+<li><strong>GeoTIFF / COG</strong> — <code>tifffile</code>: IFDs, predictor, compression, tile/strip layout, photometric, GeoKeys.</li>
+<li><strong>DMR++</strong> — parse the XML and dump shape/dtype/chunk/filter info.</li>
+<li><strong>FITS</strong> — <code>astropy.io.fits.info()</code> plus per-HDU header extract.</li>
+</ul>
+<p>Two principles: the inspector reads through the same <code>obstore</code> <code>S3Store</code> / <code>HTTPStore</code> the parser uses (no separate auth path), and output is human-readable text <em>and</em> machine-parseable — a JSON blob block at the end of stdout, fenced with <code>&lt;&lt;&lt;INSPECT_JSON_BEGIN&gt;&gt;&gt;</code> ... <code>&lt;&lt;&lt;INSPECT_JSON_END&gt;&gt;&gt;</code> sentinels for downstream tooling.</p>
+<p>Generated repro scripts accept a small <code>argparse</code> interface:</p>
+<div class="highlight"><pre><span></span><code>uv run python repro_G456.py             # default: inspect, then attempt
+uv run python repro_G456.py --inspect   # structure dump only
+uv run python repro_G456.py --attempt   # virtualization only
+</code></pre></div>
+<p><code>--inspect</code> is useful when virtualization hangs, times out, or 403s. <code>--attempt</code> is useful when iterating quickly on kwargs after reading the structure once.</p>
+<h3 id="the-debug-loop">The debug loop<a class="headerlink" href="#the-debug-loop" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Naive <code>attempt</code> records <code>C123-DAAC</code> failing with e.g. <code>CONFLICTING_DIM_SIZES</code>, <code>override_applied = false</code>.</li>
+<li><code>nasa-virtual-zarr-survey repro C123-DAAC</code> emits <code>repro_G456.py</code> with current overrides baked in (or <code>--no-overrides</code>).</li>
+<li>Run the script. Structure dump prints, then the failing operation. Edit kwargs in the script until something works, or conclude it is an upstream bug.</li>
+<li>Hand-edit <code>config/collection_overrides.toml</code>; add a section for <code>C123-DAAC</code> with <code>notes</code> linking to the repro filename or upstream issue.</li>
+<li><code>validate-overrides</code> to confirm.</li>
+<li>Re-run scoped: <code>attempt --collection C123-DAAC</code> (the per-collection equivalent of <code>--daac</code>). Existing <code>_pending_granules</code> logic skips already-attempted granules, so a re-attempt requires removing that collection's rows from the Parquet log first — the manual operation is <code>find output/results/ -name '*.parquet' -delete</code> for a small survey.</li>
+<li>Full re-run records <code>override_applied = true</code>.</li>
+</ol>
+<h3 id="bucket-triage">Bucket triage<a class="headerlink" href="#bucket-triage" title="Permanent link">&para;</a></h3>
+<p>The inspector is sufficient for hand-debugging the High and Medium failure buckets:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Bucket</th>
+<th>Fix kind</th>
+<th>Inspector helps?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>High</td>
+<td><code>GROUP_STRUCTURE</code></td>
+<td><code>parser.group=</code></td>
+<td>Yes — group name is in the dump.</td>
+</tr>
+<tr>
+<td>High</td>
+<td><code>CONFLICTING_DIM_SIZES</code></td>
+<td><code>skip_dataset</code> or deeper <code>parser.group=</code></td>
+<td>Yes — group dim shapes visible.</td>
+</tr>
+<tr>
+<td>Medium</td>
+<td><code>COMPOUND_DTYPE</code> / <code>STRING_DTYPE</code></td>
+<td><code>drop_variables=[offending]</code></td>
+<td>Yes — dtype column flags the offender.</td>
+</tr>
+<tr>
+<td>Medium</td>
+<td><code>UNDEFINED_FILL_VALUE</code></td>
+<td><code>drop_variables=[offending]</code></td>
+<td>Yes — fillvalue column flags the offender.</td>
+</tr>
+<tr>
+<td>Medium</td>
+<td><code>UNSUPPORTED_CODEC</code> / <code>UNSUPPORTED_FILTER</code></td>
+<td><code>drop_variables=</code> workaround OR upstream issue</td>
+<td>Partial — inspector names the codec; real fix is upstream.</td>
+</tr>
+<tr>
+<td>Issue-only</td>
+<td><code>SHARDING_UNSUPPORTED</code>, <code>VARIABLE_CHUNKS</code>, <code>NON_STANDARD_HDF5</code>, <code>AMBIGUOUS_ARRAY_TRUTH</code></td>
+<td>Upstream issue</td>
+<td>Inspector helps draft the issue body; no kwarg fix exists.</td>
+</tr>
+<tr>
+<td>Low</td>
+<td><code>TIMEOUT</code>, <code>FORBIDDEN</code>, <code>NETWORK_ERROR</code>, <code>NO_PARSER</code>, <code>CANT_OPEN_FILE</code>, <code>SAMPLE_INVALID</code>, <code>AUTH_UNAVAILABLE</code></td>
+<td>Environmental or upstream</td>
+<td>Inspector adds nothing.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="data-model">Data model<a class="headerlink" href="#data-model" title="Permanent link">&para;</a></h2>
 <h3 id="duckdb-outputsurveyduckdb">DuckDB (<code>output/survey.duckdb</code>)<a class="headerlink" href="#duckdb-outputsurveyduckdb" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">collections</span><span class="w"> </span><span class="p">(</span>
@@ -2181,6 +2754,7 @@ report   → report.md + figures                        [Phase 5: cubability rol
 <span class="w">  </span><span class="n">size_bytes</span><span class="w">            </span><span class="nb">BIGINT</span><span class="p">,</span>
 <span class="w">  </span><span class="n">sampled_at</span><span class="w">            </span><span class="k">TIMESTAMP</span><span class="p">,</span>
 <span class="w">  </span><span class="n">stratified</span><span class="w">            </span><span class="nb">BOOLEAN</span><span class="p">,</span>
+<span class="w">  </span><span class="n">access_mode</span><span class="w">           </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w">  </span><span class="c1">-- &#39;direct&#39; | &#39;external&#39;</span>
 <span class="w">  </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">collection_concept_id</span><span class="p">,</span><span class="w"> </span><span class="n">granule_concept_id</span><span class="p">)</span>
 <span class="p">);</span>
 </code></pre></div>
@@ -2314,7 +2888,7 @@ report   → report.md + figures                        [Phase 5: cubability rol
 <li><strong>Forbidden run-abort:</strong> 5 consecutive direct-mode 403s cause a clean abort with a remediation message. Non-direct runs do not trigger this.</li>
 </ul>
 <h2 id="cli">CLI<a class="headerlink" href="#cli" title="Permanent link">&para;</a></h2>
-<p>Click-based. Subcommands: <code>version</code>, <code>discover</code>, <code>sample</code>, <code>attempt</code>, <code>report</code>, <code>pilot</code>, plus a <code>repro</code> helper that minimizes any single failure into a runnable script.</p>
+<p>Click-based. Subcommands: <code>version</code>, <code>discover</code>, <code>sample</code>, <code>attempt</code>, <code>report</code>, <code>pilot</code>, <code>repro</code> (minimizes any single failure into a runnable script), and <code>validate-overrides</code> (loads <code>config/collection_overrides.toml</code> and prints <code>OK</code> or the first validation error).</p>
 <p>Common flags across work phases:</p>
 <ul>
 <li><code>--db PATH</code> — DuckDB checkpoint (default <code>output/survey.duckdb</code>)</li>
@@ -2322,6 +2896,7 @@ report   → report.md + figures                        [Phase 5: cubability rol
 <li><code>--out PATH</code> — report output (default <code>docs/results/index.md</code>)</li>
 <li><code>--access {direct,external}</code> — granule access mode (default <code>direct</code>)</li>
 <li><code>--daac NAME</code> — restrict to one DAAC</li>
+<li><code>--collection CONCEPT_ID</code> — restrict to one collection (per-collection equivalent of <code>--daac</code>)</li>
 </ul>
 <p>Discovery-specific:</p>
 <ul>
@@ -2333,6 +2908,17 @@ report   → report.md + figures                        [Phase 5: cubability rol
 <li><code>--timeout SECONDS</code> (default 60)</li>
 <li><code>--shard-size ROWS</code> (default 500)</li>
 </ul>
+<p>Cache-related, on <code>attempt</code>, <code>pilot</code>, and generated repro scripts:</p>
+<ul>
+<li><code>--cache / --no-cache</code> — default off</li>
+<li><code>--cache-dir PATH</code> — default <code>~/.cache/nasa-virtual-zarr-survey/</code> (also <code>NASA_VZ_SURVEY_CACHE_DIR</code>)</li>
+<li><code>--cache-max-size SIZE</code> — default <code>50GB</code>, accepts human-readable strings</li>
+</ul>
+<p>Repro-specific (on the <code>repro</code> subcommand and the generated scripts):</p>
+<ul>
+<li><code>--no-overrides</code> — generate / run as if <code>collection_overrides.toml</code> were empty</li>
+<li><code>--inspect</code> / <code>--attempt</code> — on the generated script, run only the structure dump or only the virtualization (mutually exclusive; default runs both)</li>
+</ul>
 <p>The <code>pilot</code> subcommand runs all phases end-to-end on a small sample (<code>--sample N</code>, default 50) so users can review raw errors and refine <code>taxonomy.py</code> before committing to a full survey.</p>
 <p><code>__main__.py</code> suppresses three noisy upstream warnings (<code>earthaccess</code> <code>DataGranule.size</code> <code>FutureWarning</code>, Numcodecs / Imagecodecs "not in Zarr v3 spec" <code>UserWarning</code>s) to keep stderr meaningful.</p>
 <h2 id="testing">Testing<a class="headerlink" href="#testing" title="Permanent link">&para;</a></h2>
@@ -2340,10 +2926,15 @@ report   → report.md + figures                        [Phase 5: cubability rol
 <p>Every module has mocked tests for its public API. Notable suites:</p>
 <ul>
 <li><code>test_taxonomy.py</code> — table-driven, one case per hypothesized bucket; grows as the pilot reveals new patterns.</li>
-<li><code>test_auth.py</code> — both modes mocked at <code>earthaccess</code>, <code>obstore.store.S3Store</code>, and <code>HTTPStore</code>. Does not exercise real S3 or real EDL.</li>
+<li><code>test_auth.py</code> — both modes mocked at <code>earthaccess</code>, <code>obstore.store.S3Store</code>, and <code>HTTPStore</code>. Does not exercise real S3 or real EDL. Also covers <code>StoreCache(cache_dir=...)</code> wrapping returned stores in <code>DiskCachingReadableStore</code>.</li>
 <li><code>test_attempt.py::test_run_attempt_resumes</code> — pre-populates a Parquet shard, verifies the resume check skips already-attempted granules.</li>
+<li><code>test_attempt.py</code> (cache + override paths) — second-run with <code>--cache --cache-dir</code> issues zero network calls to the underlying store; <code>override_applied</code> is recorded correctly when an override is matched.</li>
 <li><code>test_sample.py</code> — both the stratified-bins branch and the no-temporal-extent fallback.</li>
 <li><code>test_cubability.py</code> — the seven-step feasibility check, with fixtures for each failing-step case.</li>
+<li><code>test_overrides.py</code> — round-trips a representative TOML; rejects typo concept IDs, hallucinated kwarg names, contradictory <code>skip_dataset</code> + <code>dataset = {...}</code>, unknown top-level keys, missing <code>notes</code>. <code>for_collection</code> returns empty defaults for unknown IDs.</li>
+<li><code>test_inspect.py</code> — tiny generated fixtures in <code>tests/fixtures/inspect/</code> (HDF5, Zarr v3, NetCDF3, GeoTIFF, DMR++); asserts the dumped tree contains expected keys and snapshots the fenced JSON blob portion.</li>
+<li><code>test_cache.py</code> — round-trip <code>get</code> then <code>get</code> again serves from disk; <code>get_range</code> after a full <code>get</code> serves from cache; cap exceeded → no file written, fall through, warning logged once; two <code>DiskCachingReadableStore</code> instances against the same dir share state; atomic write under simulated crash leaves only <code>*.tmp</code>; underlying store error during a cache-miss fetch leaves no <code>*.tmp</code> and propagates.</li>
+<li><code>test_repro.py</code> — generated scripts pass <code>python -m py_compile</code>, contain <code>argparse</code> and the mode dispatch, and bake the right kwargs in when overrides exist for the collection. End-to-end: write a TOML override, generate a repro, exec it against a local fixture URL, assert <code>--inspect</code> and <code>--attempt</code> both work.</li>
 </ul>
 <h3 id="integration-testsintegration-opt-in">Integration (<code>tests/integration/</code>, opt-in)<a class="headerlink" href="#integration-testsintegration-opt-in" title="Permanent link">&para;</a></h3>
 <p>One smoke test that runs the full pipeline on 3 collections with real EDL credentials. Skipped cleanly when <code>~/.netrc</code> is absent. Not run in CI.</p>
