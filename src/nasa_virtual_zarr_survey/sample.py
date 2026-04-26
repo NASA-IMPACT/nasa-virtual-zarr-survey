@@ -37,6 +37,22 @@ def _extract_url(g: DataGranule, access: str = "direct") -> str | None:
     return None
 
 
+def _extract_urls(g: DataGranule, access: str) -> tuple[str | None, str | None]:
+    """Return ``(data_url, https_url)`` for the granule.
+
+    ``data_url`` is the URL for the requested ``access`` mode (the one the
+    survey actually opens). ``https_url`` is always pulled with
+    ``access="external"`` so downstream tooling (notably generated repro
+    scripts) has a curl-able download URL even when the survey ran under
+    ``--access direct``. When ``access`` is already ``"external"``, the two
+    are the same URL and only one ``data_links`` call is made.
+    """
+    data_url = _extract_url(g, access=access)
+    if access == "external":
+        return data_url, data_url
+    return data_url, _extract_url(g, access="external")
+
+
 def _granule_format(g: DataGranule) -> str | None:
     """Extract a file format string from granule UMM-JSON, or None."""
     try:
@@ -114,11 +130,13 @@ def sample_one_collection(
             count=n_bins,
         )
         for i, g in enumerate(results[:n_bins]):
+            data_url, https_url = _extract_urls(g, access)
             rows.append(
                 GranuleInfo(
                     collection_concept_id=coll["concept_id"],
                     granule_concept_id=g["meta"]["concept-id"],
-                    data_url=_extract_url(g, access=access),
+                    data_url=data_url,
+                    https_url=https_url,
                     temporal_bin=i,
                     size_bytes=_extract_size(g),
                     sampled_at=now,
@@ -137,11 +155,13 @@ def sample_one_collection(
         if not results:
             continue
         g = results[0]
+        data_url, https_url = _extract_urls(g, access)
         rows.append(
             GranuleInfo(
                 collection_concept_id=coll["concept_id"],
                 granule_concept_id=g["meta"]["concept-id"],
-                data_url=_extract_url(g, access=access),
+                data_url=data_url,
+                https_url=https_url,
                 temporal_bin=i,
                 size_bytes=_extract_size(g),
                 sampled_at=now,
@@ -247,13 +267,14 @@ def run_sample(
         for r in rows:
             con.execute(
                 """INSERT OR IGNORE INTO granules
-                   (collection_concept_id, granule_concept_id, data_url,
+                   (collection_concept_id, granule_concept_id, data_url, https_url,
                     temporal_bin, size_bytes, sampled_at, stratified, access_mode)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     r["collection_concept_id"],
                     r["granule_concept_id"],
                     r["data_url"],
+                    r["https_url"],
                     r["temporal_bin"],
                     r["size_bytes"],
                     r["sampled_at"],

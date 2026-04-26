@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS granules (
     collection_concept_id TEXT NOT NULL,
     granule_concept_id    TEXT NOT NULL,
     data_url              TEXT,
+    https_url             TEXT,
     temporal_bin          INTEGER,
     size_bytes            BIGINT,
     sampled_at            TIMESTAMP,

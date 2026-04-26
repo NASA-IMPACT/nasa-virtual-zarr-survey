@@ -163,6 +163,9 @@ def test_sample_one_collection_external_access(monkeypatch):
     coll = {"concept_id": "C1", "time_start": None, "time_end": None, "num_granules": 1}
     gs = sample_one_collection(coll, n_bins=1, access="external")
     assert gs[0]["data_url"] == "https://ex/G1.nc"
+    # When access="external", the chosen URL is also the HTTPS URL — no
+    # second data_links() call should be needed.
+    assert gs[0]["https_url"] == "https://ex/G1.nc"
     assert "external" in captured_accesses
 
 
@@ -378,11 +381,11 @@ def test_run_sample_resamples_when_access_mode_changes(
     # Pre-populate with direct-mode rows.
     con.execute(
         "INSERT INTO granules VALUES "
-        "('C1','G0','s3://b/0.nc',0,100,now(),FALSE,'direct')"
+        "('C1','G0','s3://b/0.nc',NULL,0,100,now(),FALSE,'direct')"
     )
     con.execute(
         "INSERT INTO granules VALUES "
-        "('C1','G1','s3://b/1.nc',1,100,now(),FALSE,'direct')"
+        "('C1','G1','s3://b/1.nc',NULL,1,100,now(),FALSE,'direct')"
     )
 
     class G:
@@ -430,7 +433,7 @@ def test_run_sample_skips_when_already_in_requested_mode(
     """)
     con.execute(
         "INSERT INTO granules VALUES "
-        "('C1','G0','s3://b/0.nc',0,100,now(),FALSE,'direct')"
+        "('C1','G0','s3://b/0.nc',NULL,0,100,now(),FALSE,'direct')"
     )
 
     called = {"n": 0}

@@ -25,6 +25,7 @@ def _row(**overrides) -> FailureRow:
         format_family="NetCDF4",
         parser="HDFParser",
         data_url="https://data.example.nasa.gov/path/file.nc",
+        https_url=None,
         phase="parse",
         error_type="OSError",
         error_message="Unable to open file",
@@ -184,6 +185,30 @@ def test_generate_script_phase_labels():
     assert "Datasetability (Phase 4)" in generate_script(dataset_row)
 
 
+def test_generate_script_includes_https_download_url_when_distinct():
+    """When data_url is s3://... and a separate HTTPS URL is captured, the
+    docstring should expose the HTTPS form so a reader can fetch the granule
+    with curl/wget."""
+    row = _row(
+        data_url="s3://podaac-bucket/path/file.nc",
+        https_url="https://archive.podaac.earthdata.nasa.gov/path/file.nc",
+    )
+    script = generate_script(row)
+    assert "URL: s3://podaac-bucket/path/file.nc" in script
+    assert "Download URL" in script
+    assert "https://archive.podaac.earthdata.nasa.gov/path/file.nc" in script
+
+
+def test_generate_script_omits_redundant_download_url():
+    """When https_url equals data_url (e.g. survey ran with --access external),
+    the docstring should not duplicate the line."""
+    url = "https://data.podaac.earthdata.nasa.gov/file.nc"
+    row = _row(data_url=url, https_url=url)
+    script = generate_script(row)
+    assert script.count(url) >= 1
+    assert "Download URL" not in script
+
+
 def test_generated_script_accepts_cache_flags() -> None:
     from nasa_virtual_zarr_survey.repro import FailureRow, generate_script
 
@@ -195,6 +220,7 @@ def test_generated_script_accepts_cache_flags() -> None:
         format_family="NETCDF4",
         parser="HDFParser",
         data_url="s3://bucket/path/file.nc",
+        https_url=None,
         phase="parse",
         error_type="OSError",
         error_message="boom",
@@ -242,11 +268,11 @@ def test_find_failures_by_collection(tmp_db_path: Path, tmp_results_dir: Path):
     # Also insert granule rows so data_url can be joined.
     now = datetime.now(timezone.utc)
     con.execute(
-        "INSERT INTO granules VALUES ('C1', 'G0', 'https://ex/good.nc', 0, NULL, ?, true, 'external')",
+        "INSERT INTO granules VALUES ('C1', 'G0', 'https://ex/good.nc', NULL, 0, NULL, ?, true, 'external')",
         [now],
     )
     con.execute(
-        "INSERT INTO granules VALUES ('C1', 'G1', 'https://ex/bad.nc', 1, NULL, ?, true, 'external')",
+        "INSERT INTO granules VALUES ('C1', 'G1', 'https://ex/bad.nc', 'https://archive.example/bad.nc', 1, NULL, ?, true, 'external')",
         [now],
     )
     con.close()
@@ -296,6 +322,7 @@ def test_find_failures_by_collection(tmp_db_path: Path, tmp_results_dir: Path):
     assert rows[0].phase == "parse"
     assert rows[0].error_type == "OSError"
     assert rows[0].data_url == "https://ex/bad.nc"
+    assert rows[0].https_url == "https://archive.example/bad.nc"
 
 
 def test_find_failures_by_granule(tmp_db_path: Path, tmp_results_dir: Path):
@@ -311,7 +338,7 @@ def test_find_failures_by_granule(tmp_db_path: Path, tmp_results_dir: Path):
         "('C2', 'n', '1', 'NSIDC', 'NSIDC', 'HDF5', 'HDF5', 1, NULL, NULL, 'L2', NULL, now())"
     )
     con.execute(
-        "INSERT INTO granules VALUES ('C2', 'G-target', 's3://bucket/file.h5', 0, NULL, ?, true, 'direct')",
+        "INSERT INTO granules VALUES ('C2', 'G-target', 's3://bucket/file.h5', 'https://archive.example/file.h5', 0, NULL, ?, true, 'direct')",
         [now],
     )
     con.close()
@@ -372,7 +399,7 @@ def test_find_failures_by_bucket(tmp_db_path: Path, tmp_results_dir: Path):
     )
     for i in range(2):
         con.execute(
-            f"INSERT INTO granules VALUES ('C3', 'G3-{i}', 'https://ex/file{i}.nc', {i}, NULL, ?, true, 'external')",
+            f"INSERT INTO granules VALUES ('C3', 'G3-{i}', 'https://ex/file{i}.nc', NULL, {i}, NULL, ?, true, 'external')",
             [now],
         )
     con.close()
@@ -447,7 +474,7 @@ def test_find_failures_phase_filter(tmp_db_path: Path, tmp_results_dir: Path):
         "('C4', 'n', '1', 'ORNL', 'ORNL', 'NetCDF4', 'NetCDF-4', 1, NULL, NULL, 'L4', NULL, now())"
     )
     con.execute(
-        "INSERT INTO granules VALUES ('C4', 'G4', 'https://ex/f.nc', 0, NULL, ?, true, 'external')",
+        "INSERT INTO granules VALUES ('C4', 'G4', 'https://ex/f.nc', NULL, 0, NULL, ?, true, 'external')",
         [now],
     )
     con.close()

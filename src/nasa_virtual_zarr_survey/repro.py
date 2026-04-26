@@ -26,6 +26,7 @@ class FailureRow:
     format_family: str | None
     parser: str | None
     data_url: str
+    https_url: str | None
     phase: Literal["parse", "dataset"]
     error_type: str
     error_message: str
@@ -91,6 +92,22 @@ def _render_kwargs(kw: Mapping[str, Any]) -> str:
     return ", ".join(f"{k}={v!r}" for k, v in kw.items())
 
 
+def _format_url_lines(row: FailureRow) -> str:
+    """Return the URL block (one or two lines) shown in a repro docstring.
+
+    Always includes the survey's ``data_url``. When an HTTPS download URL was
+    captured at sample time and differs from ``data_url`` (e.g. the survey ran
+    under ``--access direct``), include it as a second line so a reader can
+    fetch the granule with curl/wget.
+    """
+    lines = [f"URL: {row.data_url}"]
+    if row.https_url and row.https_url != row.data_url:
+        lines.append(
+            f"Download URL (HTTPS, EDL bearer token required): {row.https_url}"
+        )
+    return "\n".join(lines)
+
+
 def generate_script(  # noqa: C901  (acceptable complexity)
     row: FailureRow,
     override: CollectionOverride | None = None,
@@ -98,6 +115,7 @@ def generate_script(  # noqa: C901  (acceptable complexity)
     """Render a self-contained Python script that reproduces *row*'s failure."""
     url = row.data_url
     is_s3 = url.startswith("s3://")
+    url_lines = _format_url_lines(row)
 
     # ------------------------------------------------------------------
     # No-parser case: just document the failure.
@@ -117,6 +135,8 @@ def generate_script(  # noqa: C901  (acceptable complexity)
             f"Phase that failed: {'Parsability (Phase 3)' if row.phase == 'parse' else 'Datasetability (Phase 4)'}\n"
             f"Bucket: {row.bucket}\n"
             f"\n"
+            f"{url_lines}\n"
+            f"\n"
             f"Original error observed in survey run:\n"
             f"    {row.error_type}: {row.error_message}\n"
             f"{tb_section}"
@@ -124,8 +144,6 @@ def generate_script(  # noqa: C901  (acceptable complexity)
             f"# This format family ({row.format_family!r}) has no registered parser in\n"
             f"# the survey as of the run date. There is no automatic reproducer that can\n"
             f"# be generated for a 'NoParserAvailable' failure.\n"
-            f"#\n"
-            f"# URL: {url}\n"
             f"#\n"
             f"# Run with:\n"
             f"#     uv run python {script_name}\n"
@@ -147,6 +165,8 @@ def generate_script(  # noqa: C901  (acceptable complexity)
             f"DAAC: {row.daac}\n"
             f"Format family: {row.format_family}\n"
             f"Bucket: {row.bucket}\n"
+            f"\n"
+            f"{url_lines}\n"
             f"\n"
             f"Original error observed in survey run:\n"
             f"    {row.error_type}: {row.error_message}\n"
@@ -191,6 +211,8 @@ def generate_script(  # noqa: C901  (acceptable complexity)
         f"Format family: {row.format_family}\n"
         f"Phase that failed: {phase_label}\n"
         f"Bucket: {row.bucket}\n"
+        f"\n"
+        f"{url_lines}\n"
         f"\n"
         f"Original error observed in survey run:\n"
         f"    {row.error_type}: {row.error_message}\n"
@@ -375,10 +397,12 @@ def find_failures(
         """
         provider_col = "c.provider"
         url_col = "g.data_url"
+        https_col = "g.https_url"
     else:
         join_fragment = ""
         provider_col = "NULL"
         url_col = "NULL"
+        https_col = "NULL"
 
     query = f"""
         SELECT
@@ -389,6 +413,7 @@ def find_failures(
             r.format_family,
             r.parser,
             {url_col} AS data_url,
+            {https_col} AS https_url,
             r.parse_success,
             r.parse_error_type,
             r.parse_error_message,
@@ -418,6 +443,7 @@ def find_failures(
             format_family,
             parser,
             data_url,
+            https_url,
             parse_success,
             parse_error_type,
             parse_error_message,
@@ -467,6 +493,7 @@ def find_failures(
                 format_family=format_family,
                 parser=parser,
                 data_url=data_url,
+                https_url=https_url,
                 phase=row_phase,
                 error_type=error_type,
                 error_message=error_message,

@@ -383,10 +383,10 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
          NULL, NULL, 'L3', NULL, now())
     """)
     con.execute(
-        "INSERT INTO granules VALUES ('C1','G1','s3://b/a.nc',0,100,now(),TRUE,'direct')"
+        "INSERT INTO granules VALUES ('C1','G1','s3://b/a.nc',NULL,0,100,now(),TRUE,'direct')"
     )
     con.execute(
-        "INSERT INTO granules VALUES ('C1','G2','s3://b/b.nc',1,100,now(),TRUE,'direct')"
+        "INSERT INTO granules VALUES ('C1','G2','s3://b/b.nc',NULL,1,100,now(),TRUE,'direct')"
     )
     con.close()
 
@@ -465,7 +465,7 @@ def test_run_attempt_aborts_on_consecutive_forbidden(
     """)
     for i in range(10):
         con.execute(
-            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',{i},100,now(),TRUE,'direct')"
+            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',NULL,{i},100,now(),TRUE,'direct')"
         )
     con.close()
 
@@ -512,7 +512,7 @@ def test_run_attempt_does_not_abort_on_mixed_failures(
     """)
     for i in range(10):
         con.execute(
-            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',{i},100,now(),TRUE,'direct')"
+            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',NULL,{i},100,now(),TRUE,'direct')"
         )
     con.close()
 

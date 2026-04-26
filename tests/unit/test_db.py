@@ -58,12 +58,12 @@ def test_granules_primary_key_prevents_duplicates(tmp_db_path: Path):
     con = connect(tmp_db_path)
     init_schema(con)
     con.execute(
-        "INSERT INTO granules VALUES ('C1', 'G1', 's3://x', 0, 100, now(), TRUE, 'direct')"
+        "INSERT INTO granules VALUES ('C1', 'G1', 's3://x', NULL, 0, 100, now(), TRUE, 'direct')"
     )
     # Second insert with same PK should fail (or OR-REPLACE via INSERT OR IGNORE)
     try:
         con.execute(
-            "INSERT INTO granules VALUES ('C1', 'G1', 's3://y', 1, 200, now(), TRUE, 'direct')"
+            "INSERT INTO granules VALUES ('C1', 'G1', 's3://y', NULL, 1, 200, now(), TRUE, 'direct')"
         )
     except duckdb.ConstraintException:
         pass

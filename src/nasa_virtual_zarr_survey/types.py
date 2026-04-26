@@ -30,6 +30,7 @@ class GranuleInfo(TypedDict):
     collection_concept_id: str
     granule_concept_id: str
     data_url: str | None
+    https_url: str | None
     temporal_bin: int
     size_bytes: int | None
     sampled_at: datetime
