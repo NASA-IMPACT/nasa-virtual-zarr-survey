@@ -46,7 +46,7 @@ Terms used throughout this site, the report, and the design docs. Headings are a
 
 **Cubability.** Whether the per-granule virtual datasets in one collection share enough structure (same dims, same dtypes, monotonic concat axis) to be combined into a single virtual store. Phase 5; only attempted when Phase 4a is `all_pass`.
 
-**DMR++.** OPeNDAP's serialized data-access metadata, a sidecar XML that VirtualiZarr can use as a fast manifest source.
+**DMR++.** OPeNDAP's serialized data-access metadata, a sidecar XML (typically `<file>.dmrpp` next to the data file in S3) that VirtualiZarr can use as a fast manifest source. The survey records `collections.has_cloud_opendap` (UMM-S association with cloud Hyrax) and `granules.dmrpp_granule_url` (constructed `https_url + ".dmrpp"`); use `--verify-dmrpp` on `sample` to HEAD-check each sidecar.
 
 **Fingerprint.** A small JSON blob describing the structural shape of a virtual dataset (dims, dtypes, coordinate spans). Phase 5 compares fingerprints across granules of a collection.
 

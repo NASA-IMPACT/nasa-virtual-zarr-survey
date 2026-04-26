@@ -9,10 +9,24 @@ from unittest.mock import MagicMock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 from click.testing import CliRunner
 
+from nasa_virtual_zarr_survey import opendap
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from tests.conftest import insert_collection, insert_granule
+
+
+@pytest.fixture(autouse=True)
+def _stub_opendap_service_ids(monkeypatch):
+    """Default to an empty cloud-OPeNDAP set; individual tests can override."""
+    opendap.cloud_opendap_service_ids.cache_clear()
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.discover.cloud_opendap_service_ids",
+        lambda: frozenset(),
+    )
+    yield
+    opendap.cloud_opendap_service_ids.cache_clear()
 
 
 def _umm(
@@ -332,6 +346,35 @@ def test_discover_list_all_includes_skip_reason_column(
     assert "C-SKIP-PODAAC" in result.output
     assert "non_array_format" in result.output
     assert "https://search.earthdata.nasa.gov/search?q=C-OK-PODAAC" in result.output
+
+
+def test_discover_list_includes_opendap_column(tmp_path: Path, monkeypatch) -> None:
+    """The --list table renders 'Y' for collections with cloud OPeNDAP."""
+    from nasa_virtual_zarr_survey.__main__ import cli
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.discover.cloud_opendap_service_ids",
+        lambda: frozenset({"S-OPENDAP"}),
+    )
+    od_umm = _umm("C-OD-PODAAC", sn="WITHDMRPP")
+    od_umm["meta"]["associations"] = {"services": ["S-OPENDAP"]}
+    no_umm = _umm("C-NO-PODAAC", sn="NODMRPP")
+
+    _patch_search(monkeypatch, [od_umm, no_umm])
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["discover", "--limit", "2", "--list", "array", "--dry-run"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "opendap" in result.output  # header
+    out = result.output
+    # The opendap-having row gets 'Y'; the non-opendap row's column is empty.
+    od_line = next(line for line in out.splitlines() if "C-OD-PODAAC" in line)
+    no_line = next(line for line in out.splitlines() if "C-NO-PODAAC" in line)
+    # 'Y' marker present on the opendap line, absent on the other.
+    assert " Y " in f" {od_line} "
+    assert " Y " not in f" {no_line} "
 
 
 def test_discover_list_skipped_shows_breakdown_and_table(

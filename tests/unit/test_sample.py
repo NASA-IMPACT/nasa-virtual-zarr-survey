@@ -438,3 +438,143 @@ def test_run_sample_skips_when_already_in_requested_mode(
     n = run_sample(tmp_db_path, n_bins=2, access="direct")
     assert n == 0
     assert called["n"] == 0
+
+
+# ---------------------------------------------------------------------------
+# dmrpp_granule_url
+# ---------------------------------------------------------------------------
+
+
+def test_sample_one_collection_records_dmrpp_url_for_opendap_collection(
+    monkeypatch,
+):
+    """When the collection has cloud OPeNDAP, dmrpp_granule_url = https_url + .dmrpp."""
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data",
+        lambda **_: [
+            make_fake_granule(
+                "G1",
+                urls=lambda access: ["s3://b/G1.h5"]
+                if access == "direct"
+                else ["https://x/G1.h5"],
+            )
+        ],
+    )
+    coll = {
+        "concept_id": "C1",
+        "time_start": None,
+        "time_end": None,
+        "num_granules": 1,
+        "has_cloud_opendap": True,
+    }
+    rows = sample_one_collection(coll, n_bins=1, access="direct")
+    assert rows[0]["data_url"] == "s3://b/G1.h5"
+    assert rows[0]["https_url"] == "https://x/G1.h5"
+    # Pinned to https_url so the URL is curl-able outside us-west-2.
+    assert rows[0]["dmrpp_granule_url"] == "https://x/G1.h5.dmrpp"
+
+
+def test_sample_one_collection_dmrpp_url_none_when_no_opendap(monkeypatch):
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data",
+        lambda **_: [make_fake_granule("G1", urls=["s3://b/G1.h5"])],
+    )
+    coll = {
+        "concept_id": "C1",
+        "time_start": None,
+        "time_end": None,
+        "num_granules": 1,
+        "has_cloud_opendap": False,
+    }
+    assert sample_one_collection(coll, n_bins=1)[0]["dmrpp_granule_url"] is None
+
+
+def test_sample_one_collection_verify_dmrpp_nulls_on_404(monkeypatch):
+    """verify_dmrpp=True clears the URL when the HEAD check fails."""
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data",
+        lambda **_: [
+            make_fake_granule(
+                "G1",
+                urls=lambda access: ["https://x/G1.h5"],
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.verify_dmrpp_exists",
+        lambda url, **kw: False,
+    )
+    coll = {
+        "concept_id": "C1",
+        "time_start": None,
+        "time_end": None,
+        "num_granules": 1,
+        "has_cloud_opendap": True,
+    }
+    rows = sample_one_collection(coll, n_bins=1, access="external", verify_dmrpp=True)
+    assert rows[0]["dmrpp_granule_url"] is None
+
+
+def test_sample_one_collection_verify_dmrpp_keeps_on_200(monkeypatch):
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data",
+        lambda **_: [make_fake_granule("G1", urls=lambda access: ["https://x/G1.h5"])],
+    )
+    seen: list[str] = []
+
+    def _verify(url, **kw):
+        seen.append(url)
+        return True
+
+    monkeypatch.setattr("nasa_virtual_zarr_survey.sample.verify_dmrpp_exists", _verify)
+    coll = {
+        "concept_id": "C1",
+        "time_start": None,
+        "time_end": None,
+        "num_granules": 1,
+        "has_cloud_opendap": True,
+    }
+    rows = sample_one_collection(coll, n_bins=1, access="external", verify_dmrpp=True)
+    assert rows[0]["dmrpp_granule_url"] == "https://x/G1.h5.dmrpp"
+    assert seen == ["https://x/G1.h5.dmrpp"]
+
+
+def test_run_sample_persists_dmrpp_url(tmp_db_path: Path, monkeypatch):
+    """run_sample reads has_cloud_opendap from collections and writes the sidecar URL."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    # Insert a collection that has cloud OPeNDAP.
+    con.execute(
+        "INSERT INTO collections (concept_id, short_name, daac, format_family, "
+        "format_declared, num_granules, time_start, time_end, processing_level, "
+        "has_cloud_opendap, discovered_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())",
+        [
+            "C-OD",
+            "name",
+            "PODAAC",
+            "NetCDF4",
+            "NetCDF-4",
+            1,
+            datetime(2020, 1, 1),
+            datetime(2024, 1, 1),
+            "L3",
+            True,
+        ],
+    )
+
+    counter = iter(range(100))
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data",
+        lambda **_: [
+            make_fake_granule(
+                f"G{next(counter)}",
+                urls=lambda access: ["https://x/g.h5"],
+            )
+        ],
+    )
+
+    n = run_sample(tmp_db_path, n_bins=1, access="external")
+    assert n == 1
+    row = con.execute("SELECT https_url, dmrpp_granule_url FROM granules").fetchone()
+    assert row == ("https://x/g.h5", "https://x/g.h5.dmrpp")

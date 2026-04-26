@@ -7,12 +7,26 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nasa_virtual_zarr_survey import opendap
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.discover import (
     collection_row_from_umm,
     persist_collections,
     run_discover,
 )
+
+
+@pytest.fixture(autouse=True)
+def _stub_opendap_service_ids(monkeypatch):
+    """Stub the CMR services lookup so discover tests don't hit the network."""
+    opendap.cloud_opendap_service_ids.cache_clear()
+    # discover.py binds the helper at import time, so patch the bound name.
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.discover.cloud_opendap_service_ids",
+        lambda: frozenset({"S-OPENDAP"}),
+    )
+    yield
+    opendap.cloud_opendap_service_ids.cache_clear()
 
 
 def _build_umm(
@@ -248,3 +262,43 @@ def test_run_discover_top_per_provider_hydrates_ids(tmp_db_path: Path, monkeypat
     # Verify earthaccess was called with concept_id= (not cloud_hosted= mode)
     assert captured[0]["concept_id"] == ["C1-PODAAC", "C2-PODAAC"]
     assert "cloud_hosted" not in captured[0]
+
+
+def _with_service_associations(umm: dict[str, Any], service_ids: list[str]) -> dict:
+    """Splice ``meta.associations.services`` into a UMM-C dict."""
+    umm = {**umm, "meta": {**umm["meta"]}}
+    umm["meta"]["associations"] = {"services": service_ids}
+    return umm
+
+
+def test_collection_row_from_umm_sets_has_cloud_opendap_when_associated():
+    umm = _with_service_associations(_build_umm("C-OD-PODAAC"), ["S-OPENDAP"])
+    row = collection_row_from_umm(umm)
+    assert row["has_cloud_opendap"] is True
+
+
+def test_collection_row_from_umm_clears_has_cloud_opendap_when_unassociated():
+    # Different service ID, not in the stubbed cloud-OPeNDAP set.
+    umm = _with_service_associations(_build_umm("C-NO-PODAAC"), ["S-OTHER"])
+    assert collection_row_from_umm(umm)["has_cloud_opendap"] is False
+    # And nothing at all.
+    assert (
+        collection_row_from_umm(_build_umm("C-NONE-PODAAC"))["has_cloud_opendap"]
+        is False
+    )
+
+
+def test_persist_collections_round_trips_has_cloud_opendap(tmp_db_path: Path):
+    con = connect(tmp_db_path)
+    init_schema(con)
+    persist_collections(
+        con,
+        [
+            _with_service_associations(_build_umm("C-OD-PODAAC"), ["S-OPENDAP"]),
+            _build_umm("C-NO-PODAAC"),
+        ],
+    )
+    rows = sorted(
+        con.execute("SELECT concept_id, has_cloud_opendap FROM collections").fetchall()
+    )
+    assert rows == [("C-NO-PODAAC", False), ("C-OD-PODAAC", True)]

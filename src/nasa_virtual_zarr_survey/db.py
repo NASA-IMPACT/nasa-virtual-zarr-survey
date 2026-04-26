@@ -8,20 +8,21 @@ import duckdb
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS collections (
-    concept_id       TEXT PRIMARY KEY,
-    short_name       TEXT,
-    version          TEXT,
-    daac             TEXT,
-    provider         TEXT,
-    format_family    TEXT,
-    format_declared  TEXT,
-    num_granules     BIGINT,
-    time_start       TIMESTAMP,
-    time_end         TIMESTAMP,
-    processing_level TEXT,
-    skip_reason      TEXT,
-    discovered_at    TIMESTAMP,
-    umm_json         JSON
+    concept_id         TEXT PRIMARY KEY,
+    short_name         TEXT,
+    version            TEXT,
+    daac               TEXT,
+    provider           TEXT,
+    format_family      TEXT,
+    format_declared    TEXT,
+    num_granules       BIGINT,
+    time_start         TIMESTAMP,
+    time_end           TIMESTAMP,
+    processing_level   TEXT,
+    skip_reason        TEXT,
+    has_cloud_opendap  BOOLEAN,
+    discovered_at      TIMESTAMP,
+    umm_json           JSON
 );
 
 CREATE TABLE IF NOT EXISTS granules (
@@ -29,6 +30,7 @@ CREATE TABLE IF NOT EXISTS granules (
     granule_concept_id    TEXT NOT NULL,
     data_url              TEXT,
     https_url             TEXT,
+    dmrpp_granule_url     TEXT,
     temporal_bin          INTEGER,
     size_bytes            BIGINT,
     sampled_at            TIMESTAMP,
@@ -59,8 +61,8 @@ def connect(path: Path | str) -> duckdb.DuckDBPyConnection:
 # silently keeps its old columns; checking these explicitly turns a confusing
 # DuckDB binder error at INSERT time into an actionable message at startup.
 _REQUIRED_COLUMNS: dict[str, set[str]] = {
-    "collections": {"umm_json"},
-    "granules": {"umm_json"},
+    "collections": {"umm_json", "has_cloud_opendap"},
+    "granules": {"umm_json", "dmrpp_granule_url"},
 }
 
 

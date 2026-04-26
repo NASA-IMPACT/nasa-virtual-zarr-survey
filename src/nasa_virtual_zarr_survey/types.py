@@ -21,6 +21,7 @@ class CollectionRow(TypedDict):
     time_end: datetime | None
     processing_level: str | None
     skip_reason: str | None
+    has_cloud_opendap: bool
     discovered_at: datetime
     umm_json: dict[str, Any]
 
@@ -32,6 +33,7 @@ class GranuleInfo(TypedDict):
     granule_concept_id: str
     data_url: str | None
     https_url: str | None
+    dmrpp_granule_url: str | None
     temporal_bin: int
     size_bytes: int | None
     sampled_at: datetime
@@ -113,3 +115,4 @@ class SampleCollection(TypedDict):
     num_granules: int | None
     daac: str | None
     skip_reason: str | None
+    has_cloud_opendap: bool

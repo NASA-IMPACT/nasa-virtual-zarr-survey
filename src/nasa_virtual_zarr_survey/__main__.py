@@ -184,6 +184,7 @@ def _render_collection_listing(
         "daac",
         "fmt_family",
         "fmt_declared",
+        "opendap",
         "proc_lvl",
         "short_name v version",
         "skip_reason",
@@ -207,6 +208,7 @@ def _render_collection_listing(
                 r.get("daac") or "",
                 r.get("format_family") or "—",
                 r.get("format_declared") or "(null)",
+                "Y" if r.get("has_cloud_opendap") else "",
                 r.get("processing_level") or "",
                 sn_ver,
                 r.get("skip_reason") or "",
@@ -545,11 +547,31 @@ def discover(
     help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
     "'external' uses HTTPS URLs with EDL bearer token.",
 )
-def sample(db_path: Path, n_bins: int, daac: str | None, access: str) -> None:
+@click.option(
+    "--verify-dmrpp/--no-verify-dmrpp",
+    "verify_dmrpp",
+    default=False,
+    help="HEAD each constructed .dmrpp sidecar URL and null it out on 404. "
+    "Off by default (relies on the collection's UMM-S association as the signal); "
+    "turn on for a one-time audit. Costs one extra request per sampled granule.",
+)
+def sample(
+    db_path: Path,
+    n_bins: int,
+    daac: str | None,
+    access: str,
+    verify_dmrpp: bool,
+) -> None:
     """Phase 2 (sample): pick N granules stratified across each collection's temporal extent."""
     from nasa_virtual_zarr_survey.sample import run_sample
 
-    run_sample(db_path, n_bins=n_bins, only_daac=daac, access=cast(AccessMode, access))
+    run_sample(
+        db_path,
+        n_bins=n_bins,
+        only_daac=daac,
+        access=cast(AccessMode, access),
+        verify_dmrpp=verify_dmrpp,
+    )
     click.echo(_sample_summary(db_path))
 
 
@@ -737,6 +759,13 @@ def report(
     help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
     "'external' uses HTTPS URLs with EDL bearer token.",
 )
+@click.option(
+    "--verify-dmrpp/--no-verify-dmrpp",
+    "verify_dmrpp",
+    default=False,
+    help="HEAD each constructed .dmrpp sidecar URL and null it out on 404. "
+    "See `sample --help` for the tradeoff.",
+)
 @_cache_options
 @click.option(
     "--clean",
@@ -755,6 +784,7 @@ def pilot(
     n_bins: int,
     timeout_s: int,
     access: str,
+    verify_dmrpp: bool,
     use_cache: bool,
     cache_dir: Path | None,
     cache_max_size: str,
@@ -792,7 +822,7 @@ def pilot(
         run_discover(db_path, limit=sample_size)
     click.echo(_discover_summary(db_path))
     access_mode = cast(AccessMode, access)
-    run_sample(db_path, n_bins=n_bins, access=access_mode)
+    run_sample(db_path, n_bins=n_bins, access=access_mode, verify_dmrpp=verify_dmrpp)
     click.echo(_sample_summary(db_path))
     effective_cache_dir, cache_max_bytes = _resolve_cache_params(
         use_cache, cache_dir, cache_max_size

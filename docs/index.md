@@ -63,6 +63,10 @@ NASA's EOSDIS S3 buckets live in `us-west-2` and don't allow public direct-S3 re
 
 If you change access mode between runs, `sample` re-extracts the granule URLs (the URL format differs between the two), so a `discover` re-run is not needed.
 
+### Cloud OPeNDAP / DMR++ sidecars
+
+`discover` records `collections.has_cloud_opendap` (true when the collection is associated with the cloud-Hyrax UMM-S record); `sample` then writes `granules.dmrpp_granule_url = https_url + ".dmrpp"` for each sampled granule of those collections. The constructed URL is the input `DMRPPParser` reads — useful as a fallback when the underlying HDF5 parse fails. Use `--verify-dmrpp` on `sample` (off by default; one HEAD per granule) to confirm each sidecar actually exists rather than trusting the UMM-S association alone.
+
 ### Previewing the selection: `--list`
 
 Before locking in a top-N selection (and accumulating snapshots against it), eyeball what you'd be sampling. `--list` adds a per-collection table next to the aggregate counts:
@@ -74,7 +78,7 @@ Before locking in a top-N selection (and accumulating snapshots against it), eye
 | `array` | The array-like collections only — the ones that would feed `sample`. |
 | `all` | Both array-like and skipped, with a `skip_reason` column (blank for array-like). |
 
-In `--top` and `--top-per-provider` modes the table is sorted by popularity rank and includes `rank` and `usage_score` columns; in non-top modes those columns are blank.
+In `--top` and `--top-per-provider` modes the table is sorted by popularity rank and includes `rank` and `usage_score` columns; in non-top modes those columns are blank. The `opendap` column shows `Y` for collections associated with a cloud-OPeNDAP UMM-S record (where DMR++ sidecars and `DMRPPParser` are usable), blank otherwise.
 
 ```bash
 # preview the top-50 selection before locking it in

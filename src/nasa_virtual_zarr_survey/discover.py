@@ -11,6 +11,10 @@ import earthaccess
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.formats import classify_format
+from nasa_virtual_zarr_survey.opendap import (
+    cloud_opendap_service_ids,
+    collection_has_cloud_opendap,
+)
 from nasa_virtual_zarr_survey.providers import get_eosdis_providers
 from nasa_virtual_zarr_survey.types import CollectionRow
 
@@ -71,6 +75,7 @@ def collection_row_from_umm(coll: dict[str, Any]) -> CollectionRow:
     family = classify_format(declared, None)
     time_start, time_end = _first_temporal(coll)
     processing_level = (umm.get("ProcessingLevel") or {}).get("Id")
+    has_opendap = collection_has_cloud_opendap(coll, cloud_opendap_service_ids())
 
     # processing_level is recorded for analysis but does not gate sampling:
     # per-granule virtualization (parsability/datasetability) is independent
@@ -95,6 +100,7 @@ def collection_row_from_umm(coll: dict[str, Any]) -> CollectionRow:
         time_end=time_end,
         processing_level=processing_level,
         skip_reason=skip_reason,
+        has_cloud_opendap=has_opendap,
         discovered_at=datetime.now(timezone.utc),
         umm_json=coll,
     )
@@ -110,9 +116,9 @@ def persist_collections(con, rows: Iterable[dict[str, Any]]) -> None:
     stmt = """
         INSERT OR REPLACE INTO collections
         (concept_id, short_name, version, daac, provider, format_family, format_declared,
-         num_granules, time_start, time_end, processing_level, skip_reason, discovered_at,
-         umm_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         num_granules, time_start, time_end, processing_level, skip_reason,
+         has_cloud_opendap, discovered_at, umm_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     for coll in rows:
         row: CollectionRow = (
@@ -135,6 +141,7 @@ def persist_collections(con, rows: Iterable[dict[str, Any]]) -> None:
                 row["time_end"],
                 row["processing_level"],
                 row["skip_reason"],
+                row["has_cloud_opendap"],
                 row["discovered_at"],
                 json.dumps(row["umm_json"]),
             ],

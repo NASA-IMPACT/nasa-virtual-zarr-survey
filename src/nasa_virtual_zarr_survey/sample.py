@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import earthaccess
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
+from nasa_virtual_zarr_survey.opendap import dmrpp_url_for, verify_dmrpp_exists
 from nasa_virtual_zarr_survey.types import GranuleInfo, SampleCollection
 
 if TYPE_CHECKING:
@@ -126,16 +127,44 @@ def _extract_size(g: DataGranule) -> int | None:
     return None
 
 
+def _resolve_dmrpp_url(
+    https_url: str | None, has_opendap: bool, verify: bool
+) -> str | None:
+    """Compute (and optionally HEAD-verify) the ``.dmrpp`` URL for a granule.
+
+    Returns ``None`` for collections without a cloud-OPeNDAP UMM-S association
+    or when verification is requested and the sidecar is absent. The
+    constructed URL pins to ``https_url`` so it's curl-able from anywhere.
+    """
+    if not has_opendap:
+        return None
+    url = dmrpp_url_for(https_url)
+    if url is None:
+        return None
+    if verify and not verify_dmrpp_exists(url):
+        return None
+    return url
+
+
 def sample_one_collection(
-    coll: SampleCollection, n_bins: int = 5, *, access: str = "direct"
+    coll: SampleCollection,
+    n_bins: int = 5,
+    *,
+    access: str = "direct",
+    verify_dmrpp: bool = False,
 ) -> list[GranuleInfo]:
     """Return up to `n_bins` granule rows for a collection, stratified over temporal bins.
 
     If temporal extent is missing, fall back to `n_bins` evenly-spaced offsets.
+    When ``coll['has_cloud_opendap']`` is true, each row's ``dmrpp_granule_url``
+    is set to the ``.dmrpp`` sidecar alongside ``https_url``. With
+    ``verify_dmrpp=True`` the sidecar is HEAD-checked and nulled on 404 — this
+    costs one extra request per granule.
     """
     bins = temporal_bins(coll.get("time_start"), coll.get("time_end"), n=n_bins)
     rows: list[GranuleInfo] = []
     now = datetime.now(timezone.utc)
+    has_opendap = bool(coll.get("has_cloud_opendap"))
 
     if bins is None:
         # No temporal extent: take the first `n_bins` granules with synthetic bin indices.
@@ -151,6 +180,9 @@ def sample_one_collection(
                     granule_concept_id=g["meta"]["concept-id"],
                     data_url=data_url,
                     https_url=https_url,
+                    dmrpp_granule_url=_resolve_dmrpp_url(
+                        https_url, has_opendap, verify_dmrpp
+                    ),
                     temporal_bin=i,
                     size_bytes=_extract_size(g),
                     sampled_at=now,
@@ -177,6 +209,9 @@ def sample_one_collection(
                 granule_concept_id=g["meta"]["concept-id"],
                 data_url=data_url,
                 https_url=https_url,
+                dmrpp_granule_url=_resolve_dmrpp_url(
+                    https_url, has_opendap, verify_dmrpp
+                ),
                 temporal_bin=i,
                 size_bytes=_extract_size(g),
                 sampled_at=now,
@@ -194,12 +229,15 @@ def run_sample(
     only_daac: str | None = None,
     *,
     access: str = "direct",
+    verify_dmrpp: bool = False,
 ) -> int:
     """Sample granules for every pending collection. Returns total granules written.
 
     Re-samples any collection whose existing granule rows were captured under a
     different access mode, so the URL scheme in the granules table always
-    matches the requested mode.
+    matches the requested mode. With ``verify_dmrpp=True``, every constructed
+    ``.dmrpp`` URL is HEAD-checked against the upstream object store and
+    nulled out on 404 — costs one extra request per sampled granule.
     """
     con = connect(db_path)
     init_schema(con)
@@ -248,7 +286,8 @@ def run_sample(
         )
 
     q = """
-        SELECT concept_id, time_start, time_end, num_granules, daac, skip_reason
+        SELECT concept_id, time_start, time_end, num_granules, daac, skip_reason,
+               has_cloud_opendap
         FROM collections
         WHERE (skip_reason IS NULL OR skip_reason = 'format_unknown')
           AND concept_id NOT IN (SELECT DISTINCT collection_concept_id FROM granules)
@@ -265,6 +304,7 @@ def run_sample(
             num_granules=r[3],
             daac=r[4],
             skip_reason=r[5],
+            has_cloud_opendap=bool(r[6]),
         )
         for r in con.execute(q, params).fetchall()
     ]
@@ -279,19 +319,22 @@ def run_sample(
             if resolved is not None:
                 continue  # Still unknown or non-array; skip.
 
-        rows = sample_one_collection(coll, n_bins=n_bins, access=access)
+        rows = sample_one_collection(
+            coll, n_bins=n_bins, access=access, verify_dmrpp=verify_dmrpp
+        )
         for r in rows:
             con.execute(
                 """INSERT OR IGNORE INTO granules
                    (collection_concept_id, granule_concept_id, data_url, https_url,
-                    temporal_bin, size_bytes, sampled_at, stratified, access_mode,
-                    umm_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    dmrpp_granule_url, temporal_bin, size_bytes, sampled_at,
+                    stratified, access_mode, umm_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     r["collection_concept_id"],
                     r["granule_concept_id"],
                     r["data_url"],
                     r["https_url"],
+                    r["dmrpp_granule_url"],
                     r["temporal_bin"],
                     r["size_bytes"],
                     r["sampled_at"],

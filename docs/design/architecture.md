@@ -485,26 +485,29 @@ The inspector is sufficient for hand-debugging the High and Medium failure bucke
 
 ```sql
 CREATE TABLE collections (
-  concept_id       TEXT PRIMARY KEY,
-  short_name       TEXT,
-  version          TEXT,
-  daac             TEXT,
-  provider         TEXT,
-  format_family    TEXT,      -- one of FormatFamily, NULL if unknown / non-array
-  format_declared  TEXT,      -- raw CMR-declared string, for debugging
-  num_granules     BIGINT,
-  time_start       TIMESTAMP,
-  time_end         TIMESTAMP,
-  processing_level TEXT,
-  skip_reason      TEXT,      -- NULL | 'non_array_format' | 'format_unknown'
-  discovered_at    TIMESTAMP,
-  umm_json         JSON       -- full top-level CMR response: {meta, umm}
+  concept_id         TEXT PRIMARY KEY,
+  short_name         TEXT,
+  version            TEXT,
+  daac               TEXT,
+  provider           TEXT,
+  format_family      TEXT,      -- one of FormatFamily, NULL if unknown / non-array
+  format_declared    TEXT,      -- raw CMR-declared string, for debugging
+  num_granules       BIGINT,
+  time_start         TIMESTAMP,
+  time_end           TIMESTAMP,
+  processing_level   TEXT,
+  skip_reason        TEXT,      -- NULL | 'non_array_format' | 'format_unknown'
+  has_cloud_opendap  BOOLEAN,   -- UMM-S association with cloud Hyrax (DMR++ usable)
+  discovered_at      TIMESTAMP,
+  umm_json           JSON       -- full top-level CMR response: {meta, umm}
 );
 
 CREATE TABLE granules (
   collection_concept_id TEXT NOT NULL,
   granule_concept_id    TEXT NOT NULL,
   data_url              TEXT,
+  https_url             TEXT,
+  dmrpp_granule_url     TEXT,           -- https_url + ".dmrpp" when has_cloud_opendap
   temporal_bin          INTEGER,
   size_bytes            BIGINT,
   sampled_at            TIMESTAMP,

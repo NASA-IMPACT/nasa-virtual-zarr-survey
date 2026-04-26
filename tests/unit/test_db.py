@@ -81,6 +81,20 @@ def test_table_has_umm_json_column(tmp_db_path: Path, table: str):
     assert cols["umm_json"].upper() == "JSON"
 
 
+@pytest.mark.parametrize(
+    "table, column",
+    [
+        ("collections", "has_cloud_opendap"),
+        ("granules", "dmrpp_granule_url"),
+    ],
+)
+def test_table_has_opendap_columns(tmp_db_path: Path, table: str, column: str):
+    con = connect(tmp_db_path)
+    init_schema(con)
+    cols = {r[1] for r in con.execute(f"PRAGMA table_info('{table}')").fetchall()}
+    assert column in cols
+
+
 def test_init_schema_raises_on_stale_db(tmp_db_path: Path):
     """A DB whose tables predate the latest schema bump is rejected with a clear message."""
     con = connect(tmp_db_path)
