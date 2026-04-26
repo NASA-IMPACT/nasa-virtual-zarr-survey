@@ -16,6 +16,7 @@ nav:
   - "index.md"
   - Results:
       - results/index.md
+      - results/history.md
   - "glossary.md"
   - Design:
       - design/architecture.md
@@ -30,6 +31,12 @@ nav:
       - api/repro.md
       - api/probe.md
       - api/inspect.md
+      - api/snapshot.md
+      - api/history.md
+      - api/db_session.md
+      - api/lock_sample.md
+      - api/preview_manifest.md
+      - api/feature_introductions.md
   - "contributing.md"
 watch:
   - src/nasa_virtual_zarr_survey

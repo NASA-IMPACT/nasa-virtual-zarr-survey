@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from click.testing import CliRunner
 
+from nasa_virtual_zarr_survey.__main__ import cli
 from nasa_virtual_zarr_survey.cubability import fingerprint_to_json
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.report import collection_verdicts, run_report
@@ -672,3 +676,214 @@ def test_export_then_from_data_produces_identical_report(
         "Report regenerated from digest differs from original.\n"
         f"First diff line: {next((left for left, right in zip(text1.splitlines(), text2.splitlines()) if left != right), 'length differs')}"
     )
+
+
+# === Snapshot / preview / provenance tests ===
+
+
+def _sha256_of(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _locked_sample_payload() -> dict:
+    return {
+        "schema_version": 1,
+        "created_at": "2026-04-26T12:00:00Z",
+        "sampling_mode": "top=1",
+        "collections": [
+            {
+                "concept_id": "C1-T",
+                "daac": "X.DAAC",
+                "format_family": "NetCDF4",
+                "processing_level": "L4",
+                "short_name": "FOO",
+                "version": "1.0",
+            }
+        ],
+        "granules": [
+            {
+                "collection_concept_id": "C1-T",
+                "granule_concept_id": "G1-T",
+                "s3_url": "s3://b/k1",
+                "https_url": "https://h/k1",
+                "temporal_bin": 0,
+                "size_bytes": 100,
+                "stratified": True,
+            }
+        ],
+    }
+
+
+def test_report_locked_sample_constructs_session(tmp_path: Path) -> None:
+    sample_path = tmp_path / "locked.json"
+    sample_path.write_text(json.dumps(_locked_sample_payload()))
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    out_path = tmp_path / "report.md"
+    export_path = tmp_path / "summary.json"
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "report",
+            "--locked-sample",
+            str(sample_path),
+            "--results",
+            str(results_dir),
+            "--out",
+            str(out_path),
+            "--export",
+            str(export_path),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert export_path.exists()
+
+
+def test_report_records_provenance_hashes(tmp_path: Path) -> None:
+    sample_path = tmp_path / "locked.json"
+    sample_path.write_text(json.dumps(_locked_sample_payload()))
+    lock_path = tmp_path / "snapshot.uv.lock"
+    lock_path.write_text("# fake uv.lock content\n")
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    export_path = tmp_path / "summary.json"
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "report",
+            "--locked-sample",
+            str(sample_path),
+            "--results",
+            str(results_dir),
+            "--uv-lock",
+            str(lock_path),
+            "--snapshot-date",
+            "2026-02-15",
+            "--export",
+            str(export_path),
+            "--no-render",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(export_path.read_text())
+    assert payload["schema_version"] == 6
+    assert payload["snapshot_date"] == "2026-02-15"
+    assert payload["snapshot_kind"] == "release"
+    assert payload["locked_sample_sha256"] == _sha256_of(sample_path)
+    assert payload["uv_lock_sha256"] == _sha256_of(lock_path)
+
+
+def test_report_preview_manifest_records_metadata(tmp_path: Path) -> None:
+    sample_path = tmp_path / "locked.json"
+    sample_path.write_text(json.dumps(_locked_sample_payload()))
+
+    manifest = tmp_path / "preview.toml"
+    manifest.write_text(
+        'snapshot_date = "2026-04-26"\n'
+        'label = "variable-chunking"\n'
+        'description = "Coordinated branches"\n'
+        "[git_overrides]\n"
+        'virtualizarr = { url = "https://github.com/zarr-developers/VirtualiZarr", rev = "abc123de" }\n'
+    )
+
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    export_path = tmp_path / "summary.json"
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "report",
+            "--locked-sample",
+            str(sample_path),
+            "--results",
+            str(results_dir),
+            "--preview-manifest",
+            str(manifest),
+            "--export",
+            str(export_path),
+            "--no-render",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(export_path.read_text())
+    assert payload["snapshot_kind"] == "preview"
+    assert payload["snapshot_date"] == "2026-04-26"
+    assert payload["label"] == "variable-chunking"
+    assert payload["description"] == "Coordinated branches"
+    assert payload["git_overrides"] == {
+        "virtualizarr": {
+            "url": "https://github.com/zarr-developers/VirtualiZarr",
+            "rev": "abc123de",
+        }
+    }
+    assert payload["uv_lock_sha256"] is None
+
+
+def test_report_no_render_skips_markdown(tmp_path: Path) -> None:
+    sample_path = tmp_path / "locked.json"
+    sample_path.write_text(json.dumps(_locked_sample_payload()))
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    out_path = tmp_path / "report.md"
+    export_path = tmp_path / "summary.json"
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "report",
+            "--locked-sample",
+            str(sample_path),
+            "--results",
+            str(results_dir),
+            "--out",
+            str(out_path),
+            "--export",
+            str(export_path),
+            "--no-render",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert export_path.exists()
+    assert not out_path.exists()
+
+
+def test_report_uv_lock_and_preview_manifest_mutually_exclusive(tmp_path: Path) -> None:
+    sample_path = tmp_path / "locked.json"
+    sample_path.write_text(json.dumps(_locked_sample_payload()))
+    manifest = tmp_path / "preview.toml"
+    manifest.write_text(
+        'snapshot_date = "2026-04-26"\nlabel = "x"\n'
+        '[git_overrides]\nvz = {url="u", rev="abc1234"}\n'
+    )
+    lock_path = tmp_path / "uv.lock"
+    lock_path.write_text("# stub\n")
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "report",
+            "--locked-sample",
+            str(sample_path),
+            "--results",
+            str(results_dir),
+            "--uv-lock",
+            str(lock_path),
+            "--preview-manifest",
+            str(manifest),
+            "--export",
+            str(tmp_path / "summary.json"),
+            "--no-render",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output

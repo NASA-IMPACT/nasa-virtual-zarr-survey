@@ -15,7 +15,7 @@ from typing import cast
 from nasa_virtual_zarr_survey.cubability import CubabilityResult, CubabilityVerdict
 from nasa_virtual_zarr_survey.types import VerdictRow
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def dump_summary(
@@ -36,6 +36,13 @@ def dump_summary(
     xarray_version: str | None = None,
     sampling_mode: str | None = None,
     generated_at: str | None = None,
+    snapshot_date: str | None = None,
+    snapshot_kind: str | None = None,
+    label: str | None = None,
+    description: str | None = None,
+    git_overrides: dict[str, dict[str, str]] | None = None,
+    locked_sample_sha256: str | None = None,
+    uv_lock_sha256: str | None = None,
 ) -> Path:
     """Serialize everything the report needs to a compact JSON file."""
     cube_serialized = {
@@ -46,7 +53,6 @@ def dump_summary(
         }
         for cid, r in cubability_results.items()
     }
-    # TypedDicts are plain dicts at runtime; serialize datetimes if present.
     verdict_rows = [dict(v) for v in verdicts]
     for row in verdict_rows:
         for key, value in list(row.items()):
@@ -61,6 +67,13 @@ def dump_summary(
         "zarr_version": zarr_version,
         "xarray_version": xarray_version,
         "sampling_mode": sampling_mode,
+        "snapshot_date": snapshot_date,
+        "snapshot_kind": snapshot_kind,
+        "label": label,
+        "description": description,
+        "git_overrides": git_overrides,
+        "locked_sample_sha256": locked_sample_sha256,
+        "uv_lock_sha256": uv_lock_sha256,
         "verdicts": verdict_rows,
         "parse_taxonomy": {k: [v[0], v[1]] for k, v in parse_taxonomy.items()},
         "dataset_taxonomy": {k: [v[0], v[1]] for k, v in dataset_taxonomy.items()},
@@ -94,6 +107,13 @@ class LoadedSummary:
     zarr_version: str | None = None
     xarray_version: str | None = None
     sampling_mode: str | None = None
+    snapshot_date: str | None = None
+    snapshot_kind: str | None = None
+    label: str | None = None
+    description: str | None = None
+    git_overrides: dict[str, dict[str, str]] | None = None
+    locked_sample_sha256: str | None = None
+    uv_lock_sha256: str | None = None
 
 
 def load_summary(path: Path | str) -> LoadedSummary:
@@ -101,7 +121,7 @@ def load_summary(path: Path | str) -> LoadedSummary:
 
     Only the current ``SCHEMA_VERSION`` is accepted. Older versions raise; the
     fix is to regenerate the summary from the source DuckDB and Parquet via
-    ``report --export``.
+    ``report --export <path>``.
     """
     data = json.loads(Path(path).read_text())
     version = data.get("schema_version")
@@ -142,4 +162,11 @@ def load_summary(path: Path | str) -> LoadedSummary:
         zarr_version=data.get("zarr_version"),
         xarray_version=data.get("xarray_version"),
         sampling_mode=data.get("sampling_mode"),
+        snapshot_date=data.get("snapshot_date"),
+        snapshot_kind=data.get("snapshot_kind"),
+        label=data.get("label"),
+        description=data.get("description"),
+        git_overrides=data.get("git_overrides"),
+        locked_sample_sha256=data.get("locked_sample_sha256"),
+        uv_lock_sha256=data.get("uv_lock_sha256"),
     )

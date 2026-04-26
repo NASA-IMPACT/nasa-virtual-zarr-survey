@@ -13,6 +13,7 @@ from nasa_virtual_zarr_survey.attempt import (
     ResultWriter,
     run_attempt,
 )
+from nasa_virtual_zarr_survey.db_session import SurveySession
 from nasa_virtual_zarr_survey.formats import FormatFamily
 from pathlib import Path
 
@@ -440,7 +441,12 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
         lambda self, *, provider, url: object(),
     )
 
-    n = run_attempt(tmp_db_path, tmp_results_dir, timeout_s=5, shard_size=500)
+    n = run_attempt(
+        SurveySession.from_duckdb(tmp_db_path),
+        tmp_results_dir,
+        timeout_s=5,
+        shard_size=500,
+    )
     assert n == 1
     assert attempts == ["G2"]
 
@@ -488,7 +494,11 @@ def test_run_attempt_aborts_on_consecutive_forbidden(
 
     with pytest.raises(SystemExit) as exc_info:
         run_attempt(
-            tmp_db_path, tmp_results_dir, timeout_s=5, shard_size=500, access="direct"
+            SurveySession.from_duckdb(tmp_db_path),
+            tmp_results_dir,
+            timeout_s=5,
+            shard_size=500,
+            access="direct",
         )
 
     assert "consecutive direct-S3 requests returned 403" in str(exc_info.value)
@@ -551,7 +561,11 @@ def test_run_attempt_does_not_abort_on_mixed_failures(
     )
 
     n = run_attempt(
-        tmp_db_path, tmp_results_dir, timeout_s=5, shard_size=500, access="direct"
+        SurveySession.from_duckdb(tmp_db_path),
+        tmp_results_dir,
+        timeout_s=5,
+        shard_size=500,
+        access="direct",
     )
     assert n == 10
 
@@ -580,7 +594,7 @@ def test_run_attempt_passes_cache_params_to_store_cache(tmp_path: Path):
 
     with patch("nasa_virtual_zarr_survey.attempt.StoreCache.__init__", spy_init):
         run_attempt(
-            db_path,
+            SurveySession.from_duckdb(db_path),
             results_dir,
             timeout_s=1,
             access="direct",
@@ -590,6 +604,140 @@ def test_run_attempt_passes_cache_params_to_store_cache(tmp_path: Path):
 
     assert captured.get("cache_dir") == cache_dir
     assert captured.get("cache_max_bytes") == 12345
+
+
+def test_run_attempt_no_overrides_uses_empty_registry(tmp_path: Path):
+    """run_attempt(no_overrides=True) skips loading the override TOML entirely."""
+    from nasa_virtual_zarr_survey.attempt import run_attempt
+
+    db_path = tmp_path / "survey.duckdb"
+    results_dir = tmp_path / "results"
+    SurveySession.from_duckdb(db_path)
+
+    overrides_path = tmp_path / "nonexistent.toml"
+    n = run_attempt(
+        SurveySession.from_duckdb(db_path),
+        results_dir,
+        timeout_s=1,
+        access="direct",
+        overrides_path=overrides_path,
+        no_overrides=True,
+    )
+    assert n == 0
+
+
+def test_run_attempt_skip_override_validation_does_not_validate(
+    tmp_path: Path, monkeypatch
+):
+    """skip_override_validation=True: registry loaded but validate() never called."""
+    from nasa_virtual_zarr_survey.attempt import run_attempt
+    from nasa_virtual_zarr_survey.overrides import OverrideRegistry
+
+    validate_calls: list[tuple] = []
+    real_validate = OverrideRegistry.validate
+
+    def spy_validate(self, *args, **kwargs):
+        validate_calls.append((args, kwargs))
+        return real_validate(self, *args, **kwargs)
+
+    monkeypatch.setattr(OverrideRegistry, "validate", spy_validate)
+
+    overrides = tmp_path / "overrides.toml"
+    overrides.write_text("")
+
+    db_path = tmp_path / "survey.duckdb"
+    SurveySession.from_duckdb(db_path)
+
+    run_attempt(
+        SurveySession.from_duckdb(db_path),
+        tmp_path / "results",
+        timeout_s=1,
+        access="direct",
+        overrides_path=overrides,
+        skip_override_validation=True,
+    )
+    assert validate_calls == []
+
+
+def test_attempt_cli_locked_sample_runs(tmp_path: Path, monkeypatch) -> None:
+    """`attempt --locked-sample PATH` constructs a session from JSON and runs."""
+    import json
+
+    from click.testing import CliRunner
+
+    from nasa_virtual_zarr_survey.__main__ import cli
+
+    sample = {
+        "schema_version": 1,
+        "created_at": "2026-04-26T12:00:00Z",
+        "sampling_mode": "top=1",
+        "collections": [
+            {
+                "concept_id": "C1-T",
+                "daac": "X.DAAC",
+                "format_family": "NetCDF4",
+                "processing_level": "L4",
+                "short_name": "FOO",
+                "version": "1.0",
+            }
+        ],
+        "granules": [
+            {
+                "collection_concept_id": "C1-T",
+                "granule_concept_id": "G1-T",
+                "s3_url": "s3://b/k1",
+                "https_url": "https://h/k1",
+                "temporal_bin": 0,
+                "size_bytes": 100,
+                "stratified": True,
+            }
+        ],
+    }
+    sample_path = tmp_path / "locked.json"
+    sample_path.write_text(json.dumps(sample))
+    results_dir = tmp_path / "results"
+
+    import nasa_virtual_zarr_survey.attempt as attempt_mod
+
+    def fake_attempt_one(**kwargs):
+        return AttemptResult(
+            collection_concept_id="C1-T",
+            granule_concept_id="G1-T",
+            daac="X.DAAC",
+            format_family="NETCDF4",
+            parser="HDFParser",
+            parse_success=True,
+            dataset_success=True,
+            datatree_success=False,
+            success=True,
+            duration_s=0.1,
+            attempted_at=datetime.now(timezone.utc),
+        )
+
+    monkeypatch.setattr(attempt_mod, "attempt_one", fake_attempt_one)
+    monkeypatch.setattr(
+        attempt_mod.StoreCache,
+        "get_store",
+        lambda self, *, provider, url: object(),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "attempt",
+            "--locked-sample",
+            str(sample_path),
+            "--results",
+            str(results_dir),
+            "--access",
+            "direct",
+            "--no-overrides",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    parquets = list(results_dir.glob("**/*.parquet"))
+    assert parquets, f"expected at least one Parquet shard: {result.output}"
 
 
 # ---------------------------------------------------------------------------

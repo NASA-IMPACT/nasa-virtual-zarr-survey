@@ -67,36 +67,46 @@ def _parse_size(value: str) -> int:
     return int(number * _SIZE_UNITS[unit])
 
 
-def _cache_options(f):
+def _cache_options(f=None, *, default_use_cache: bool = False):
     """Apply --cache, --cache-dir, --cache-max-size to a Click command.
 
     Decorators are applied bottom-up, so to keep the original `--help` order
     (cache, cache-dir, cache-max-size) the option closest to the function
     must be applied last.
+
+    Usage: ``@_cache_options`` to default ``--cache`` off (most subcommands),
+    or ``@_cache_options(default_use_cache=True)`` for ``snapshot``, where
+    cache reuse across runs is the whole point.
     """
-    f = click.option(
-        "--cache-max-size",
-        "cache_max_size",
-        type=str,
-        default="50GB",
-        help="Soft cap on total cache size; supports human-readable units "
-        "(e.g. 50GB, 500MB).",
-    )(f)
-    f = click.option(
-        "--cache-dir",
-        type=click.Path(path_type=Path),
-        default=None,
-        envvar="NASA_VZ_SURVEY_CACHE_DIR",
-        help=f"Cache directory (default: {DEFAULT_CACHE_DIR}).",
-    )(f)
-    f = click.option(
-        "--cache/--no-cache",
-        "use_cache",
-        default=False,
-        help="Cache fetched granule bytes to disk so repeat runs hit local "
-        "disk instead of re-fetching.",
-    )(f)
-    return f
+
+    def _apply(fn):
+        fn = click.option(
+            "--cache-max-size",
+            "cache_max_size",
+            type=str,
+            default="50GB",
+            help="Soft cap on total cache size; supports human-readable units "
+            "(e.g. 50GB, 500MB).",
+        )(fn)
+        fn = click.option(
+            "--cache-dir",
+            type=click.Path(path_type=Path),
+            default=None,
+            envvar="NASA_VZ_SURVEY_CACHE_DIR",
+            help=f"Cache directory (default: {DEFAULT_CACHE_DIR}).",
+        )(fn)
+        fn = click.option(
+            "--cache/--no-cache",
+            "use_cache",
+            default=default_use_cache,
+            help="Cache fetched granule bytes to disk so repeat runs hit local "
+            "disk instead of re-fetching.",
+        )(fn)
+        return fn
+
+    if f is None:
+        return _apply
+    return _apply(f)
 
 
 def _resolve_cache_params(
@@ -578,6 +588,15 @@ def sample(
 @cli.command()
 @click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
 @click.option(
+    "--locked-sample",
+    "locked_sample_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to a config/locked_sample.json. When set, sources collections "
+    "and granules from the JSON via an in-memory DuckDB session instead of "
+    "reading --db.",
+)
+@click.option(
     "--results", "results_dir", type=click.Path(path_type=Path), default=DEFAULT_RESULTS
 )
 @click.option("--timeout", "timeout_s", type=int, default=60)
@@ -605,8 +624,24 @@ def sample(
     default=Path("config/collection_overrides.toml"),
     help="Path to the per-collection overrides TOML file.",
 )
+@click.option(
+    "--no-overrides",
+    "no_overrides",
+    is_flag=True,
+    default=False,
+    help="Run as if config/collection_overrides.toml were empty (vanilla baseline).",
+)
+@click.option(
+    "--skip-override-validation",
+    "skip_override_validation",
+    is_flag=True,
+    default=False,
+    help="Load the override TOML but skip the startup signature check; "
+    "runtime exceptions from incompatible kwargs are captured per attempt.",
+)
 def attempt(
     db_path: Path,
+    locked_sample_path: Path | None,
     results_dir: Path,
     timeout_s: int,
     shard_size: int,
@@ -617,15 +652,25 @@ def attempt(
     cache_dir: Path | None,
     cache_max_size: str,
     overrides_path: Path,
+    no_overrides: bool,
+    skip_override_validation: bool,
 ) -> None:
     """Phases 3 and 4 (attempt): parsability + datasetability per granule; write Parquet rows."""
     from nasa_virtual_zarr_survey.attempt import run_attempt
+    from nasa_virtual_zarr_survey.db_session import SurveySession
+
+    if locked_sample_path is not None:
+        session = SurveySession.from_locked_sample(
+            locked_sample_path, access=cast(AccessMode, access)
+        )
+    else:
+        session = SurveySession.from_duckdb(db_path)
 
     effective_cache_dir, cache_max_bytes = _resolve_cache_params(
         use_cache, cache_dir, cache_max_size
     )
     n = run_attempt(
-        db_path,
+        session,
         results_dir,
         timeout_s=timeout_s,
         shard_size=shard_size,
@@ -635,8 +680,13 @@ def attempt(
         cache_dir=effective_cache_dir,
         cache_max_bytes=cache_max_bytes,
         overrides_path=overrides_path,
+        no_overrides=no_overrides,
+        skip_override_validation=skip_override_validation,
     )
-    click.echo(_attempt_summary(db_path, results_dir, n))
+    if locked_sample_path is None:
+        click.echo(_attempt_summary(db_path, results_dir, n))
+    else:
+        click.echo(f"attempt: {n} new attempts (sourced from {locked_sample_path})")
 
 
 @cli.command(name="validate-overrides")
@@ -675,8 +725,43 @@ def validate_overrides_cmd(db_path: Path, config_path: Path) -> None:
     )
 
 
+@cli.command(name="lock-sample")
+@click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(path_type=Path),
+    default=Path("config/locked_sample.json"),
+    help="Path to write the locked sample JSON.",
+)
+def lock_sample_cmd(db_path: Path, out_path: Path) -> None:
+    """Write a deterministic locked sample JSON from the current DB.
+
+    Run after `discover && sample` produces the desired sample. The output
+    is committed and consumed by snapshot runs (see scripts/run_snapshot.sh).
+    """
+    from nasa_virtual_zarr_survey.lock_sample import write_locked_sample
+
+    written = write_locked_sample(db_path, out_path)
+    click.echo(f"wrote {written}")
+
+
 @cli.command()
 @click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
+@click.option(
+    "--locked-sample",
+    "locked_sample_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Source the session from a locked sample JSON instead of --db. "
+    "Mutually exclusive with --from-data.",
+)
+@click.option(
+    "--access",
+    type=click.Choice(["direct", "external"]),
+    default="direct",
+    help="Access mode used when constructing a session from --locked-sample.",
+)
 @click.option(
     "--results", "results_dir", type=click.Path(path_type=Path), default=DEFAULT_RESULTS
 )
@@ -697,28 +782,90 @@ def validate_overrides_cmd(db_path: Path, config_path: Path) -> None:
     default=None,
     help="Regenerate the report from a JSON digest; skip DuckDB/Parquet queries.",
 )
+@click.option(
+    "--snapshot-date",
+    "snapshot_date",
+    type=str,
+    default=None,
+    help="ISO date for the snapshot (e.g., 2026-02-15). Drives "
+    "snapshot_date / snapshot_kind in the exported summary.",
+)
+@click.option(
+    "--uv-lock",
+    "uv_lock_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to a uv.lock file to hash and reference as uv_lock_sha256.",
+)
+@click.option(
+    "--preview-manifest",
+    "preview_manifest_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to a config/snapshot_previews/*.toml. When set, snapshot_kind "
+    "becomes 'preview' and label/description/git_overrides come from the "
+    "manifest. Mutually exclusive with --uv-lock.",
+)
+@click.option(
+    "--no-render",
+    "no_render",
+    is_flag=True,
+    default=False,
+    help="Skip the markdown + figures output. Useful when only the "
+    "--export JSON digest is wanted.",
+)
 def report(
     db_path: Path,
+    locked_sample_path: Path | None,
+    access: str,
     results_dir: Path,
     out_path: Path,
     export_to: Path | None,
     from_data: Path | None,
+    snapshot_date: str | None,
+    uv_lock_path: Path | None,
+    preview_manifest_path: Path | None,
+    no_render: bool,
 ) -> None:
     """Phase 5 + render: generate the report from survey state OR a committed JSON digest."""
+    from nasa_virtual_zarr_survey.db_session import SurveySession
     from nasa_virtual_zarr_survey.report import run_report
 
     if export_to is not None and from_data is not None:
         raise click.UsageError("--export and --from-data are mutually exclusive")
+    if locked_sample_path is not None and from_data is not None:
+        raise click.UsageError("--locked-sample and --from-data are mutually exclusive")
+    if uv_lock_path is not None and preview_manifest_path is not None:
+        raise click.UsageError(
+            "--uv-lock and --preview-manifest are mutually exclusive"
+        )
+
+    session: SurveySession | None
+    if from_data is not None:
+        session = None
+    elif locked_sample_path is not None:
+        session = SurveySession.from_locked_sample(
+            locked_sample_path, access=cast(AccessMode, access)
+        )
+    else:
+        session = SurveySession.from_duckdb(db_path)
+
     run_report(
-        db_path=db_path,
+        session,
         results_dir=results_dir,
         out_path=out_path,
         export_to=export_to,
         from_data=from_data,
+        snapshot_date=snapshot_date,
+        locked_sample_path=locked_sample_path,
+        uv_lock_path=uv_lock_path,
+        preview_manifest_path=preview_manifest_path,
+        no_render=no_render,
     )
     if export_to:
         click.echo(f"Wrote digest to {export_to}")
-    click.echo(f"Wrote {out_path}")
+    if not no_render:
+        click.echo(f"Wrote {out_path}")
 
 
 @cli.command()
@@ -791,10 +938,11 @@ def pilot(
     clean: bool,
 ) -> None:
     """Run discover, sample, attempt, report on a small sample for taxonomy review."""
-    from nasa_virtual_zarr_survey.discover import run_discover
-    from nasa_virtual_zarr_survey.sample import run_sample
     from nasa_virtual_zarr_survey.attempt import run_attempt
+    from nasa_virtual_zarr_survey.db_session import SurveySession
+    from nasa_virtual_zarr_survey.discover import run_discover
     from nasa_virtual_zarr_survey.report import run_report
+    from nasa_virtual_zarr_survey.sample import run_sample
 
     if top_total is not None and top_per_provider is not None:
         raise click.UsageError("--top and --top-per-provider are mutually exclusive")
@@ -827,8 +975,9 @@ def pilot(
     effective_cache_dir, cache_max_bytes = _resolve_cache_params(
         use_cache, cache_dir, cache_max_size
     )
+    session = SurveySession.from_duckdb(db_path)
     n_att = run_attempt(
-        db_path,
+        session,
         results_dir,
         timeout_s=timeout_s,
         access=access_mode,
@@ -837,11 +986,152 @@ def pilot(
     )
     click.echo(_attempt_summary(db_path, results_dir, n_att))
     summary_path = out_path.parent / "summary.json"
-    run_report(db_path, results_dir, out_path, export_to=summary_path)
+    run_report(session, results_dir, out_path, export_to=summary_path)
     click.echo(f"Wrote {out_path} and {summary_path}")
     click.echo(
         f"Pilot complete. Review errors in {results_dir}, refine taxonomy.py, then run full pipeline."
     )
+
+
+@cli.command()
+@click.option(
+    "--snapshot-date",
+    "snapshot_date",
+    type=str,
+    default=None,
+    help="ISO date for the snapshot (e.g. 2026-02-15). Defaults to "
+    "[tool.uv] exclude-newer in pyproject.toml.",
+)
+@click.option(
+    "--label",
+    type=str,
+    default=None,
+    help="Required when [tool.uv.sources] has git overrides; names the "
+    "preview snapshot's output file.",
+)
+@click.option(
+    "--description",
+    type=str,
+    default=None,
+    help="Optional one-line description for previews.",
+)
+@click.option(
+    "--preview-manifest",
+    "preview_manifest_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Use a pre-curated config/snapshot_previews/*.toml manifest instead "
+    "of reading pyproject.toml.",
+)
+@click.option(
+    "--locked-sample",
+    "locked_sample_path",
+    type=click.Path(path_type=Path),
+    default=Path("config/locked_sample.json"),
+)
+@click.option(
+    "--access",
+    type=click.Choice(["direct", "external"]),
+    default="external",
+)
+@click.option(
+    "--uv-lock",
+    "uv_lock_path",
+    type=click.Path(path_type=Path),
+    default=Path("uv.lock"),
+    help="Path to the active uv.lock; copied beside the digest for releases.",
+)
+@click.option(
+    "--results",
+    "results_dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Per-snapshot results directory. Defaults to output/snapshots/<slug>/results.",
+)
+@click.option(
+    "--history-dir",
+    type=click.Path(path_type=Path),
+    default=Path("docs/results/history"),
+)
+@_cache_options(default_use_cache=True)
+def snapshot(
+    snapshot_date: str | None,
+    label: str | None,
+    description: str | None,
+    preview_manifest_path: Path | None,
+    locked_sample_path: Path,
+    access: str,
+    uv_lock_path: Path,
+    results_dir: Path | None,
+    history_dir: Path,
+    use_cache: bool,
+    cache_dir: Path | None,
+    cache_max_size: str,
+) -> None:
+    """Run attempt + report and emit a `*.summary.json` digest.
+
+    Reads ``[tool.uv] exclude-newer`` for the snapshot date and
+    ``[tool.uv.sources]`` for git overrides — the same pyproject.toml that
+    pinned the env. Pass ``--preview-manifest`` to bypass pyproject.toml
+    detection in favor of a pre-curated manifest file.
+
+    Caching is on by default: subsequent snapshots against the same locked
+    sample reuse fetched granule bytes. Pass ``--no-cache`` to disable.
+    """
+    from nasa_virtual_zarr_survey.snapshot import SnapshotError, run_snapshot
+
+    effective_cache_dir, cache_max_bytes = _resolve_cache_params(
+        use_cache, cache_dir, cache_max_size
+    )
+    try:
+        out = run_snapshot(
+            snapshot_date=snapshot_date,
+            label=label,
+            description=description,
+            preview_manifest_path=preview_manifest_path,
+            locked_sample_path=locked_sample_path,
+            access=cast(AccessMode, access),
+            uv_lock_path=uv_lock_path,
+            results_dir=results_dir,
+            history_dir=history_dir,
+            cache_dir=effective_cache_dir,
+            cache_max_bytes=cache_max_bytes,
+        )
+    except SnapshotError as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(f"wrote {out}")
+
+
+@cli.command()
+@click.option(
+    "--history-dir",
+    "history_dir",
+    type=click.Path(path_type=Path),
+    default=Path("docs/results/history"),
+    help="Directory holding committed *.summary.json digests.",
+)
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(path_type=Path),
+    default=Path("docs/results/history.md"),
+    help="Path to write the rendered Coverage-over-time markdown.",
+)
+@click.option(
+    "--intros",
+    "intros_path",
+    type=click.Path(path_type=Path),
+    default=Path("config/feature_introductions.toml"),
+    help="Path to feature_introductions.toml.",
+)
+def history(history_dir: Path, out_path: Path, intros_path: Path) -> None:
+    """Render the Coverage-over-time page from committed summary digests."""
+    from nasa_virtual_zarr_survey.history import run_history
+
+    warning = run_history(history_dir, out_path, intros_path=intros_path)
+    if warning is not None:
+        click.echo(warning, err=True)
+    click.echo(f"wrote {out_path}")
 
 
 @cli.command()

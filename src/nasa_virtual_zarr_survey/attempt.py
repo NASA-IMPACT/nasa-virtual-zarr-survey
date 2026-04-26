@@ -24,7 +24,7 @@ from virtualizarr.parsers.netcdf3 import NetCDF3Parser
 from virtualizarr.parsers.zarr import ZarrParser
 
 from nasa_virtual_zarr_survey.auth import AuthUnavailable, StoreCache
-from nasa_virtual_zarr_survey.db import connect, init_schema
+from nasa_virtual_zarr_survey.db_session import SurveySession
 from nasa_virtual_zarr_survey.formats import FormatFamily
 from nasa_virtual_zarr_survey.overrides import (
     CollectionOverride,
@@ -459,7 +459,7 @@ def _pending_granules(
 
 
 def run_attempt(
-    db_path: Path | str,
+    session: SurveySession,
     results_dir: Path | str,
     *,
     timeout_s: int = 60,
@@ -470,14 +470,18 @@ def run_attempt(
     cache_dir: Path | None = None,
     cache_max_bytes: int = 50 * 1024**3,
     overrides_path: Path | str = DEFAULT_OVERRIDES_PATH,
+    no_overrides: bool = False,
+    skip_override_validation: bool = False,
 ) -> int:
     """Attempt every pending granule. Returns count attempted in this call."""
-    con = connect(db_path)
-    init_schema(con)
+    con = session.con
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    override_registry = OverrideRegistry.from_toml(overrides_path)
+    if no_overrides:
+        override_registry = OverrideRegistry.empty()
+    else:
+        override_registry = OverrideRegistry.from_toml(overrides_path)
     format_for: dict[str, FormatFamily] = {}
     for cid, fam_str in con.execute(
         "SELECT concept_id, format_family FROM collections "
@@ -487,7 +491,8 @@ def run_attempt(
             format_for[cid] = FormatFamily(fam_str)
         except ValueError:
             continue
-    override_registry.validate(format_for=format_for)
+    if not no_overrides and not skip_override_validation:
+        override_registry.validate(format_for=format_for)
 
     pending = _pending_granules(con, results_dir, only_daac, only_collection)
     writer = ResultWriter(results_dir, shard_size=shard_size)

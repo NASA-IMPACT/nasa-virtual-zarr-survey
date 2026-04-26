@@ -182,6 +182,34 @@ The check enforces concept-ID format, allowed sub-keys, kwarg names against each
 
 The full debug loop is: naive `attempt` records a failure, `repro` to investigate, edit `collection_overrides.toml`, `validate-overrides` to confirm, then re-run `attempt` for that collection. The next `report` will mark the collection as `override_applied = true`. See [the design doc](design/architecture.md#per-collection-overrides) for the full schema and validation rules.
 
+## Tracking compatibility over time
+
+The pipeline above is one point in time. To track how VirtualiZarr's compatibility against NASA data evolves across releases — and to evaluate unreleased branches against the same fixed sample — the survey supports *snapshots*.
+
+A snapshot is one re-run of `attempt` + `report` against `config/locked_sample.json` (a committed JSON enumeration of (collection, granule) pairs) under a date-pinned dependency stack. Each snapshot writes a `*.summary.json` digest to `docs/results/history/`; the `history` subcommand renders all of them as a [Coverage over time](results/history.md) page with funnel-over-time and bucket-trend charts.
+
+Two flavors:
+
+- **Release** snapshots pin to a single date (`[tool.uv] exclude-newer`).
+- **Preview** snapshots pin to a date plus one or more `[tool.uv.sources]` git overrides — used to evaluate unreleased branches.
+
+Typical workflow once the locked sample is set up (see the contributing guide):
+
+```bash
+# release: pin pyproject's exclude-newer date, lock, snapshot.
+uv lock
+uv run nasa-virtual-zarr-survey snapshot
+
+# preview: add a git override to [tool.uv.sources], lock, snapshot with a label.
+uv lock
+uv run nasa-virtual-zarr-survey snapshot --label variable-chunking
+
+# render the page after committing new digests.
+uv run nasa-virtual-zarr-survey history
+```
+
+See [Publishing a snapshot](contributing.md#publishing-a-snapshot) in the contributing guide for the end-to-end walk-through, including how to build the locked sample.
+
 ## Querying the raw data
 
 The Parquet log at `output/results/` is the canonical per-attempt record (one row per granule per phase). DuckDB can read it directly and is the fastest way to answer questions like "which DAACs hit `UNSUPPORTED_CODEC` most?":

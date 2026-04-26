@@ -56,6 +56,18 @@ Terms used throughout this site, the report, and the design docs. Headings are a
 
 **Virtual dataset / virtual datatree.** An `xarray.Dataset` (Phase 4a) or `xarray.DataTree` (Phase 4b) backed by a `ManifestStore` instead of in-memory arrays. Reads pull byte ranges on demand.
 
+## Snapshots
+
+**Snapshot.** One re-run of the survey under a date-pinned dependency stack, producing a `docs/results/history/<slug>.summary.json` digest. The [Coverage over time](results/history.md) page is rendered from the accumulated set.
+
+**Locked sample.** The fixed set of (collection, granule) pairs every snapshot is evaluated against, committed as `config/locked_sample.json`. Built once via `discover` + `sample` + `lock-sample`. Comparing snapshots is only meaningful when they share a `locked_sample_sha256`.
+
+**Release snapshot.** A snapshot pinned to a single date via `[tool.uv] exclude-newer`. The active `uv.lock` is captured beside the digest so the env is exactly reproducible later (`uv sync --frozen` against that lockfile).
+
+**Preview snapshot.** A snapshot pinned to a date *and* one or more `[tool.uv.sources]` git overrides. Used to evaluate unreleased work (a VirtualiZarr branch, an xarray PR) against the same locked sample. `rev` must be a hex SHA; branches and tags are rejected because they're not reproducible.
+
+**`exclude-newer`.** uv's [resolution-time clamp](https://docs.astral.sh/uv/reference/settings/#exclude-newer) on package release dates. Setting `[tool.uv] exclude-newer = "YYYY-MM-DD"` makes `uv lock` resolve as if no package release had a publication date after that day. The `snapshot` subcommand reads this as the default snapshot date.
+
 ## Failure-bucket reference
 
 The taxonomy of failure buckets (`UNSUPPORTED_CODEC`, `CONFLICTING_DIM_SIZES`, `UNDEFINED_FILL_VALUE`, etc.) lives in [the taxonomy reference](design/taxonomy.md).

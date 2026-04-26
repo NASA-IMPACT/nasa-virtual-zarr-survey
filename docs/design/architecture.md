@@ -596,6 +596,48 @@ On the first run, `read_parquet` raises (no files yet); a `try/except` falls bac
 - Top-50 raw errors per phase for the `OTHER` bucket, seeding the next round of taxonomy refinement.
 - Full per-collection table at the end.
 
+## Snapshots and history
+
+The reporting pipeline above is a single-point-in-time view: it shows compatibility under whatever versions of VirtualiZarr / xarray / zarr happen to be installed. To track compatibility *over time* across releases (and to evaluate unreleased branches), the survey overlays a snapshot system on top.
+
+### Locked sample
+
+The unit of comparison across snapshots is the **locked sample**: a deterministic JSON file at `config/locked_sample.json` enumerating the (collection, granule) pairs every snapshot is evaluated against. It is committed and regenerated only deliberately. `nasa-virtual-zarr-survey lock-sample` writes it from the current `survey.duckdb`. `attempt --locked-sample PATH` and `report --locked-sample PATH` both source their state from the JSON via an in-memory DuckDB session — no `survey.duckdb` involvement.
+
+Each summary digest carries `locked_sample_sha256`; a mismatch across digests is the renderer's signal that two snapshots are not directly comparable, and surfaces as a warning when `history` runs.
+
+### `SurveySession`
+
+`run_attempt` and `run_report` take a `SurveySession` rather than a DuckDB path. `SurveySession.from_duckdb(path)` is the live-pipeline mode; `SurveySession.from_locked_sample(path, access=...)` is the snapshot mode. Both expose the same `collections` / `granules` tables on a DuckDB connection, so the SQL inside the pipeline is identical regardless of source.
+
+### Summary digest schema (v6)
+
+`docs/results/history/<slug>.summary.json` is the per-snapshot artifact. It is the same object as the existing `report --export` digest plus snapshot metadata:
+
+| Field                   | Purpose                                                            |
+|------------------------|--------------------------------------------------------------------|
+| `snapshot_date`        | ISO date — the `--exclude-newer` value for releases, or the manifest's date for previews. |
+| `snapshot_kind`        | `"release"` or `"preview"`.                                        |
+| `label`                | Filename-safe slug (preview only).                                 |
+| `description`          | One-line note (preview only).                                      |
+| `git_overrides`        | `{name: {url, rev}}` of git-sourced packages (preview only).       |
+| `locked_sample_sha256` | SHA-256 of the locked-sample JSON. Used to detect drift.           |
+| `uv_lock_sha256`       | SHA-256 of the snapshot's `uv.lock` (release only).                |
+
+The schema is bumped whole — there are no migrations. Older digests must be regenerated.
+
+### Release vs preview
+
+A **release snapshot** pins to a date. The active `uv.lock` is copied to `docs/results/history/<date>.uv.lock` so the resolved env can be reproduced exactly (e.g. `uv sync --frozen --locked` against that file). A **preview snapshot** pins to a date *and* one or more git-sourced packages — used to evaluate unreleased work (a VirtualiZarr branch, an xarray PR) against the same locked sample. Previews skip the `uv.lock` copy because the resolved env may include local commits that cannot be replayed by `uv` alone.
+
+The `snapshot` subcommand auto-detects the kind from `pyproject.toml`: any git entries in `[tool.uv.sources]` mark the run as a preview. Pre-curated previews can also be authored as committed `config/snapshot_previews/<date>-<label>.toml` manifests; passing `--preview-manifest` to either `snapshot` or `report` bypasses pyproject.toml detection in favor of the manifest.
+
+### History page rendering
+
+`history.py` reads every `*.summary.json` under `docs/results/history/` and emits `docs/results/history.md` with: a snapshots table, a funnel-over-time chart (% pass per phase per snapshot, with hand-curated feature-introduction markers from `config/feature_introductions.toml`), a top-N bucket trend chart, a state-transition diff between the two latest releases, and a preview-snapshots section listing each preview's git overrides as commit links. The chart toolchain mirrors `figures.py`: holoviews + bokeh for interactive HTML, matplotlib for PNG fallbacks.
+
+Feature annotations are not introspected — they are hand-authored entries in `config/feature_introductions.toml` keyed by feature name with `phases`, `first_in_vz`, `introduced` (date), and `description`. Empty file is the valid initial state.
+
 ## Error handling
 
 - **Per-attempt:** all exceptions caught; errors serialized into the Parquet row. Timeouts → `TimeoutError`. Auth failures → `AuthUnavailable`.
@@ -605,7 +647,11 @@ On the first run, `read_parquet` raises (no files yet); a `try/except` falls bac
 
 ## CLI
 
-Click-based. Subcommands: `version`, `discover`, `sample`, `attempt`, `report`, `pilot`, `repro` (minimizes any single failure into a runnable script), `probe` (emits a runnable script for investigating any concept ID, even one with no recorded failures), and `validate-overrides` (loads `config/collection_overrides.toml` and prints `OK` or the first validation error).
+Click-based. Subcommands fall into three groups:
+
+- **Pipeline:** `version`, `discover`, `sample`, `attempt`, `report`, `pilot`.
+- **Investigation:** `repro` (minimizes any single failure into a runnable script), `probe` (emits a runnable script for any concept ID, even one with no recorded failures), `validate-overrides` (loads `config/collection_overrides.toml` and prints `OK` or the first validation error).
+- **Snapshots:** `lock-sample` (writes `config/locked_sample.json` from the current DB), `snapshot` (runs `attempt` + `report --no-render --export ...` against the active env, reading `[tool.uv] exclude-newer` and `[tool.uv.sources]` for date and git overrides), `history` (renders `docs/results/history.md` from committed digests).
 
 Common flags across work phases:
 

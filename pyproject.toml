@@ -65,7 +65,7 @@ testpaths = ["tests"]
 python_version = "3.12"
 
 [[tool.mypy.overrides]]
-module = ["holoviews", "holoviews.*"]
+module = ["holoviews", "holoviews.*", "pandas"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

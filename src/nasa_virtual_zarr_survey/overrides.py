@@ -69,6 +69,11 @@ class OverrideRegistry:
         return self._by_id.get(concept_id, CollectionOverride())
 
     @classmethod
+    def empty(cls) -> "OverrideRegistry":
+        """Return a registry with no overrides — used by --no-overrides."""
+        return cls(_by_id={})
+
+    @classmethod
     def from_toml(cls, path: str | Path) -> "OverrideRegistry":
         """Load and structurally validate an override TOML file.
 

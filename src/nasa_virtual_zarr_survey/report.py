@@ -6,7 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 import duckdb
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
@@ -19,6 +19,9 @@ from nasa_virtual_zarr_survey.cubability import (
 )
 from nasa_virtual_zarr_survey.processing_level import CUBE_MIN_RANK, parse_rank
 from nasa_virtual_zarr_survey.types import Fingerprint, VerdictRow
+
+if TYPE_CHECKING:
+    from nasa_virtual_zarr_survey.db_session import SurveySession
 
 # `figures` is imported lazily inside run_report so the base install (without
 # the `docs` dependency group) can still import the report module.
@@ -155,11 +158,20 @@ def _top_buckets_from_db(con: duckdb.DuckDBPyConnection) -> dict[str, str]:
 
 
 def collection_verdicts(
-    db_path: Path | str, results_dir: Path | str
+    session_or_db: "SurveySession | Path | str", results_dir: Path | str
 ) -> list[VerdictRow]:
-    """Return one verdict row per collection in the DB."""
-    con = connect(db_path)
-    init_schema(con)
+    """Return one verdict row per collection in the DB.
+
+    Accepts either a SurveySession (preferred) or a DuckDB path (legacy
+    callers + tests).
+    """
+    from nasa_virtual_zarr_survey.db_session import SurveySession
+
+    if isinstance(session_or_db, SurveySession):
+        con = session_or_db.con
+    else:
+        con = connect(session_or_db)
+        init_schema(con)
     _attach_results(con, Path(results_dir))
 
     parse_phase = _phase_verdicts(con, "parse")
@@ -588,6 +600,7 @@ def render_report(
     total = len(verdicts)
     lines: list[str] = []
     lines.append("# NASA VirtualiZarr Survey Report\n")
+    lines.append("Historical snapshots: see [Coverage over time](history.md).\n")
 
     if metadata is not None:
         lines.extend(_render_metadata_block(metadata, verdicts))
@@ -802,52 +815,99 @@ def render_report(
     return "\n".join(lines)
 
 
+def _sha256_of_file(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def run_report(
-    db_path: Path | str,
+    session: "SurveySession | Path | str | None",
     results_dir: Path | str,
     out_path: Path | str = "docs/results/index.md",
     *,
     export_to: Path | str | None = None,
     from_data: Path | str | None = None,
+    snapshot_date: str | None = None,
+    snapshot_kind: str | None = None,
+    label: str | None = None,
+    description: str | None = None,
+    git_overrides: dict[str, dict[str, str]] | None = None,
+    locked_sample_path: Path | str | None = None,
+    uv_lock_path: Path | str | None = None,
+    preview_manifest_path: Path | str | None = None,
+    no_render: bool = False,
 ) -> None:
     """Read DuckDB state plus Parquet results, compute verdicts, and write the report.
 
     Idempotent and cheap: re-run after refining ``taxonomy.py`` to update the
     Markdown output without re-running ``attempt``.
 
-    Generates interactive HTML figures (Bokeh) and static PNG figures (matplotlib)
-    into a ``figures/`` subdirectory alongside the report and embeds the interactive
-    figures via ``<iframe>`` elements in the Markdown output.  The default output
-    path writes directly into the mkdocs docs site so ``mkdocs serve`` renders the
-    report with interactive charts.
-
     Parameters
     ----------
-    db_path:
-        Path to the DuckDB database (ignored when ``from_data`` is set).
+    session:
+        A :class:`SurveySession` (or, for backwards compatibility with older
+        callers/tests, a DuckDB path). ``None`` is required when
+        ``from_data`` is set.
     results_dir:
-        Path to the directory containing Parquet result shards (ignored when
+        Directory containing Parquet result shards (ignored when
         ``from_data`` is set).
     out_path:
         Destination Markdown file for the rendered report.
     export_to:
         When provided, serialize all computed data to a compact JSON digest at
-        this path after computing verdicts from DuckDB/Parquet. Mutually
-        exclusive with ``from_data``.
+        this path after computing verdicts. Mutually exclusive with
+        ``from_data``.
     from_data:
         When provided, load verdicts and taxonomy from the given JSON digest
-        (written by a previous ``export_to`` run) and skip all DuckDB/Parquet
-        queries entirely. Mutually exclusive with ``export_to``.
+        and skip DuckDB/Parquet queries entirely.
+    snapshot_date:
+        ISO date for the snapshot (e.g., ``2026-02-15``). When set without
+        ``preview_manifest_path``, the exported summary is tagged
+        ``snapshot_kind="release"``.
+    locked_sample_path:
+        Path to the locked-sample JSON sourcing the session. Hashed into
+        ``locked_sample_sha256`` in the exported summary.
+    uv_lock_path:
+        Path to the snapshot's ``uv.lock`` (release snapshots only). Hashed
+        into ``uv_lock_sha256``. Mutually exclusive with
+        ``preview_manifest_path``.
+    preview_manifest_path:
+        Path to a ``config/snapshot_previews/*.toml`` manifest. When set, the
+        exported summary is tagged ``snapshot_kind="preview"`` and label /
+        description / git_overrides are read from the manifest.
+    no_render:
+        Skip writing the Markdown + figures output.
     """
+    from nasa_virtual_zarr_survey import figures as _figures
+    from nasa_virtual_zarr_survey.db_session import SurveySession
+
     if export_to is not None and from_data is not None:
         raise ValueError("export_to and from_data are mutually exclusive")
-
-    from nasa_virtual_zarr_survey import figures as _figures
+    if uv_lock_path is not None and preview_manifest_path is not None:
+        raise ValueError(
+            "uv_lock_path and preview_manifest_path are mutually exclusive"
+        )
 
     out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if not no_render:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
 
     from nasa_virtual_zarr_survey import __version__
+
+    effective_snapshot_date = snapshot_date
+
+    if preview_manifest_path is not None:
+        from nasa_virtual_zarr_survey.preview_manifest import load_manifest
+
+        m = load_manifest(preview_manifest_path)
+        snapshot_kind = "preview"
+        label = m.label
+        description = m.description or None
+        git_overrides = m.git_overrides
+        effective_snapshot_date = m.snapshot_date
+    elif snapshot_kind is None and snapshot_date is not None:
+        snapshot_kind = "release"
 
     if from_data is not None:
         # Regenerate report purely from committed JSON digest.
@@ -872,11 +932,16 @@ def run_report(
             sampling_mode=summary.sampling_mode,
         )
     else:
-        # Compute from DuckDB + Parquet.
-        con = connect(db_path)
-        init_schema(con)
+        # Compute from DuckDB + Parquet via the SurveySession's connection.
+        if session is None:
+            raise ValueError("session is required when from_data is not set")
+        if isinstance(session, SurveySession):
+            con = session.con
+        else:
+            con = connect(session)
+            init_schema(con)
         _attach_results(con, Path(results_dir))
-        verdicts = collection_verdicts(db_path, results_dir)
+        verdicts = collection_verdicts(session, results_dir)
         parse_tax = _taxonomy_counts(con, "parse")
         dataset_tax = _taxonomy_counts(con, "dataset")
         datatree_tax = _taxonomy_counts(con, "datatree")
@@ -890,6 +955,16 @@ def run_report(
         if export_to is not None:
             from nasa_virtual_zarr_survey.summary_io import dump_summary
 
+            locked_sha = (
+                _sha256_of_file(Path(locked_sample_path))
+                if locked_sample_path is not None
+                else None
+            )
+            uv_lock_sha = (
+                _sha256_of_file(Path(uv_lock_path))
+                if uv_lock_path is not None
+                else None
+            )
             dump_summary(
                 export_to,
                 verdicts=verdicts,
@@ -907,7 +982,17 @@ def run_report(
                 xarray_version=metadata.xarray_version,
                 sampling_mode=metadata.sampling_mode,
                 generated_at=metadata.generated_at,
+                snapshot_date=effective_snapshot_date,
+                snapshot_kind=snapshot_kind,
+                label=label,
+                description=description,
+                git_overrides=git_overrides,
+                locked_sample_sha256=locked_sha,
+                uv_lock_sha256=uv_lock_sha,
             )
+
+    if no_render:
+        return
 
     figure_stems = _figures.generate_all(
         verdicts=verdicts,

@@ -165,6 +165,151 @@ To clear the cache, delete the directory: `rm -rf ~/.cache/nasa-virtual-zarr-sur
 
 See the "Local granule cache" section of `docs/design/architecture.md` for the full layout and trade-offs.
 
+## Publishing a snapshot
+
+A *snapshot* is one re-run of the survey under a date-pinned dependency stack. Each snapshot writes a `*.summary.json` digest under `docs/results/history/` and appears on the [Coverage over time](results/history.md) page when re-rendered.
+
+Two flavors:
+
+- **Release** — pin to a single date. The active `uv.lock` is captured beside the digest so the env is exactly reproducible later.
+- **Preview** — same date pin plus one or more `git+...` overrides. Used to evaluate unreleased branches (e.g. a VirtualiZarr PR) against the same fixed sample.
+
+The rest of this section walks through (1) building the locked sample once, (2) running release snapshots, (3) running preview snapshots, and (4) re-rendering the history page.
+
+### Step 1: Build the locked sample (one-time)
+
+Snapshots compare *the same set* of (collection, granule) pairs across runs, so this set is committed once as `config/locked_sample.json`. Rebuild only when you intentionally want to change what's evaluated.
+
+#### 1a. Discover collections
+
+`discover` enumerates cloud-hosted CMR collections and writes them to `output/survey.duckdb`. `--top N` picks the N most-used collections by CMR `usage_score`; 100 is a good starting point.
+
+```bash
+uv run nasa-virtual-zarr-survey discover --top 100
+```
+
+Preview before committing to a run:
+
+```bash
+uv run nasa-virtual-zarr-survey discover --top 100 --list array --dry-run
+```
+
+The `--list array` view shows the collections that would feed `sample` (the array-like ones); `--list skipped` shows what was filtered out and why; `--list all` shows both. See the [usage docs](index.md) for the full set of `--list` modes.
+
+#### 1b. Sample granules per collection
+
+`sample` picks 5 granules per collection (the default), stratified across each collection's temporal extent so coverage isn't all from the same date.
+
+```bash
+uv run nasa-virtual-zarr-survey sample --access external
+```
+
+`--access external` (HTTPS + EDL bearer token) is the right default for shared snapshots: it works from anywhere with `~/.netrc`. `--access direct` (S3 credentials) is faster but only works from `us-west-2` compute; using it for a committed sample would lock everyone else out.
+
+#### 1c. Freeze the sample
+
+```bash
+uv run nasa-virtual-zarr-survey lock-sample
+git add config/locked_sample.json
+git commit -m "Lock survey sample"
+```
+
+Default output path is `config/locked_sample.json` (override with `--out`). The JSON carries both `s3_url` and `https_url` per granule so future snapshots can run under either access mode against the same sample.
+
+#### 1d. Validate overrides (optional but recommended)
+
+Before snapshotting, sanity-check that `config/collection_overrides.toml` resolves cleanly against the discovered collections:
+
+```bash
+uv run nasa-virtual-zarr-survey validate-overrides
+```
+
+### Step 2: Run a release snapshot
+
+The snapshot date is read from `[tool.uv] exclude-newer` in `pyproject.toml`. Set it to the date you want to evaluate, re-lock, then run:
+
+```toml
+# pyproject.toml
+[tool.uv]
+exclude-newer = "2026-02-15"
+```
+
+```bash
+uv lock
+uv run nasa-virtual-zarr-survey snapshot
+git add docs/results/history/2026-02-15.{summary.json,uv.lock}
+git commit -m "Snapshot 2026-02-15"
+```
+
+Alternative paths if you'd rather not edit `pyproject.toml`:
+
+- One-shot: `uv lock --exclude-newer 2026-02-15 && uv run nasa-virtual-zarr-survey snapshot --snapshot-date 2026-02-15`.
+- Override pyproject's date on the CLI: `uv run nasa-virtual-zarr-survey snapshot --snapshot-date 2026-02-15`.
+
+`snapshot` enables the granule-byte cache by default (`~/.cache/nasa-virtual-zarr-survey`, override via `--cache-dir` or `$NASA_VZ_SURVEY_CACHE_DIR`). Since the locked sample is fixed across snapshots, the first run warms the cache and later runs reuse it. Pass `--no-cache` to opt out.
+
+### Step 3: Run a preview snapshot
+
+Previews are auto-detected from `[tool.uv.sources]` git entries. The typical workflow:
+
+```toml
+# pyproject.toml
+[tool.uv]
+exclude-newer = "2026-04-26"
+
+[tool.uv.sources]
+virtualizarr = { git = "https://github.com/zarr-developers/VirtualiZarr", rev = "abc123de" }
+```
+
+```bash
+uv lock
+uv run nasa-virtual-zarr-survey snapshot \
+    --label variable-chunking \
+    --description "Coordinated VirtualiZarr branch test"
+git add docs/results/history/2026-04-26-variable-chunking.summary.json
+git commit -m "Preview snapshot: variable-chunking"
+```
+
+`rev` must be a hex SHA (7-40 chars). Branch names and tags are rejected because they're not reproducible. Previews skip the `uv.lock` capture (the resolved env may include local commits that can't be replayed elsewhere).
+
+If you'd rather curate previews as committed config than as ad-hoc pyproject edits, write a manifest under `config/snapshot_previews/<date>-<label>.toml`:
+
+```toml
+snapshot_date = "2026-04-26"
+label = "variable-chunking"
+description = "Coordinated VirtualiZarr branch test"
+
+[git_overrides]
+virtualizarr = { url = "https://github.com/zarr-developers/VirtualiZarr", rev = "abc123de" }
+```
+
+```bash
+uv run nasa-virtual-zarr-survey snapshot \
+    --preview-manifest config/snapshot_previews/2026-04-26-variable-chunking.toml
+```
+
+The manifest takes precedence over pyproject.toml auto-detection, so you can have both set without conflict.
+
+### Step 4: Re-render the history page
+
+After committing a new digest, refresh the rendered page:
+
+```bash
+uv run nasa-virtual-zarr-survey history
+git add docs/results/history.md docs/results/history/figures
+git commit -m "Re-render history page"
+```
+
+Feature markers on the funnel-over-time chart are sourced from `config/feature_introductions.toml`. Add an entry when you ship a feature you want annotated:
+
+```toml
+[has_datatree]
+phases = ["datatree"]
+first_in_vz = "2.0.0"
+introduced = "2026-03-15"
+description = "ManifestStore.to_virtual_datatree() lands"
+```
+
 ## Code style
 
 - Small, focused files. Each module in `src/nasa_virtual_zarr_survey/` has one clear responsibility.

@@ -25,6 +25,7 @@ def edl_available() -> bool:
 def test_pilot_three_collections(edl_available, tmp_path):
     """Run the full pipeline on 3 collections. Smoke-level assertion."""
     from nasa_virtual_zarr_survey.attempt import run_attempt
+    from nasa_virtual_zarr_survey.db_session import SurveySession
     from nasa_virtual_zarr_survey.discover import run_discover
     from nasa_virtual_zarr_survey.report import run_report
     from nasa_virtual_zarr_survey.sample import run_sample
@@ -35,8 +36,9 @@ def test_pilot_three_collections(edl_available, tmp_path):
 
     run_discover(db, limit=3)
     run_sample(db, n_bins=2)
-    run_attempt(db, results, timeout_s=90)
-    run_report(db, results, out)
+    session = SurveySession.from_duckdb(db)
+    run_attempt(session, results, timeout_s=90)
+    run_report(session, results, out)
 
     assert out.exists()
     text = out.read_text()
