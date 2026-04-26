@@ -147,10 +147,18 @@ def fetch_collection_dicts(
     *,
     top_per_provider: int | None = None,
     top_total: int | None = None,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, tuple[int, int | None]] | None]:
     """Fetch UMM-JSON dicts for CMR collections. No DB writes.
 
-    Returns raw UMM-JSON dicts; see ``collection_row_from_umm`` for the typed row shape.
+    Returns ``(dicts, score_map)``:
+
+    - ``dicts`` are raw UMM-JSON dicts; see ``collection_row_from_umm`` for the
+      typed row shape.
+    - ``score_map`` is ``{concept_id: (rank, usage_score)}`` in top-N modes,
+      where ``rank`` is 1-based popularity order. ``usage_score`` is ``None``
+      when the collection has no entry in CMR's community-usage-metrics
+      (notably ESA-distributed Sentinels). ``score_map`` itself is ``None`` in
+      non-top modes.
 
     Modes (mutually exclusive):
     - Default: all cloud-hosted EOSDIS collections, optionally capped by `limit`.
@@ -169,12 +177,17 @@ def fetch_collection_dicts(
         )
 
         if top_per_provider is not None:
-            ids = all_top_collection_ids(providers, num_per_provider=top_per_provider)
+            pairs = all_top_collection_ids(providers, num_per_provider=top_per_provider)
         else:
             assert top_total is not None  # guaranteed by the outer condition
-            ids = top_collection_ids_total(providers, num_total=top_total)
-        if not ids:
-            return []
+            pairs = top_collection_ids_total(providers, num_total=top_total)
+        if not pairs:
+            return [], {}
+        # Build {id: (rank, score)} preserving the score-desc ordering as rank.
+        score_map: dict[str, tuple[int, int | None]] = {
+            cid: (rank, score) for rank, (cid, score) in enumerate(pairs, start=1)
+        }
+        ids = [cid for cid, _ in pairs]
         dicts: list[dict] = []
         BATCH = 100
         for i in range(0, len(ids), BATCH):
@@ -183,16 +196,17 @@ def fetch_collection_dicts(
             dicts.extend(
                 c.render_dict if hasattr(c, "render_dict") else c for c in results
             )
-        return dicts
+        return dicts, score_map
 
     count = -1 if limit is None else limit
     results = earthaccess.search_datasets(
         cloud_hosted=True, provider=providers, count=count
     )
-    return [c.render_dict if hasattr(c, "render_dict") else c for c in results]
+    dicts = [c.render_dict if hasattr(c, "render_dict") else c for c in results]
+    return dicts, None
 
 
-def _sampling_mode_string(
+def sampling_mode_string(
     limit: int | None,
     top_per_provider: int | None,
     top_total: int | None,
@@ -219,13 +233,13 @@ def run_discover(
     """
     con = connect(db_path)
     init_schema(con)
-    dicts = fetch_collection_dicts(
+    dicts, _score_map = fetch_collection_dicts(
         limit=limit,
         top_per_provider=top_per_provider,
         top_total=top_total,
     )
     persist_collections(con, dicts)
-    mode = _sampling_mode_string(limit, top_per_provider, top_total)
+    mode = sampling_mode_string(limit, top_per_provider, top_total)
     con.execute(
         "INSERT OR REPLACE INTO run_meta (key, value, updated_at) VALUES (?, ?, ?)",
         ["sampling_mode", mode, datetime.now(timezone.utc)],

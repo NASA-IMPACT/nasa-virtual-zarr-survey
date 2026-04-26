@@ -1,70 +1,153 @@
 from unittest.mock import MagicMock
 
+import pytest
 import requests
 
 from nasa_virtual_zarr_survey.popularity import (
     all_top_collection_ids,
+    fetch_usage_metrics,
     top_collection_ids,
+    top_collection_ids_total,
 )
 
 
-def test_top_collection_ids_parses_response(monkeypatch):
-    fake_response = MagicMock()
-    fake_response.json.return_value = {
-        "feed": {
-            "entry": [
-                {"id": "C1-PODAAC"},
-                {"id": "C2-PODAAC"},
-                {"id": "C3-PODAAC"},
-            ]
-        }
-    }
-    fake_response.raise_for_status = MagicMock()
-    fake_post = MagicMock(return_value=fake_response)
+def _setup(monkeypatch, *, metrics, by_provider):
+    """Stub both CMR endpoints. ``metrics`` and ``by_provider`` use compact tuples."""
+    fetch_usage_metrics.cache_clear()
+
+    def _resp(payload):
+        r = MagicMock()
+        r.raise_for_status = MagicMock()
+        r.json.return_value = payload
+        return r
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.popularity.requests.get",
+        MagicMock(
+            return_value=_resp(
+                [
+                    {"short-name": s, "version": v, "access-count": c}
+                    for s, v, c in metrics
+                ]
+            )
+        ),
+    )
+
+    def fake_post(url, data=None, timeout=None, **_):
+        entries = by_provider.get(data["provider"], [])
+        if entries == "raise":
+            raise requests.HTTPError("500")
+        return _resp(
+            {
+                "feed": {
+                    "entry": [
+                        {"id": cid, "short_name": s, "version_id": v}
+                        for cid, s, v in entries
+                    ]
+                }
+            }
+        )
+
     monkeypatch.setattr("nasa_virtual_zarr_survey.popularity.requests.post", fake_post)
 
-    ids = top_collection_ids("PODAAC", num=3)
-    assert ids == ["C1-PODAAC", "C2-PODAAC", "C3-PODAAC"]
 
-    args, kwargs = fake_post.call_args
-    assert kwargs["data"]["provider"] == "PODAAC"
-    assert kwargs["data"]["page_size"] == 3
-    assert kwargs["data"]["sort_key[]"] == "-usage_score"
+def test_top_collection_ids_joins_metrics(monkeypatch):
+    _setup(
+        monkeypatch,
+        metrics=[("FOO", "1", 1234), ("BAR", "2", 56)],
+        by_provider={
+            "GES_DISC": [
+                ("C1", "FOO", "1"),
+                ("C2", "BAR", "2"),
+                ("C3", "ORPHAN", "1"),  # not in metrics → score=None
+            ]
+        },
+    )
+    assert top_collection_ids("GES_DISC", num=3) == [
+        ("C1", 1234),
+        ("C2", 56),
+        ("C3", None),
+    ]
 
 
-def test_top_collection_ids_rejects_over_max():
-    import pytest
-
+def test_top_collection_ids_rejects_over_max(monkeypatch):
+    _setup(monkeypatch, metrics=[], by_provider={})
     with pytest.raises(ValueError):
-        top_collection_ids("PODAAC", num=3000)
+        top_collection_ids("GES_DISC", num=3000)
 
 
-def test_all_top_collection_ids_concatenates(monkeypatch):
-    call_count = {"n": 0}
-    providers_ids = {"PODAAC": ["C1", "C2"], "NSIDC_CPRD": ["C3"]}
-
-    def fake_top(provider, num=100):
-        call_count["n"] += 1
-        return providers_ids[provider]
-
+def test_fetch_usage_metrics_handles_missing_version_and_network_failure(monkeypatch):
+    _setup(monkeypatch, metrics=[], by_provider={})
+    # Live API occasionally omits `version`; defaults to "N/A".
+    r = MagicMock()
+    r.raise_for_status = MagicMock()
+    r.json.return_value = [{"short-name": "X", "access-count": 9}]
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.popularity.top_collection_ids", fake_top
+        "nasa_virtual_zarr_survey.popularity.requests.get", MagicMock(return_value=r)
     )
-    ids = all_top_collection_ids(["PODAAC", "NSIDC_CPRD"], num_per_provider=2)
-    assert ids == ["C1", "C2", "C3"]
-    assert call_count["n"] == 2
+    fetch_usage_metrics.cache_clear()
+    assert fetch_usage_metrics() == {("X", "N/A"): 9}
 
-
-def test_all_top_collection_ids_skips_failed_providers(monkeypatch):
-    def fake_top(provider, num=100):
-        if provider == "BAD":
-            err = requests.HTTPError("500 error")
-            err.response = MagicMock(status_code=500)
-            raise err
-        return ["C1", "C2"]
-
+    # Network failure → empty map (degraded, not failed).
+    fetch_usage_metrics.cache_clear()
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.popularity.top_collection_ids", fake_top
+        "nasa_virtual_zarr_survey.popularity.requests.get",
+        MagicMock(side_effect=requests.ConnectionError("offline")),
     )
-    ids = all_top_collection_ids(["GOOD", "BAD", "OTHER"], num_per_provider=2)
-    assert ids == ["C1", "C2", "C1", "C2"]  # BAD skipped
+    assert fetch_usage_metrics() == {}
+
+
+def test_all_top_collection_ids_sorts_globally_and_skips_5xx(monkeypatch):
+    _setup(
+        monkeypatch,
+        metrics=[("A", "1", 100), ("B", "1", 500), ("C", "1", 250)],
+        by_provider={
+            "GES_DISC": [("C-A", "A", "1"), ("C-B", "B", "1")],
+            "POCLOUD": [("C-C", "C", "1")],
+            "BAD": "raise",
+        },
+    )
+    assert all_top_collection_ids(
+        ["GES_DISC", "POCLOUD", "BAD"], num_per_provider=2
+    ) == [("C-B", 500), ("C-C", 250), ("C-A", 100)]
+
+
+def test_top_collection_ids_total_is_true_global_top_n(monkeypatch):
+    """`--top N` lets one provider dominate; selection is global top-N by score."""
+    _setup(
+        monkeypatch,
+        metrics=[
+            ("P1", "1", 1000),
+            ("P2", "1", 900),
+            ("P3", "1", 800),
+            ("G1", "1", 50),
+            ("G2", "1", 40),
+        ],
+        by_provider={
+            "POCLOUD": [("C-P1", "P1", "1"), ("C-P2", "P2", "1"), ("C-P3", "P3", "1")],
+            "GES_DISC": [("C-G1", "G1", "1"), ("C-G2", "G2", "1")],
+        },
+    )
+    assert top_collection_ids_total(["POCLOUD", "GES_DISC"], num_total=3) == [
+        ("C-P1", 1000),
+        ("C-P2", 900),
+        ("C-P3", 800),
+    ]
+
+
+def test_top_collection_ids_total_orders_unscored_last(monkeypatch):
+    _setup(
+        monkeypatch,
+        metrics=[("SCORED", "1", 1)],
+        by_provider={
+            "GES_DISC": [("C-NONE", "MISSING", "1"), ("C-SCORED", "SCORED", "1")]
+        },
+    )
+    pairs = top_collection_ids_total(["GES_DISC"], num_total=5)
+    assert pairs == [("C-SCORED", 1), ("C-NONE", None)]
+
+
+def test_top_collection_ids_total_empty_inputs(monkeypatch):
+    _setup(monkeypatch, metrics=[], by_provider={})
+    assert top_collection_ids_total(["GES_DISC"], num_total=0) == []
+    assert top_collection_ids_total([], num_total=10) == []

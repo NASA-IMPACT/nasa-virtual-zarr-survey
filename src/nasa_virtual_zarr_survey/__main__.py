@@ -6,7 +6,7 @@ import re
 import shutil
 import warnings
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, Mapping, Sequence, cast
 
 import click
 
@@ -126,46 +126,112 @@ def _discover_summary(db_path: Path) -> str:
     )
 
 
-def _skipped_breakdown(db_path: Path, limit: int | None = None) -> str:
-    from nasa_virtual_zarr_survey.db import connect, init_schema
+def _skipped_format_breakdown(rows: Sequence[Mapping[str, Any]]) -> str:
+    """Aggregate ``(format_declared, skip_reason)`` counts for skipped rows."""
+    from collections import Counter
 
-    con = connect(db_path)
-    init_schema(con)
-
-    by_format = con.execute("""
-        SELECT COALESCE(format_declared, '(null)') AS fmt,
-               skip_reason,
-               count(*) AS n
-        FROM collections
-        WHERE skip_reason IS NOT NULL
-        GROUP BY fmt, skip_reason
-        ORDER BY n DESC, fmt
-    """).fetchall()
-
-    if not by_format:
+    counts: Counter = Counter(
+        ((r.get("format_declared") or "(null)"), r["skip_reason"])
+        for r in rows
+        if r.get("skip_reason")
+    )
+    if not counts:
         return "Skipped collections: none."
-
     lines = ["Skipped collections by format:"]
-    for fmt, reason, n in by_format:
+    for (fmt, reason), n in counts.most_common():
         lines.append(f"  {n:4d}  {fmt}  ({reason})")
+    return "\n".join(lines)
 
-    q = """
-        SELECT concept_id, daac, short_name, version, format_declared
-        FROM collections
-        WHERE skip_reason IS NOT NULL
-        ORDER BY daac, short_name
+
+def _render_collection_listing(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    list_mode: Literal["skipped", "array", "all"],
+    score_map: dict[str, tuple[int, int | None]] | None,
+) -> str:
+    """Render a fixed-width table of collections per ``--list <mode>``.
+
+    ``score_map`` is ``{concept_id: (rank, usage_score)}`` in top-N modes; when
+    ``None``, the rank and usage_score columns render blank. Sorting follows
+    rank in top-N modes and ``(daac, short_name)`` otherwise. Within a top-N
+    listing, ``usage_score`` may itself be ``None`` for collections without a
+    community-usage-metrics entry; those rows render with a blank score column.
     """
-    if limit is not None:
-        q += f" LIMIT {int(limit)}"
-    rows = con.execute(q).fetchall()
+    if list_mode == "skipped":
+        filtered = [r for r in rows if r.get("skip_reason")]
+    elif list_mode == "array":
+        filtered = [r for r in rows if not r.get("skip_reason")]
+    else:
+        filtered = list(rows)
 
-    lines.append("")
-    lines.append(f"Individual skipped collections ({len(rows)}):")
-    for concept_id, daac, short_name, version, fmt in rows:
-        lines.append(
-            f"  {concept_id:30s}  {(daac or '-'):14s}  "
-            f"{(fmt or '-'):24s}  {short_name} v{version}"
+    if score_map is not None:
+
+        def _sort_key(r: Mapping[str, Any]):
+            rs = score_map.get(r.get("concept_id") or "")
+            # Rows without a score (e.g., dropped by the search backend) sort last.
+            return (rs[0] if rs else 1_000_000_000, r.get("concept_id") or "")
+
+        filtered.sort(key=_sort_key)
+    else:
+        filtered.sort(
+            key=lambda r: ((r.get("daac") or ""), (r.get("short_name") or ""))
         )
+
+    headers = [
+        "rank",
+        "usage_score",
+        "concept_id",
+        "daac",
+        "fmt_family",
+        "fmt_declared",
+        "proc_lvl",
+        "short_name v version",
+        "skip_reason",
+        "url",
+    ]
+    table_rows: list[list[str]] = []
+    for r in filtered:
+        cid = r.get("concept_id") or ""
+        rs = score_map.get(cid) if score_map else None
+        rank = str(rs[0]) if rs else ""
+        score = str(rs[1]) if rs and rs[1] is not None else ""
+        sn = r.get("short_name") or ""
+        ver = r.get("version") or ""
+        sn_ver = f"{sn} v{ver}" if sn or ver else ""
+        url = f"https://search.earthdata.nasa.gov/search?q={cid}" if cid else ""
+        table_rows.append(
+            [
+                rank,
+                score,
+                cid,
+                r.get("daac") or "",
+                r.get("format_family") or "—",
+                r.get("format_declared") or "(null)",
+                r.get("processing_level") or "",
+                sn_ver,
+                r.get("skip_reason") or "",
+                url,
+            ]
+        )
+
+    widths = [len(h) for h in headers]
+    for row in table_rows:
+        for i, cell in enumerate(row):
+            if len(cell) > widths[i]:
+                widths[i] = len(cell)
+
+    NUMERIC_COLS = {0, 1}  # rank, usage_score render right-aligned
+
+    def _fmt(cells: list[str]) -> str:
+        parts = [
+            cell.rjust(w) if i in NUMERIC_COLS else cell.ljust(w)
+            for i, (cell, w) in enumerate(zip(cells, widths))
+        ]
+        return "  ".join(parts).rstrip()
+
+    lines = [_fmt(headers)]
+    for row in table_rows:
+        lines.append(_fmt(row))
     return "\n".join(lines)
 
 
@@ -372,11 +438,16 @@ def version() -> None:
     help="Fetch the top-N most-used collections PER provider (ranked by CMR usage_score).",
 )
 @click.option(
-    "--skipped",
-    "show_skipped",
-    is_flag=True,
-    default=False,
-    help="After discover completes, print the non-array-format breakdown.",
+    "--list",
+    "list_mode",
+    type=click.Choice(["none", "skipped", "array", "all"]),
+    default="none",
+    help="Listing emitted alongside the aggregate counts. "
+    "'skipped' prints the (format_declared, skip_reason) breakdown plus a "
+    "table of skipped collections. 'array' lists array-like collections only "
+    "(those that would feed `sample`). 'all' lists every collection with a "
+    "skip_reason column. In --top/--top-per-provider modes the listing is "
+    "sorted by popularity rank.",
 )
 @click.option(
     "--dry-run",
@@ -390,16 +461,18 @@ def discover(
     limit: int | None,
     top_total: int | None,
     top_per_provider: int | None,
-    show_skipped: bool,
+    list_mode: str,
     dry_run: bool,
 ) -> None:
     """Phase 1 (discover): enumerate CMR collections and write to DuckDB."""
-    from collections import Counter
+    from datetime import datetime, timezone
 
+    from nasa_virtual_zarr_survey.db import connect, init_schema
     from nasa_virtual_zarr_survey.discover import (
         collection_row_from_umm,
         fetch_collection_dicts,
-        run_discover,
+        persist_collections,
+        sampling_mode_string,
     )
 
     flags = [
@@ -416,54 +489,49 @@ def discover(
             f"--{', --'.join(flags)} are mutually exclusive; pass only one"
         )
 
-    if dry_run:
-        dicts = fetch_collection_dicts(
-            limit=limit,
-            top_per_provider=top_per_provider,
-            top_total=top_total,
-        )
-        rows = [collection_row_from_umm(d) for d in dicts]
-        total = len(rows)
-        skipped = sum(1 for r in rows if r["skip_reason"])
-        array_like = total - skipped
-        click.echo(
-            f"discover (dry-run): {total} collections "
-            f"({array_like} array-like, {skipped} skipped as non-array format)"
-        )
-        if show_skipped:
-            by_fmt_reason: Counter = Counter(
-                ((r.get("format_declared") or "(null)"), r["skip_reason"])
-                for r in rows
-                if r["skip_reason"]
-            )
-            click.echo("")
-            click.echo("Skipped collections by format:")
-            for (fmt, reason), n in by_fmt_reason.most_common():
-                click.echo(f"  {n:4d}  {fmt}  ({reason})")
-            click.echo("")
-            click.echo(f"Individual skipped collections ({skipped}):")
-            for r in rows:
-                if not r["skip_reason"]:
-                    continue
-                click.echo(
-                    f"  {(r['concept_id'] or '-'):30s}  "
-                    f"{(r['daac'] or '-'):14s}  "
-                    f"{(r['format_declared'] or '-'):24s}  "
-                    f"{r['short_name']} v{r['version']}"
-                )
-        return
-
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    run_discover(
-        db_path,
+    dicts, score_map = fetch_collection_dicts(
         limit=limit,
         top_per_provider=top_per_provider,
         top_total=top_total,
     )
-    click.echo(_discover_summary(db_path))
-    if show_skipped:
+    rows = [collection_row_from_umm(d) for d in dicts]
+    total = len(rows)
+    skipped = sum(1 for r in rows if r["skip_reason"])
+    array_like = total - skipped
+
+    if dry_run:
+        click.echo(
+            f"discover (dry-run): {total} collections "
+            f"({array_like} array-like, {skipped} skipped as non-array format)"
+        )
+    else:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        con = connect(db_path)
+        init_schema(con)
+        persist_collections(con, dicts)
+        con.execute(
+            "INSERT OR REPLACE INTO run_meta (key, value, updated_at) VALUES (?, ?, ?)",
+            [
+                "sampling_mode",
+                sampling_mode_string(limit, top_per_provider, top_total),
+                datetime.now(timezone.utc),
+            ],
+        )
+        click.echo(
+            f"discover: {total} collections "
+            f"({array_like} array-like, {skipped} skipped as non-array format)"
+        )
+
+    if list_mode == "none":
+        return
+    list_choice = cast(Literal["skipped", "array", "all"], list_mode)
+    if list_choice == "skipped":
         click.echo("")
-        click.echo(_skipped_breakdown(db_path))
+        click.echo(_skipped_format_breakdown(rows))
+    click.echo("")
+    click.echo(
+        _render_collection_listing(rows, list_mode=list_choice, score_map=score_map)
+    )
 
 
 @cli.command()

@@ -216,7 +216,10 @@ def test_run_discover_top_per_provider_hydrates_ids(tmp_db_path: Path, monkeypat
     # Mock the popularity module's entry point used by discover.
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.popularity.all_top_collection_ids",
-        lambda providers, num_per_provider=100: ["C1-PODAAC", "C2-PODAAC"],
+        lambda providers, num_per_provider=100: [
+            ("C1-PODAAC", 100),
+            ("C2-PODAAC", 50),
+        ],
     )
 
     class FakeColl:

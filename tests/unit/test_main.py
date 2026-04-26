@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -11,6 +13,34 @@ from click.testing import CliRunner
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from tests.conftest import insert_collection, insert_granule
+
+
+def _umm(
+    cid: str,
+    *,
+    fmt: str | None = "NetCDF-4",
+    plevel: str | None = "L3",
+    daac: str = "PODAAC",
+    sn: str = "FOO",
+    ver: str = "1",
+) -> dict[str, Any]:
+    archive: dict[str, Any] = {}
+    if fmt is not None:
+        archive["FileDistributionInformation"] = [{"Format": fmt}]
+    inner: dict[str, Any] = {
+        "ShortName": sn,
+        "Version": ver,
+        "DataCenters": [{"ShortName": daac}],
+        "ArchiveAndDistributionInformation": archive,
+    }
+    if plevel is not None:
+        inner["ProcessingLevel"] = {"Id": plevel}
+    return {"meta": {"concept-id": cid, "provider-id": daac}, "umm": inner}
+
+
+class _FakeColl:
+    def __init__(self, d: dict[str, Any]) -> None:
+        self.render_dict = d
 
 
 def _setup_db_with_skipped_collection(db_path: Path) -> None:
@@ -225,3 +255,188 @@ def test_probe_command_to_stdout(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "# --- imports ---" in result.output
     assert "C-FULL" in result.output
+
+
+# ---------------------------------------------------------------------------
+# discover --list
+# ---------------------------------------------------------------------------
+
+
+def _patch_search(monkeypatch, dicts: list[dict[str, Any]]) -> None:
+    fake = MagicMock(return_value=[_FakeColl(d) for d in dicts])
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.discover.earthaccess.search_datasets", fake
+    )
+
+
+def test_discover_list_none_emits_only_aggregate(tmp_path: Path, monkeypatch) -> None:
+    from nasa_virtual_zarr_survey.__main__ import cli
+
+    _patch_search(monkeypatch, [_umm("C1-PODAAC"), _umm("C2-PODAAC", fmt="PDF")])
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["discover", "--limit", "2", "--list", "none", "--dry-run"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "discover (dry-run): 2 collections" in result.output
+    assert "rank" not in result.output
+    assert "concept_id" not in result.output
+    assert "C1-PODAAC" not in result.output
+
+
+def test_discover_list_array_excludes_skipped(tmp_path: Path, monkeypatch) -> None:
+    from nasa_virtual_zarr_survey.__main__ import cli
+
+    _patch_search(
+        monkeypatch,
+        [
+            _umm("C-OK-PODAAC"),
+            _umm("C-SKIP-PODAAC", fmt="PDF"),
+        ],
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["discover", "--limit", "2", "--list", "array", "--dry-run"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "C-OK-PODAAC" in result.output
+    assert "C-SKIP-PODAAC" not in result.output
+    # In non-top mode rank/usage_score columns exist as headers but values are blank.
+    assert "rank" in result.output
+    assert "usage_score" in result.output
+    # No skip_reason column populated for array-like rows.
+    assert "non_array_format" not in result.output
+
+
+def test_discover_list_all_includes_skip_reason_column(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from nasa_virtual_zarr_survey.__main__ import cli
+
+    _patch_search(
+        monkeypatch,
+        [
+            _umm("C-OK-PODAAC"),
+            _umm("C-SKIP-PODAAC", fmt="PDF"),
+        ],
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["discover", "--limit", "2", "--list", "all", "--dry-run"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "C-OK-PODAAC" in result.output
+    assert "C-SKIP-PODAAC" in result.output
+    assert "non_array_format" in result.output
+    assert "https://search.earthdata.nasa.gov/search?q=C-OK-PODAAC" in result.output
+
+
+def test_discover_list_skipped_shows_breakdown_and_table(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from nasa_virtual_zarr_survey.__main__ import cli
+
+    _patch_search(
+        monkeypatch,
+        [
+            _umm("C-OK-PODAAC"),
+            _umm("C-PDF-PODAAC", fmt="PDF"),
+            _umm("C-NULL-PODAAC", fmt=None),
+        ],
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["discover", "--limit", "3", "--list", "skipped", "--dry-run"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Skipped collections by format:" in result.output
+    # Table excludes the array-like row
+    assert "C-OK-PODAAC" not in result.output
+    assert "C-PDF-PODAAC" in result.output
+    assert "C-NULL-PODAAC" in result.output
+    assert "non_array_format" in result.output
+    assert "format_unknown" in result.output
+
+
+def test_discover_list_top_mode_sorts_by_rank(tmp_path: Path, monkeypatch) -> None:
+    from nasa_virtual_zarr_survey.__main__ import cli
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.popularity.all_top_collection_ids",
+        lambda providers, num_per_provider=100: [
+            ("C-HIGH-POCLOUD", 18000),
+            ("C-MID-POCLOUD", 9000),
+            ("C-LOW-POCLOUD", 100),
+        ],
+    )
+    _patch_search(
+        monkeypatch,
+        [
+            _umm("C-HIGH-POCLOUD", sn="HIGH"),
+            _umm("C-MID-POCLOUD", sn="MID"),
+            _umm("C-LOW-POCLOUD", sn="LOW"),
+        ],
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["discover", "--top-per-provider", "3", "--list", "array", "--dry-run"]
+    )
+    assert result.exit_code == 0, result.output
+    # Each rank/score appears.
+    assert "18000" in result.output
+    assert "9000" in result.output
+    assert "100" in result.output
+    # Order in output: HIGH before MID before LOW.
+    out = result.output
+    assert out.index("C-HIGH-POCLOUD") < out.index("C-MID-POCLOUD")
+    assert out.index("C-MID-POCLOUD") < out.index("C-LOW-POCLOUD")
+
+
+def test_discover_list_persists_db_when_not_dry_run(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from nasa_virtual_zarr_survey.__main__ import cli
+
+    db_path = tmp_path / "survey.duckdb"
+    _patch_search(monkeypatch, [_umm("C1-PODAAC")])
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "discover",
+            "--limit",
+            "1",
+            "--db",
+            str(db_path),
+            "--list",
+            "array",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "C1-PODAAC" in result.output
+
+    con = connect(db_path)
+    init_schema(con)
+    n = con.execute("SELECT count(*) FROM collections").fetchone()[0]
+    assert n == 1
+    sm = con.execute(
+        "SELECT value FROM run_meta WHERE key = 'sampling_mode'"
+    ).fetchone()
+    assert sm == ("limit=1",)
+
+
+def test_discover_skipped_flag_no_longer_accepted(tmp_path: Path, monkeypatch) -> None:
+    from nasa_virtual_zarr_survey.__main__ import cli
+
+    _patch_search(monkeypatch, [_umm("C1-PODAAC")])
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["discover", "--limit", "1", "--skipped", "--dry-run"])
+    assert result.exit_code != 0
+    assert "no such option" in result.output.lower() or "--skipped" in result.output

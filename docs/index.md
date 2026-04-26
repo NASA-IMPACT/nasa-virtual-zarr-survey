@@ -63,13 +63,33 @@ NASA's EOSDIS S3 buckets live in `us-west-2` and don't allow public direct-S3 re
 
 If you change access mode between runs, `sample` re-extracts the granule URLs (the URL format differs between the two), so a `discover` re-run is not needed.
 
-### Inspecting skipped collections
+### Previewing the selection: `--list`
 
-Collections whose declared format is not array-like (PDF, shapefile, CSV, etc.) are filtered during `discover` so the survey doesn't waste attempts on them. To see the breakdown:
+Before locking in a top-N selection (and accumulating snapshots against it), eyeball what you'd be sampling. `--list` adds a per-collection table next to the aggregate counts:
+
+| Value | Output |
+|---|---|
+| `none` (default) | Aggregate counts only. |
+| `skipped` | `(format_declared, skip_reason)` breakdown plus a table of skipped collections. |
+| `array` | The array-like collections only — the ones that would feed `sample`. |
+| `all` | Both array-like and skipped, with a `skip_reason` column (blank for array-like). |
+
+In `--top` and `--top-per-provider` modes the table is sorted by popularity rank and includes `rank` and `usage_score` columns; in non-top modes those columns are blank.
 
 ```bash
-uv run nasa-virtual-zarr-survey discover --top 50 --skipped
+# preview the top-50 selection before locking it in
+uv run nasa-virtual-zarr-survey discover --top 50 --list array --dry-run
+
+# audit which collections were filtered out and why
+uv run nasa-virtual-zarr-survey discover --top 50 --list skipped --dry-run
+
+# full picture, with skip_reason populated for the filtered rows
+uv run nasa-virtual-zarr-survey discover --top 50 --list all --dry-run
 ```
+
+The table includes a plain Earthdata Search URL per row (`https://search.earthdata.nasa.gov/search?q=<concept_id>`); modern terminals auto-linkify it for Cmd/Ctrl-click. For a UMM-JSON dump, use `probe <concept_id>` — it prints both the search and CMR concept URLs.
+
+`--list` works with or without `--dry-run`; in persisted mode the DB is populated as a side effect, useful when the listing confirms the selection.
 
 ### Dry run
 

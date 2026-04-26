@@ -5,8 +5,11 @@ def test_eosdis_providers_is_nonempty():
     assert len(EOSDIS_PROVIDERS) >= 10
 
 
-def test_eosdis_providers_contains_known_daacs():
-    required = {"PODAAC", "NSIDC_ECS", "LPDAAC_ECS", "GES_DISC", "ASF"}
+def test_eosdis_providers_contains_known_cloud_daacs():
+    # Cloud-only EOSDIS provider IDs (the legacy on-prem siblings — PODAAC,
+    # NSIDC_ECS, LPDAAC_ECS, ORNL_DAAC, LARC_ASDC — host no cloud collections
+    # and intentionally are not in this list).
+    required = {"POCLOUD", "NSIDC_CPRD", "LPCLOUD", "GES_DISC", "ASF"}
     assert required.issubset(set(EOSDIS_PROVIDERS))
 
 

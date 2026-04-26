@@ -597,7 +597,7 @@ Common flags across work phases:
 Discovery-specific:
 
 - `--limit N`, `--top N`, `--top-per-provider N` (mutually exclusive)
-- `--dry-run`, `--skipped`
+- `--dry-run`, `--list {none,skipped,array,all}` (default `none`)
 
 Attempt-specific:
 
