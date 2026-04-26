@@ -87,3 +87,45 @@ def test_granules_has_umm_json_column(tmp_db_path: Path):
     cols = {r[1]: r[2] for r in con.execute("PRAGMA table_info('granules')").fetchall()}
     assert "umm_json" in cols
     assert cols["umm_json"].upper() == "JSON"
+
+
+def test_init_schema_raises_on_stale_db(tmp_db_path: Path):
+    """A DB whose tables predate the latest schema bump is rejected with a clear message."""
+    import pytest
+
+    con = connect(tmp_db_path)
+    # Simulate a pre-existing DB created under the schema that predates `umm_json`.
+    con.execute("""
+        CREATE TABLE collections (
+            concept_id       TEXT PRIMARY KEY,
+            short_name       TEXT,
+            version          TEXT,
+            daac             TEXT,
+            provider         TEXT,
+            format_family    TEXT,
+            format_declared  TEXT,
+            num_granules     BIGINT,
+            time_start       TIMESTAMP,
+            time_end         TIMESTAMP,
+            processing_level TEXT,
+            skip_reason      TEXT,
+            discovered_at    TIMESTAMP
+        )
+    """)
+    con.execute("""
+        CREATE TABLE granules (
+            collection_concept_id TEXT NOT NULL,
+            granule_concept_id    TEXT NOT NULL,
+            data_url              TEXT,
+            https_url             TEXT,
+            temporal_bin          INTEGER,
+            size_bytes            BIGINT,
+            sampled_at            TIMESTAMP,
+            stratified            BOOLEAN,
+            access_mode           TEXT NOT NULL,
+            PRIMARY KEY (collection_concept_id, granule_concept_id)
+        )
+    """)
+
+    with pytest.raises(RuntimeError, match="umm_json"):
+        init_schema(con)

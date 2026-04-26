@@ -54,9 +54,30 @@ def connect(path: Path | str) -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(path))
 
 
+# Columns that signal a stale schema when missing. CREATE TABLE IF NOT EXISTS
+# is a no-op against a pre-existing table, so a DB created before a schema bump
+# silently keeps its old columns; checking these explicitly turns a confusing
+# DuckDB binder error at INSERT time into an actionable message at startup.
+_REQUIRED_COLUMNS: dict[str, set[str]] = {
+    "collections": {"umm_json"},
+    "granules": {"umm_json"},
+}
+
+
 def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     """Create tables and indexes if they don't exist. Idempotent.
 
     Schema changes require deleting `output/survey.duckdb` and re-running.
     """
     con.execute(_SCHEMA_SQL)
+    for table, required in _REQUIRED_COLUMNS.items():
+        present = {
+            r[1] for r in con.execute(f"PRAGMA table_info('{table}')").fetchall()
+        }
+        missing = required - present
+        if missing:
+            raise RuntimeError(
+                f"DuckDB table {table!r} is missing column(s) {sorted(missing)}. "
+                "This database predates a schema change. Delete "
+                "output/survey.duckdb (and output/results/ if present) and re-run."
+            )
