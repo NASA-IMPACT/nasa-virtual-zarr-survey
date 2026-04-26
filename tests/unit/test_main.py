@@ -9,31 +9,31 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from click.testing import CliRunner
 
+from nasa_virtual_zarr_survey.db import connect, init_schema
+from tests.conftest import insert_collection, insert_granule
+
 
 def _setup_db_with_skipped_collection(db_path: Path) -> None:
-    from nasa_virtual_zarr_survey.db import connect, init_schema
-
     con = connect(db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES "
-        "('C-SKIPPED', 'n', '1', 'ASF', 'ASF', NULL, 'mystery', 1, "
-        "NULL, NULL, 'L1', 'format_unknown', now(), NULL)"
+    insert_collection(
+        con,
+        "C-SKIPPED",
+        short_name="n",
+        daac="ASF",
+        format_family=None,
+        format_declared="mystery",
+        processing_level="L1",
+        skip_reason="format_unknown",
     )
     con.close()
 
 
 def _setup_db_with_unattempted_collection(db_path: Path) -> None:
-    from nasa_virtual_zarr_survey.db import connect, init_schema
-
     con = connect(db_path)
     init_schema(con)
     # Array-like collection but no granules sampled.
-    con.execute(
-        "INSERT INTO collections VALUES "
-        "('C-LIVE', 'n', '1', 'PODAAC', 'PODAAC', 'NetCDF4', 'NetCDF-4', 1, "
-        "NULL, NULL, 'L3', NULL, now(), NULL)"
-    )
+    insert_collection(con, "C-LIVE", short_name="n")
     con.close()
 
 
@@ -135,23 +135,20 @@ def test_repro_no_failures_all_succeeded_no_probe_hint(tmp_path: Path) -> None:
     """Concept ID has Parquet rows that simply don't match the failure filter →
     original 'No matching failures found' message, no hint."""
     from nasa_virtual_zarr_survey.__main__ import cli
-    from nasa_virtual_zarr_survey.db import connect, init_schema
 
     db_path = tmp_path / "survey.duckdb"
     results_dir = tmp_path / "results"
     results_dir.mkdir()
     con = connect(db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES "
-        "('C-OK', 'n', '1', 'PODAAC', 'PODAAC', 'NetCDF4', 'NetCDF-4', 1, "
-        "NULL, NULL, 'L3', NULL, now(), NULL)"
-    )
-    now = datetime.now(timezone.utc)
-    con.execute(
-        "INSERT INTO granules VALUES ('C-OK', 'G-OK', 'https://x/y.nc', NULL, "
-        "0, NULL, ?, true, 'external', NULL)",
-        [now],
+    insert_collection(con, "C-OK", short_name="n")
+    insert_granule(
+        con,
+        "C-OK",
+        "G-OK",
+        data_url="https://x/y.nc",
+        sampled_at=datetime.now(timezone.utc),
+        access_mode="external",
     )
     con.close()
     _write_attempt_shard_for_collection(
@@ -178,23 +175,19 @@ def test_repro_no_failures_all_succeeded_no_probe_hint(tmp_path: Path) -> None:
 
 def test_probe_command_writes_script_to_out_dir(tmp_path: Path) -> None:
     from nasa_virtual_zarr_survey.__main__ import cli
-    from nasa_virtual_zarr_survey.db import connect, init_schema
 
     db_path = tmp_path / "survey.duckdb"
     out_dir = tmp_path / "probes"
 
     con = connect(db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES "
-        "('C-FULL', 'n', '1', 'PODAAC', 'PODAAC', 'NetCDF4', 'NetCDF-4', 1, "
-        "NULL, NULL, 'L3', NULL, now(), NULL)"
-    )
-    now = datetime.now(timezone.utc)
-    con.execute(
-        "INSERT INTO granules VALUES ('C-FULL', 'G-FULL-0', "
-        "'s3://b/file0.h5', NULL, 0, NULL, ?, true, 'direct', NULL)",
-        [now],
+    insert_collection(con, "C-FULL", short_name="n")
+    insert_granule(
+        con,
+        "C-FULL",
+        "G-FULL-0",
+        data_url="s3://b/file0.h5",
+        sampled_at=datetime.now(timezone.utc),
     )
     con.close()
 
@@ -213,21 +206,17 @@ def test_probe_command_writes_script_to_out_dir(tmp_path: Path) -> None:
 
 def test_probe_command_to_stdout(tmp_path: Path) -> None:
     from nasa_virtual_zarr_survey.__main__ import cli
-    from nasa_virtual_zarr_survey.db import connect, init_schema
 
     db_path = tmp_path / "survey.duckdb"
     con = connect(db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES "
-        "('C-FULL', 'n', '1', 'PODAAC', 'PODAAC', 'NetCDF4', 'NetCDF-4', 1, "
-        "NULL, NULL, 'L3', NULL, now(), NULL)"
-    )
-    now = datetime.now(timezone.utc)
-    con.execute(
-        "INSERT INTO granules VALUES ('C-FULL', 'G-FULL-0', "
-        "'s3://b/file0.h5', NULL, 0, NULL, ?, true, 'direct', NULL)",
-        [now],
+    insert_collection(con, "C-FULL", short_name="n")
+    insert_granule(
+        con,
+        "C-FULL",
+        "G-FULL-0",
+        data_url="s3://b/file0.h5",
+        sampled_at=datetime.now(timezone.utc),
     )
     con.close()
 

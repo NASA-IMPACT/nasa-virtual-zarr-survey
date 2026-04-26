@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
+
+import pytest
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.discover import (
@@ -12,55 +15,56 @@ from nasa_virtual_zarr_survey.discover import (
 )
 
 
-def _fake_umm(concept_id: str, fmt: str, provider: str = "PODAAC") -> dict:
+def _build_umm(
+    concept_id: str = "C-PODAAC",
+    *,
+    provider: str = "PODAAC",
+    file_dist_format: str | None = "NetCDF-4",
+    file_arch_format: str | None = None,
+    processing_level: str | None = "L3",
+    with_temporal: bool = True,
+) -> dict[str, Any]:
+    """Build a minimal UMM-C dict for ``collection_row_from_umm`` tests.
+
+    Set ``file_dist_format`` to ``None`` to omit ``FileDistributionInformation``
+    (forcing the FileArchiveInformation fallback or the unknown-format path).
+    Set ``processing_level`` to ``None`` to omit ProcessingLevel entirely.
+    """
+    archive: dict[str, Any] = {}
+    if file_dist_format is not None:
+        archive["FileDistributionInformation"] = [{"Format": file_dist_format}]
+    if file_arch_format is not None:
+        archive["FileArchiveInformation"] = [{"Format": file_arch_format}]
+
+    umm_inner: dict[str, Any] = {
+        "ShortName": "FOO",
+        "Version": "1",
+        "DataCenters": [{"ShortName": provider}],
+        "ArchiveAndDistributionInformation": archive,
+    }
+    if processing_level is not None:
+        umm_inner["ProcessingLevel"] = {"Id": processing_level}
+    if with_temporal:
+        umm_inner["TemporalExtents"] = [
+            {
+                "RangeDateTimes": [
+                    {
+                        "BeginningDateTime": "2020-01-01T00:00:00Z",
+                        "EndingDateTime": "2024-01-01T00:00:00Z",
+                    }
+                ]
+            }
+        ]
+
     return {
         "meta": {"concept-id": concept_id, "provider-id": provider},
-        "umm": {
-            "ShortName": "FOO",
-            "Version": "1",
-            "DataCenters": [{"ShortName": provider}],
-            "ArchiveAndDistributionInformation": {
-                "FileDistributionInformation": [{"Format": fmt}]
-            },
-            "TemporalExtents": [
-                {
-                    "RangeDateTimes": [
-                        {
-                            "BeginningDateTime": "2020-01-01T00:00:00Z",
-                            "EndingDateTime": "2024-01-01T00:00:00Z",
-                        }
-                    ]
-                }
-            ],
-            "ProcessingLevel": {"Id": "L3"},
-        },
+        "umm": umm_inner,
     }
 
 
-def test_collection_row_from_umm_includes_full_blob():
-    umm = _fake_umm("C-BLOB-PODAAC", "NetCDF-4")
-    row = collection_row_from_umm(umm)
-    assert row["umm_json"] == umm
-    # The blob is the full top-level dict, including meta, so version info
-    # travels with it and no separate version column is needed.
-    assert row["umm_json"]["meta"]["concept-id"] == "C-BLOB-PODAAC"
-    assert row["umm_json"]["umm"]["ShortName"] == "FOO"
-
-
-def test_persist_collections_round_trips_umm_json(tmp_db_path: Path):
-    con = connect(tmp_db_path)
-    init_schema(con)
-    persist_collections(con, [_fake_umm("C-RT-PODAAC", "NetCDF-4")])
-    short_name = con.execute(
-        "SELECT json_extract(umm_json, '$.umm.ShortName') FROM collections "
-        "WHERE concept_id = 'C-RT-PODAAC'"
-    ).fetchone()[0]
-    # DuckDB returns json_extract results as quoted JSON strings.
-    assert short_name == '"FOO"'
-
-
-def test_collection_row_from_umm_parses_netcdf():
-    umm = _fake_umm("C123-PODAAC", "NetCDF-4")
+def test_collection_row_from_umm_extracts_basic_fields():
+    """Top-level identity, format classification, and parsed temporal extent."""
+    umm = _build_umm("C123-PODAAC", file_dist_format="NetCDF-4")
     row = collection_row_from_umm(umm)
     assert row["concept_id"] == "C123-PODAAC"
     assert row["short_name"] == "FOO"
@@ -71,17 +75,101 @@ def test_collection_row_from_umm_parses_netcdf():
     assert isinstance(row["time_start"], datetime)
 
 
-def test_collection_row_from_umm_marks_pdf_skipped():
-    umm = _fake_umm("C456-PODAAC", "PDF")
+def test_collection_row_from_umm_includes_full_blob():
+    umm = _build_umm("C-BLOB-PODAAC", file_dist_format="NetCDF-4")
     row = collection_row_from_umm(umm)
-    assert row["format_family"] is None
-    assert row["skip_reason"] == "non_array_format"
+    assert row["umm_json"] == umm
+    # The blob is the full top-level dict, including meta, so version info
+    # travels with it and no separate version column is needed.
+    assert row["umm_json"]["meta"]["concept-id"] == "C-BLOB-PODAAC"
+    assert row["umm_json"]["umm"]["ShortName"] == "FOO"
+
+
+@pytest.mark.parametrize(
+    "umm_kwargs, expected_format_family, expected_format_declared, expected_skip_reason",
+    [
+        # Happy path: declared NetCDF-4 in FileDistributionInformation classifies as NetCDF4.
+        (
+            dict(file_dist_format="NetCDF-4"),
+            "NetCDF4",
+            "NetCDF-4",
+            None,
+        ),
+        # Non-array format (PDF) classifies as non_array_format.
+        (
+            dict(file_dist_format="PDF"),
+            None,
+            "PDF",
+            "non_array_format",
+        ),
+        # FileDistributionInformation absent: fall back to FileArchiveInformation.
+        (
+            dict(file_dist_format=None, file_arch_format="NetCDF-4"),
+            "NetCDF4",
+            "NetCDF-4",
+            None,
+        ),
+        # No format info anywhere → format_unknown.
+        (
+            dict(file_dist_format=None),
+            None,
+            None,
+            "format_unknown",
+        ),
+        # L1B processing level skips even when format_family is array-like.
+        (
+            dict(file_dist_format="NetCDF-4", processing_level="L1B"),
+            "NetCDF4",
+            "NetCDF-4",
+            "processing_level",
+        ),
+        # Processing level takes precedence over format_unknown.
+        (
+            dict(file_dist_format=None, processing_level="0"),
+            None,
+            None,
+            "processing_level",
+        ),
+        # Non-array format stays non_array even with no ProcessingLevel block.
+        (
+            dict(file_dist_format="PDF", processing_level=None),
+            None,
+            "PDF",
+            "non_array_format",
+        ),
+    ],
+)
+def test_collection_row_from_umm_classification(
+    umm_kwargs: dict[str, Any],
+    expected_format_family: str | None,
+    expected_format_declared: str | None,
+    expected_skip_reason: str | None,
+):
+    row = collection_row_from_umm(_build_umm(**umm_kwargs))
+    assert row["format_family"] == expected_format_family
+    assert row["format_declared"] == expected_format_declared
+    assert row["skip_reason"] == expected_skip_reason
+
+
+def test_persist_collections_round_trips_umm_json(tmp_db_path: Path):
+    con = connect(tmp_db_path)
+    init_schema(con)
+    persist_collections(con, [_build_umm("C-RT-PODAAC", file_dist_format="NetCDF-4")])
+    short_name = con.execute(
+        "SELECT json_extract(umm_json, '$.umm.ShortName') FROM collections "
+        "WHERE concept_id = 'C-RT-PODAAC'"
+    ).fetchone()[0]
+    # DuckDB returns json_extract results as quoted JSON strings.
+    assert short_name == '"FOO"'
 
 
 def test_persist_collections_upserts(tmp_db_path: Path):
     con = connect(tmp_db_path)
     init_schema(con)
-    umm_rows = [_fake_umm("C1-PODAAC", "NetCDF-4"), _fake_umm("C2-PODAAC", "PDF")]
+    umm_rows = [
+        _build_umm("C1-PODAAC", file_dist_format="NetCDF-4"),
+        _build_umm("C2-PODAAC", file_dist_format="PDF"),
+    ]
     persist_collections(con, umm_rows)
     n = con.execute("SELECT count(*) FROM collections").fetchone()[0]
     assert n == 2
@@ -92,7 +180,10 @@ def test_persist_collections_upserts(tmp_db_path: Path):
 
 
 def test_run_discover_uses_earthaccess(tmp_db_path: Path, monkeypatch):
-    fake_results = [_fake_umm("C1-PODAAC", "NetCDF-4"), _fake_umm("C2-PODAAC", "PDF")]
+    fake_results = [
+        _build_umm("C1-PODAAC", file_dist_format="NetCDF-4"),
+        _build_umm("C2-PODAAC", file_dist_format="PDF"),
+    ]
 
     # earthaccess returns DataCollection objects; render_dict is an attribute, not a method
     class FakeColl:
@@ -121,88 +212,7 @@ def test_run_discover_uses_earthaccess(tmp_db_path: Path, monkeypatch):
     assert "provider" in kwargs
 
 
-def test_collection_row_from_umm_uses_file_archive_information():
-    umm = {
-        "meta": {"concept-id": "C1", "provider-id": "PODAAC"},
-        "umm": {
-            "ShortName": "FOO",
-            "Version": "1",
-            "DataCenters": [{"ShortName": "PODAAC"}],
-            "ArchiveAndDistributionInformation": {
-                # No FileDistributionInformation; format only in FileArchiveInformation.
-                "FileArchiveInformation": [{"Format": "NetCDF-4"}],
-            },
-            "ProcessingLevel": {"Id": "L3"},
-        },
-    }
-    row = collection_row_from_umm(umm)
-    assert row["format_family"] == "NetCDF4"
-    assert row["skip_reason"] is None
-
-
-def test_collection_row_from_umm_marks_null_format_as_unknown():
-    umm = {
-        "meta": {"concept-id": "C2", "provider-id": "PODAAC"},
-        "umm": {
-            "ShortName": "BAR",
-            "Version": "1",
-            "DataCenters": [{"ShortName": "PODAAC"}],
-            "ArchiveAndDistributionInformation": {},
-            "ProcessingLevel": {"Id": "L3"},
-        },
-    }
-    row = collection_row_from_umm(umm)
-    assert row["format_family"] is None
-    assert row["format_declared"] is None
-    assert row["skip_reason"] == "format_unknown"
-
-
-def test_collection_row_from_umm_marks_l1_as_processing_level_skip():
-    umm = _fake_umm("C-L1", "NetCDF-4")
-    umm["umm"]["ProcessingLevel"] = {"Id": "L1B"}
-    row = collection_row_from_umm(umm)
-    assert row["processing_level"] == "L1B"
-    assert row["skip_reason"] == "processing_level"
-    # format_family is still classified so the reason for the skip is unambiguous
-    assert row["format_family"] == "NetCDF4"
-
-
-def test_collection_row_from_umm_processing_level_takes_precedence_over_format_unknown():
-    umm = {
-        "meta": {"concept-id": "C-L0", "provider-id": "PODAAC"},
-        "umm": {
-            "ShortName": "L0",
-            "Version": "1",
-            "DataCenters": [{"ShortName": "PODAAC"}],
-            "ArchiveAndDistributionInformation": {},
-            "ProcessingLevel": {"Id": "0"},
-        },
-    }
-    row = collection_row_from_umm(umm)
-    assert row["skip_reason"] == "processing_level"
-
-
-def test_collection_row_from_umm_non_array_format_stays_non_array():
-    umm = {
-        "meta": {"concept-id": "C3", "provider-id": "PODAAC"},
-        "umm": {
-            "ShortName": "BAZ",
-            "Version": "1",
-            "DataCenters": [{"ShortName": "PODAAC"}],
-            "ArchiveAndDistributionInformation": {
-                "FileDistributionInformation": [{"Format": "PDF"}],
-            },
-        },
-    }
-    row = collection_row_from_umm(umm)
-    assert row["format_family"] is None
-    assert row["format_declared"] == "PDF"
-    assert row["skip_reason"] == "non_array_format"
-
-
 def test_run_discover_top_per_provider_hydrates_ids(tmp_db_path: Path, monkeypatch):
-    from nasa_virtual_zarr_survey.discover import run_discover
-
     # Mock the popularity module's entry point used by discover.
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.popularity.all_top_collection_ids",
@@ -212,18 +222,7 @@ def test_run_discover_top_per_provider_hydrates_ids(tmp_db_path: Path, monkeypat
     class FakeColl:
         def __init__(self, concept_id):
             self.concept_id = concept_id
-            self.render_dict = {
-                "meta": {"concept-id": concept_id, "provider-id": "PODAAC"},
-                "umm": {
-                    "ShortName": "FOO",
-                    "Version": "1",
-                    "DataCenters": [{"ShortName": "PODAAC"}],
-                    "ArchiveAndDistributionInformation": {
-                        "FileDistributionInformation": [{"Format": "NetCDF-4"}]
-                    },
-                    "ProcessingLevel": {"Id": "L3"},
-                },
-            }
+            self.render_dict = _build_umm(concept_id, file_dist_format="NetCDF-4")
 
     captured: list = []
 
@@ -235,8 +234,6 @@ def test_run_discover_top_per_provider_hydrates_ids(tmp_db_path: Path, monkeypat
         "nasa_virtual_zarr_survey.discover.earthaccess.search_datasets", fake_search
     )
     run_discover(tmp_db_path, top_per_provider=2)
-
-    from nasa_virtual_zarr_survey.db import connect, init_schema
 
     con = connect(tmp_db_path)
     init_schema(con)

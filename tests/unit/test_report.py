@@ -9,6 +9,7 @@ import pyarrow.parquet as pq
 from nasa_virtual_zarr_survey.cubability import fingerprint_to_json
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.report import collection_verdicts, run_report
+from tests.conftest import insert_collection
 
 # New schema matching attempt._SCHEMA
 _RESULT_SCHEMA = pa.schema(
@@ -105,9 +106,7 @@ def test_datatree_verdict_independent_of_dataset_verdict(tmp_db_path, tmp_result
     """A collection with dataset_success=False but datatree_success=True has correct verdicts."""
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES ('CTREE','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now(), NULL)"
-    )
+    insert_collection(con, "CTREE", num_granules=2)
     con.close()
 
     now = datetime.now(timezone.utc)
@@ -146,11 +145,14 @@ def test_collection_verdicts_classifies_all_three(tmp_db_path, tmp_results_dir):
     con = connect(tmp_db_path)
     init_schema(con)
     for cid in ["C_ALL", "C_PART", "C_NONE"]:
-        con.execute(
-            f"INSERT INTO collections VALUES ('{cid}','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',5,NULL,NULL,'L3',NULL,now(), NULL)"
-        )
-    con.execute(
-        "INSERT INTO collections VALUES ('C_SKIP','s','1','PODAAC','PODAAC',NULL,'PDF',5,NULL,NULL,'L3','non_array_format',now(), NULL)"
+        insert_collection(con, cid, num_granules=5)
+    insert_collection(
+        con,
+        "C_SKIP",
+        format_family=None,
+        format_declared="PDF",
+        num_granules=5,
+        skip_reason="non_array_format",
     )
     con.close()
 
@@ -219,8 +221,8 @@ def test_parse_fail_means_dataset_not_attempted(tmp_db_path, tmp_results_dir):
     """When parse fails for all granules, dataset should show not_attempted."""
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES ('C_FAIL','s','1','PODAAC','PODAAC','HDF4','HDF',2,NULL,NULL,'L3',NULL,now(), NULL)"
+    insert_collection(
+        con, "C_FAIL", format_family="HDF4", format_declared="HDF", num_granules=2
     )
     con.close()
 
@@ -304,17 +306,27 @@ def test_render_report_includes_skipped_by_format_section(
     con = connect(tmp_db_path)
     init_schema(con)
     # One array-like (no skip), three skipped with two distinct declared formats.
-    con.execute(
-        "INSERT INTO collections VALUES ('CARR','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now(), NULL)"
+    insert_collection(con, "CARR")
+    insert_collection(
+        con,
+        "CPDF1",
+        format_family=None,
+        format_declared="PDF",
+        skip_reason="non_array_format",
     )
-    con.execute(
-        "INSERT INTO collections VALUES ('CPDF1','s','1','PODAAC','PODAAC',NULL,'PDF',1,NULL,NULL,'L3','non_array_format',now(), NULL)"
+    insert_collection(
+        con,
+        "CPDF2",
+        format_family=None,
+        format_declared="PDF",
+        skip_reason="non_array_format",
     )
-    con.execute(
-        "INSERT INTO collections VALUES ('CPDF2','s','1','PODAAC','PODAAC',NULL,'PDF',1,NULL,NULL,'L3','non_array_format',now(), NULL)"
-    )
-    con.execute(
-        "INSERT INTO collections VALUES ('CGRIB','s','1','PODAAC','PODAAC',NULL,'GRIB',1,NULL,NULL,'L3','non_array_format',now(), NULL)"
+    insert_collection(
+        con,
+        "CGRIB",
+        format_family=None,
+        format_declared="GRIB",
+        skip_reason="non_array_format",
     )
     con.close()
 
@@ -343,12 +355,8 @@ def test_render_report_reports_rescued_by_datatree_count(
     Phase 4a with CONFLICTING_DIM_SIZES but succeeded at Phase 4b."""
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES ('CRESCUE','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now(), NULL)"
-    )
-    con.execute(
-        "INSERT INTO collections VALUES ('CCLEAN','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now(), NULL)"
-    )
+    insert_collection(con, "CRESCUE", num_granules=2)
+    insert_collection(con, "CCLEAN")
     con.close()
 
     now = datetime.now(timezone.utc)
@@ -390,9 +398,7 @@ def test_render_report_includes_metadata_block(tmp_db_path, tmp_results_dir, tmp
     """Report header lists survey tool version, dep versions, and sampling mode."""
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now(), NULL)"
-    )
+    insert_collection(con, "C1")
     con.execute(
         "INSERT INTO run_meta (key, value, updated_at) VALUES ('sampling_mode', 'top=200', now())"
     )
@@ -421,12 +427,8 @@ def test_render_report_includes_metadata_block(tmp_db_path, tmp_results_dir, tmp
 def test_render_report_contains_counts(tmp_db_path, tmp_results_dir, tmp_path):
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now(), NULL)"
-    )
-    con.execute(
-        "INSERT INTO collections VALUES ('C2','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now(), NULL)"
-    )
+    insert_collection(con, "C1")
+    insert_collection(con, "C2", num_granules=2)
     con.close()
 
     now = datetime.now(timezone.utc)
@@ -474,9 +476,7 @@ def test_render_report_incompatible_detection(tmp_db_path, tmp_results_dir, tmp_
     """Incompatible fingerprints (different dtypes) produce INCOMPATIBLE in the report."""
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES ('CINC','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now(), NULL)"
-    )
+    insert_collection(con, "CINC", num_granules=2)
     con.close()
 
     now = datetime.now(timezone.utc)
@@ -538,12 +538,8 @@ def test_taxonomy_counts_reports_granule_and_collection_counts(
 ):
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','HDF4','HDF',1,NULL,NULL,'L3',NULL,now(), NULL)"
-    )
-    con.execute(
-        "INSERT INTO collections VALUES ('C2','s','1','PODAAC','PODAAC','HDF4','HDF',1,NULL,NULL,'L3',NULL,now(), NULL)"
-    )
+    insert_collection(con, "C1", format_family="HDF4", format_declared="HDF")
+    insert_collection(con, "C2", format_family="HDF4", format_declared="HDF")
     con.close()
 
     now = datetime.now(timezone.utc)
@@ -575,9 +571,7 @@ def test_three_phase_daac_table_format(tmp_db_path, tmp_results_dir, tmp_path):
     """The By DAAC table should show Parsable/Datasetable/Cubable columns."""
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now(), NULL)"
-    )
+    insert_collection(con, "C1")
     con.close()
 
     now = datetime.now(timezone.utc)
@@ -609,12 +603,8 @@ def test_l2_collection_gets_excluded_by_policy_cubability(tmp_db_path, tmp_resul
 
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES ('C_L2','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L2',NULL,now(), NULL)"
-    )
-    con.execute(
-        "INSERT INTO collections VALUES ('C_L3','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now(), NULL)"
-    )
+    insert_collection(con, "C_L2", num_granules=2, processing_level="L2")
+    insert_collection(con, "C_L3", num_granules=2)
 
     now = datetime.now(timezone.utc)
     fp = _make_fp("h", 0, 9)
@@ -645,12 +635,8 @@ def test_export_then_from_data_produces_identical_report(
     """Export a JSON digest, then regenerate from it; the two reports must be identical."""
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now(), NULL)"
-    )
-    con.execute(
-        "INSERT INTO collections VALUES ('C2','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now(), NULL)"
-    )
+    insert_collection(con, "C1")
+    insert_collection(con, "C2", num_granules=2)
     con.close()
 
     now = datetime.now(timezone.utc)

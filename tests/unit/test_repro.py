@@ -8,7 +8,9 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.repro import FailureRow, generate_script
+from tests.conftest import insert_collection, insert_granule
 
 
 # ---------------------------------------------------------------------------
@@ -255,25 +257,31 @@ def test_generated_script_accepts_cache_flags() -> None:
 
 
 def test_find_failures_by_collection(tmp_db_path: Path, tmp_results_dir: Path):
-    from nasa_virtual_zarr_survey.db import connect, init_schema
     from nasa_virtual_zarr_survey.repro import find_failures
     from nasa_virtual_zarr_survey.attempt import _SCHEMA
 
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES "
-        "('C1', 'n', '1', 'PODAAC', 'PODAAC', 'NetCDF4', 'NetCDF-4', 3, NULL, NULL, 'L3', NULL, now(), NULL)"
-    )
+    insert_collection(con, "C1", short_name="n", num_granules=3)
     # Also insert granule rows so data_url can be joined.
     now = datetime.now(timezone.utc)
-    con.execute(
-        "INSERT INTO granules VALUES ('C1', 'G0', 'https://ex/good.nc', NULL, 0, NULL, ?, true, 'external', NULL)",
-        [now],
+    insert_granule(
+        con,
+        "C1",
+        "G0",
+        data_url="https://ex/good.nc",
+        sampled_at=now,
+        access_mode="external",
     )
-    con.execute(
-        "INSERT INTO granules VALUES ('C1', 'G1', 'https://ex/bad.nc', 'https://archive.example/bad.nc', 1, NULL, ?, true, 'external', NULL)",
-        [now],
+    insert_granule(
+        con,
+        "C1",
+        "G1",
+        data_url="https://ex/bad.nc",
+        https_url="https://archive.example/bad.nc",
+        temporal_bin=1,
+        sampled_at=now,
+        access_mode="external",
     )
     con.close()
 
@@ -326,20 +334,28 @@ def test_find_failures_by_collection(tmp_db_path: Path, tmp_results_dir: Path):
 
 
 def test_find_failures_by_granule(tmp_db_path: Path, tmp_results_dir: Path):
-    from nasa_virtual_zarr_survey.db import connect, init_schema
     from nasa_virtual_zarr_survey.repro import find_failures
     from nasa_virtual_zarr_survey.attempt import _SCHEMA
 
     con = connect(tmp_db_path)
     init_schema(con)
     now = datetime.now(timezone.utc)
-    con.execute(
-        "INSERT INTO collections VALUES "
-        "('C2', 'n', '1', 'NSIDC', 'NSIDC', 'HDF5', 'HDF5', 1, NULL, NULL, 'L2', NULL, now(), NULL)"
+    insert_collection(
+        con,
+        "C2",
+        short_name="n",
+        daac="NSIDC",
+        format_family="HDF5",
+        format_declared="HDF5",
+        processing_level="L2",
     )
-    con.execute(
-        "INSERT INTO granules VALUES ('C2', 'G-target', 's3://bucket/file.h5', 'https://archive.example/file.h5', 0, NULL, ?, true, 'direct', NULL)",
-        [now],
+    insert_granule(
+        con,
+        "C2",
+        "G-target",
+        data_url="s3://bucket/file.h5",
+        https_url="https://archive.example/file.h5",
+        sampled_at=now,
     )
     con.close()
 
@@ -386,21 +402,28 @@ def test_find_failures_by_granule(tmp_db_path: Path, tmp_results_dir: Path):
 
 
 def test_find_failures_by_bucket(tmp_db_path: Path, tmp_results_dir: Path):
-    from nasa_virtual_zarr_survey.db import connect, init_schema
     from nasa_virtual_zarr_survey.repro import find_failures
     from nasa_virtual_zarr_survey.attempt import _SCHEMA
 
     con = connect(tmp_db_path)
     init_schema(con)
     now = datetime.now(timezone.utc)
-    con.execute(
-        "INSERT INTO collections VALUES "
-        "('C3', 'n', '1', 'GES_DISC', 'GES_DISC', 'NetCDF4', 'NetCDF-4', 2, NULL, NULL, 'L3', NULL, now(), NULL)"
+    insert_collection(
+        con,
+        "C3",
+        short_name="n",
+        daac="GES_DISC",
+        num_granules=2,
     )
     for i in range(2):
-        con.execute(
-            f"INSERT INTO granules VALUES ('C3', 'G3-{i}', 'https://ex/file{i}.nc', NULL, {i}, NULL, ?, true, 'external', NULL)",
-            [now],
+        insert_granule(
+            con,
+            "C3",
+            f"G3-{i}",
+            data_url=f"https://ex/file{i}.nc",
+            temporal_bin=i,
+            sampled_at=now,
+            access_mode="external",
         )
     con.close()
 
@@ -462,20 +485,26 @@ def test_find_failures_no_results(tmp_db_path: Path, tmp_results_dir: Path):
 
 def test_find_failures_phase_filter(tmp_db_path: Path, tmp_results_dir: Path):
     """Phase filter excludes rows from the wrong phase."""
-    from nasa_virtual_zarr_survey.db import connect, init_schema
     from nasa_virtual_zarr_survey.repro import find_failures
     from nasa_virtual_zarr_survey.attempt import _SCHEMA
 
     con = connect(tmp_db_path)
     init_schema(con)
     now = datetime.now(timezone.utc)
-    con.execute(
-        "INSERT INTO collections VALUES "
-        "('C4', 'n', '1', 'ORNL', 'ORNL', 'NetCDF4', 'NetCDF-4', 1, NULL, NULL, 'L4', NULL, now(), NULL)"
+    insert_collection(
+        con,
+        "C4",
+        short_name="n",
+        daac="ORNL",
+        processing_level="L4",
     )
-    con.execute(
-        "INSERT INTO granules VALUES ('C4', 'G4', 'https://ex/f.nc', NULL, 0, NULL, ?, true, 'external', NULL)",
-        [now],
+    insert_granule(
+        con,
+        "C4",
+        "G4",
+        data_url="https://ex/f.nc",
+        sampled_at=now,
+        access_mode="external",
     )
     con.close()
 

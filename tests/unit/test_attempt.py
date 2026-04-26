@@ -17,6 +17,7 @@ from nasa_virtual_zarr_survey.formats import FormatFamily
 from pathlib import Path
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
+from tests.conftest import insert_collection, insert_granule
 
 
 def _make_attempt_result(**overrides) -> AttemptResult:
@@ -377,16 +378,10 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
     con = connect(tmp_db_path)
     init_schema(con)
     # 2 granules in the DB
-    con.execute("""
-        INSERT INTO collections VALUES
-        ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,
-         NULL, NULL, 'L3', NULL, now(), NULL)
-    """)
-    con.execute(
-        "INSERT INTO granules VALUES ('C1','G1','s3://b/a.nc',NULL,0,100,now(),TRUE,'direct', NULL)"
-    )
-    con.execute(
-        "INSERT INTO granules VALUES ('C1','G2','s3://b/b.nc',NULL,1,100,now(),TRUE,'direct', NULL)"
+    insert_collection(con, "C1", num_granules=2)
+    insert_granule(con, "C1", "G1", data_url="s3://b/a.nc", size_bytes=100)
+    insert_granule(
+        con, "C1", "G2", data_url="s3://b/b.nc", temporal_bin=1, size_bytes=100
     )
     con.close()
 
@@ -458,14 +453,15 @@ def test_run_attempt_aborts_on_consecutive_forbidden(
 
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute("""
-        INSERT INTO collections VALUES
-        ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',10,
-         NULL, NULL, 'L3', NULL, now(), NULL)
-    """)
+    insert_collection(con, "C1", num_granules=10)
     for i in range(10):
-        con.execute(
-            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',NULL,{i},100,now(),TRUE,'direct', NULL)"
+        insert_granule(
+            con,
+            "C1",
+            f"G{i}",
+            data_url=f"s3://b/f{i}.nc",
+            temporal_bin=i,
+            size_bytes=100,
         )
     con.close()
 
@@ -505,14 +501,15 @@ def test_run_attempt_does_not_abort_on_mixed_failures(
     """A single FORBIDDEN among other failures should not trigger the abort."""
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute("""
-        INSERT INTO collections VALUES
-        ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',10,
-         NULL, NULL, 'L3', NULL, now(), NULL)
-    """)
+    insert_collection(con, "C1", num_granules=10)
     for i in range(10):
-        con.execute(
-            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',NULL,{i},100,now(),TRUE,'direct', NULL)"
+        insert_granule(
+            con,
+            "C1",
+            f"G{i}",
+            data_url=f"s3://b/f{i}.nc",
+            temporal_bin=i,
+            size_bytes=100,
         )
     con.close()
 

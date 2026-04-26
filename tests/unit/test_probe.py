@@ -85,19 +85,17 @@ class _StrictMock:
 
 def test_resolve_target_granule_db_hit(tmp_db_path: Path, monkeypatch) -> None:
     from nasa_virtual_zarr_survey.db import connect, init_schema
+    from tests.conftest import insert_collection, insert_granule
 
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES "
-        "('C-DB', 'n', '1', 'PODAAC', 'PODAAC', 'NetCDF4', 'NetCDF-4', 1, "
-        "NULL, NULL, 'L3', NULL, now(), NULL)"
-    )
-    now = datetime.now(timezone.utc)
-    con.execute(
-        "INSERT INTO granules VALUES ('C-DB', 'G-DB', "
-        "'s3://bucket/path/file.nc', NULL, 0, NULL, ?, true, 'direct', NULL)",
-        [now],
+    insert_collection(con, "C-DB", short_name="n")
+    insert_granule(
+        con,
+        "C-DB",
+        "G-DB",
+        data_url="s3://bucket/path/file.nc",
+        sampled_at=datetime.now(timezone.utc),
     )
     con.close()
 
@@ -208,24 +206,35 @@ def test_resolve_target_collection_db_with_granules(
 ) -> None:
     """DB has both collection row and a sampled granule → zero CMR calls."""
     from nasa_virtual_zarr_survey.db import connect, init_schema
+    from tests.conftest import insert_collection, insert_granule
 
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES "
-        "('C-FULL', 'n', '1', 'NSIDC', 'NSIDC', 'HDF5', 'HDF5', 1, "
-        "NULL, NULL, 'L2', NULL, now(), NULL)"
+    insert_collection(
+        con,
+        "C-FULL",
+        short_name="n",
+        daac="NSIDC",
+        format_family="HDF5",
+        format_declared="HDF5",
+        processing_level="L2",
     )
     now = datetime.now(timezone.utc)
-    con.execute(
-        "INSERT INTO granules VALUES ('C-FULL', 'G-FULL-1', "
-        "'s3://b/file1.h5', NULL, 1, NULL, ?, true, 'direct', NULL)",
-        [now],
+    insert_granule(
+        con,
+        "C-FULL",
+        "G-FULL-1",
+        data_url="s3://b/file1.h5",
+        temporal_bin=1,
+        sampled_at=now,
     )
-    con.execute(
-        "INSERT INTO granules VALUES ('C-FULL', 'G-FULL-0', "
-        "'s3://b/file0.h5', NULL, 0, NULL, ?, true, 'direct', NULL)",
-        [now],
+    insert_granule(
+        con,
+        "C-FULL",
+        "G-FULL-0",
+        data_url="s3://b/file0.h5",
+        temporal_bin=0,
+        sampled_at=now,
     )
     con.close()
 
@@ -248,13 +257,19 @@ def test_resolve_target_collection_db_no_granules(
 ) -> None:
     """DB has the collection but no granules → one search_data call only."""
     from nasa_virtual_zarr_survey.db import connect, init_schema
+    from tests.conftest import insert_collection
 
     con = connect(tmp_db_path)
     init_schema(con)
-    con.execute(
-        "INSERT INTO collections VALUES "
-        "('C-SKIPPED', 'n', '1', 'ASF', 'ASF', NULL, 'mystery format', 1, "
-        "NULL, NULL, 'L1', 'format_unknown', now(), NULL)"
+    insert_collection(
+        con,
+        "C-SKIPPED",
+        short_name="n",
+        daac="ASF",
+        format_family=None,
+        format_declared="mystery format",
+        processing_level="L1",
+        skip_reason="format_unknown",
     )
     con.close()
 
