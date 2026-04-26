@@ -7,8 +7,9 @@ CMR processing levels are free-text — observed values include ``"0"``, ``"1"``
 
 Survey policy:
 
-- ``DISCOVER_MIN_RANK = 2``: collections below L2 are flagged
-  ``skip_reason="processing_level"`` and not sampled.
+- Discover does not filter by processing level. Per-granule virtualization
+  (parsability/datasetability) is processing-level-agnostic — an L1B HDF5
+  granule loads as an ``xarray.Dataset`` just fine.
 - ``CUBE_MIN_RANK = 3``: collections below L3 get cubability verdict
   ``EXCLUDED_BY_POLICY``, since L2 swath/orbital products are inherently not
   expected to combine into a single cube.
@@ -18,7 +19,6 @@ from __future__ import annotations
 
 import re
 
-DISCOVER_MIN_RANK = 2
 CUBE_MIN_RANK = 3
 
 _LEADING_DIGIT = re.compile(r"^\s*L?(\d)")

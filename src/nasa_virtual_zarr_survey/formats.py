@@ -41,7 +41,14 @@ _DECLARED: dict[str, FormatFamily] = {
         FormatFamily.HDF5: ["HDF5", "HDF-EOS5", "HDF5-EOS"],
         FormatFamily.HDF4: ["HDF", "HDF4", "HDF-EOS", "HDF-EOS2"],
         FormatFamily.ZARR: ["Zarr", "zarr"],
-        FormatFamily.GEOTIFF: ["COG", "GeoTIFF", "Cloud-Optimized GeoTIFF"],
+        FormatFamily.GEOTIFF: [
+            "COG",
+            "GeoTIFF",
+            "Cloud-Optimized GeoTIFF",
+            "Cloud Optimized GeoTIFF",
+            "TIFF",
+            "BigTIFF",
+        ],
         FormatFamily.FITS: ["FITS"],
         FormatFamily.DMRPP: ["DMR++", "dmr++", "DMRPP"],
     }.items()

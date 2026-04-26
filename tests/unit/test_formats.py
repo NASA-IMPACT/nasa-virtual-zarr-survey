@@ -19,6 +19,10 @@ from nasa_virtual_zarr_survey.formats import FormatFamily, classify_format
         (None, "s3://bucket/store.zarr", FormatFamily.ZARR),
         ("GeoTIFF", None, FormatFamily.GEOTIFF),
         ("Cloud-Optimized GeoTIFF", None, FormatFamily.GEOTIFF),
+        # CMR also distributes the unhyphenated and bare-TIFF variants in the wild.
+        ("Cloud Optimized GeoTIFF", None, FormatFamily.GEOTIFF),
+        ("TIFF", None, FormatFamily.GEOTIFF),
+        ("BigTIFF", None, FormatFamily.GEOTIFF),
         (None, "s3://bucket/scene.tif", FormatFamily.GEOTIFF),
         ("FITS", None, FormatFamily.FITS),
         ("DMR++", None, FormatFamily.DMRPP),

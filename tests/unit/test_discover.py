@@ -116,19 +116,20 @@ def test_collection_row_from_umm_includes_full_blob():
             None,
             "format_unknown",
         ),
-        # L1B processing level skips even when format_family is array-like.
+        # Processing level does not gate sampling: an L1B array-like granule
+        # still classifies as array-like, ready to be sampled.
         (
             dict(file_dist_format="NetCDF-4", processing_level="L1B"),
             "NetCDF4",
             "NetCDF-4",
-            "processing_level",
+            None,
         ),
-        # Processing level takes precedence over format_unknown.
+        # L0 with no declared format still gets format_unknown (not processing_level).
         (
             dict(file_dist_format=None, processing_level="0"),
             None,
             None,
-            "processing_level",
+            "format_unknown",
         ),
         # Non-array format stays non_array even with no ProcessingLevel block.
         (

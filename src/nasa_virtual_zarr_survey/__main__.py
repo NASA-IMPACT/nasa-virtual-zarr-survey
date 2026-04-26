@@ -427,8 +427,8 @@ def version() -> None:
     "top_total",
     type=int,
     default=None,
-    help="Fetch the top-N most-used collections TOTAL (ranked by CMR usage_score), "
-    "distributed across EOSDIS providers.",
+    help="Fetch the global top-N most-used collections by CMR usage_score "
+    "(a single popular provider can dominate).",
 )
 @click.option(
     "--top-per-provider",
@@ -719,7 +719,7 @@ def report(
     "top_total",
     type=int,
     default=None,
-    help="Survey top-N TOTAL collections by usage_score (distributed across providers).",
+    help="Survey global top-N collections by usage_score (a single popular provider can dominate).",
 )
 @click.option(
     "--top-per-provider",

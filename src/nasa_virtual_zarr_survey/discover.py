@@ -11,7 +11,6 @@ import earthaccess
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.formats import classify_format
-from nasa_virtual_zarr_survey.processing_level import DISCOVER_MIN_RANK, parse_rank
 from nasa_virtual_zarr_survey.providers import get_eosdis_providers
 from nasa_virtual_zarr_survey.types import CollectionRow
 
@@ -72,11 +71,11 @@ def collection_row_from_umm(coll: dict[str, Any]) -> CollectionRow:
     family = classify_format(declared, None)
     time_start, time_end = _first_temporal(coll)
     processing_level = (umm.get("ProcessingLevel") or {}).get("Id")
-    rank = parse_rank(processing_level)
 
-    if rank is not None and rank < DISCOVER_MIN_RANK:
-        skip_reason = "processing_level"
-    elif family is not None:
+    # processing_level is recorded for analysis but does not gate sampling:
+    # per-granule virtualization (parsability/datasetability) is independent
+    # of processing level. Only cubability filters by level (CUBE_MIN_RANK).
+    if family is not None:
         skip_reason = None
     elif declared is None:
         skip_reason = "format_unknown"

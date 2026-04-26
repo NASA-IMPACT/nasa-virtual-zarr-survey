@@ -180,7 +180,7 @@ Collections with no declared format get `skip_reason="format_unknown"` at discov
 
 Collections whose declared format is known but non-array (shapefile, CSV, PDF, etc.) get `skip_reason="non_array_format"` immediately.
 
-Collections whose CMR `ProcessingLevel.Id` parses to a rank below L2 (raw or instrument-calibrated radiances) get `skip_reason="processing_level"` and are not sampled — VirtualiZarr is not a useful fit for L0/L1 byte streams. This check takes precedence over the format-based reasons above. The threshold is set by `processing_level.DISCOVER_MIN_RANK`.
+`processing_level` is recorded on every collection but does not gate sampling. Per-granule virtualization (parsability/datasetability) is processing-level-agnostic — an L1B HDF5 granule loads as an `xarray.Dataset` just fine, even if its swath/orbital geometry means it can't combine into a single cube. The L<3 cube-exclusion lives in the cubability phase (`processing_level.CUBE_MIN_RANK`), which is the only phase where the constraint actually applies.
 
 ### Sampling
 
@@ -496,7 +496,7 @@ CREATE TABLE collections (
   time_start       TIMESTAMP,
   time_end         TIMESTAMP,
   processing_level TEXT,
-  skip_reason      TEXT,      -- NULL | 'non_array_format' | 'format_unknown' | 'processing_level'
+  skip_reason      TEXT,      -- NULL | 'non_array_format' | 'format_unknown'
   discovered_at    TIMESTAMP,
   umm_json         JSON       -- full top-level CMR response: {meta, umm}
 );
