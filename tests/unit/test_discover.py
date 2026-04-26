@@ -37,6 +37,28 @@ def _fake_umm(concept_id: str, fmt: str, provider: str = "PODAAC") -> dict:
     }
 
 
+def test_collection_row_from_umm_includes_full_blob():
+    umm = _fake_umm("C-BLOB-PODAAC", "NetCDF-4")
+    row = collection_row_from_umm(umm)
+    assert row["umm_json"] == umm
+    # The blob is the full top-level dict, including meta, so version info
+    # travels with it and no separate version column is needed.
+    assert row["umm_json"]["meta"]["concept-id"] == "C-BLOB-PODAAC"
+    assert row["umm_json"]["umm"]["ShortName"] == "FOO"
+
+
+def test_persist_collections_round_trips_umm_json(tmp_db_path: Path):
+    con = connect(tmp_db_path)
+    init_schema(con)
+    persist_collections(con, [_fake_umm("C-RT-PODAAC", "NetCDF-4")])
+    short_name = con.execute(
+        "SELECT json_extract(umm_json, '$.umm.ShortName') FROM collections "
+        "WHERE concept_id = 'C-RT-PODAAC'"
+    ).fetchone()[0]
+    # DuckDB returns json_extract results as quoted JSON strings.
+    assert short_name == '"FOO"'
+
+
 def test_collection_row_from_umm_parses_netcdf():
     umm = _fake_umm("C123-PODAAC", "NetCDF-4")
     row = collection_row_from_umm(umm)

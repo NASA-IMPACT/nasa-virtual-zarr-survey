@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, cast
@@ -96,6 +97,7 @@ def collection_row_from_umm(coll: dict[str, Any]) -> CollectionRow:
         processing_level=processing_level,
         skip_reason=skip_reason,
         discovered_at=datetime.now(timezone.utc),
+        umm_json=coll,
     )
 
 
@@ -109,8 +111,9 @@ def persist_collections(con, rows: Iterable[dict[str, Any]]) -> None:
     stmt = """
         INSERT OR REPLACE INTO collections
         (concept_id, short_name, version, daac, provider, format_family, format_declared,
-         num_granules, time_start, time_end, processing_level, skip_reason, discovered_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         num_granules, time_start, time_end, processing_level, skip_reason, discovered_at,
+         umm_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     for coll in rows:
         row: CollectionRow = (
@@ -134,6 +137,7 @@ def persist_collections(con, rows: Iterable[dict[str, Any]]) -> None:
                 row["processing_level"],
                 row["skip_reason"],
                 row["discovered_at"],
+                json.dumps(row["umm_json"]),
             ],
         )
 

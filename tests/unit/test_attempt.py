@@ -380,13 +380,13 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
     con.execute("""
         INSERT INTO collections VALUES
         ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,
-         NULL, NULL, 'L3', NULL, now())
+         NULL, NULL, 'L3', NULL, now(), NULL)
     """)
     con.execute(
-        "INSERT INTO granules VALUES ('C1','G1','s3://b/a.nc',NULL,0,100,now(),TRUE,'direct')"
+        "INSERT INTO granules VALUES ('C1','G1','s3://b/a.nc',NULL,0,100,now(),TRUE,'direct', NULL)"
     )
     con.execute(
-        "INSERT INTO granules VALUES ('C1','G2','s3://b/b.nc',NULL,1,100,now(),TRUE,'direct')"
+        "INSERT INTO granules VALUES ('C1','G2','s3://b/b.nc',NULL,1,100,now(),TRUE,'direct', NULL)"
     )
     con.close()
 
@@ -461,11 +461,11 @@ def test_run_attempt_aborts_on_consecutive_forbidden(
     con.execute("""
         INSERT INTO collections VALUES
         ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',10,
-         NULL, NULL, 'L3', NULL, now())
+         NULL, NULL, 'L3', NULL, now(), NULL)
     """)
     for i in range(10):
         con.execute(
-            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',NULL,{i},100,now(),TRUE,'direct')"
+            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',NULL,{i},100,now(),TRUE,'direct', NULL)"
         )
     con.close()
 
@@ -508,11 +508,11 @@ def test_run_attempt_does_not_abort_on_mixed_failures(
     con.execute("""
         INSERT INTO collections VALUES
         ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',10,
-         NULL, NULL, 'L3', NULL, now())
+         NULL, NULL, 'L3', NULL, now(), NULL)
     """)
     for i in range(10):
         con.execute(
-            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',NULL,{i},100,now(),TRUE,'direct')"
+            f"INSERT INTO granules VALUES ('C1','G{i}','s3://b/f{i}.nc',NULL,{i},100,now(),TRUE,'direct', NULL)"
         )
     con.close()
 

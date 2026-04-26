@@ -18,7 +18,7 @@ def _setup_db_with_skipped_collection(db_path: Path) -> None:
     con.execute(
         "INSERT INTO collections VALUES "
         "('C-SKIPPED', 'n', '1', 'ASF', 'ASF', NULL, 'mystery', 1, "
-        "NULL, NULL, 'L1', 'format_unknown', now())"
+        "NULL, NULL, 'L1', 'format_unknown', now(), NULL)"
     )
     con.close()
 
@@ -32,7 +32,7 @@ def _setup_db_with_unattempted_collection(db_path: Path) -> None:
     con.execute(
         "INSERT INTO collections VALUES "
         "('C-LIVE', 'n', '1', 'PODAAC', 'PODAAC', 'NetCDF4', 'NetCDF-4', 1, "
-        "NULL, NULL, 'L3', NULL, now())"
+        "NULL, NULL, 'L3', NULL, now(), NULL)"
     )
     con.close()
 
@@ -145,12 +145,12 @@ def test_repro_no_failures_all_succeeded_no_probe_hint(tmp_path: Path) -> None:
     con.execute(
         "INSERT INTO collections VALUES "
         "('C-OK', 'n', '1', 'PODAAC', 'PODAAC', 'NetCDF4', 'NetCDF-4', 1, "
-        "NULL, NULL, 'L3', NULL, now())"
+        "NULL, NULL, 'L3', NULL, now(), NULL)"
     )
     now = datetime.now(timezone.utc)
     con.execute(
         "INSERT INTO granules VALUES ('C-OK', 'G-OK', 'https://x/y.nc', NULL, "
-        "0, NULL, ?, true, 'external')",
+        "0, NULL, ?, true, 'external', NULL)",
         [now],
     )
     con.close()
@@ -188,12 +188,12 @@ def test_probe_command_writes_script_to_out_dir(tmp_path: Path) -> None:
     con.execute(
         "INSERT INTO collections VALUES "
         "('C-FULL', 'n', '1', 'PODAAC', 'PODAAC', 'NetCDF4', 'NetCDF-4', 1, "
-        "NULL, NULL, 'L3', NULL, now())"
+        "NULL, NULL, 'L3', NULL, now(), NULL)"
     )
     now = datetime.now(timezone.utc)
     con.execute(
         "INSERT INTO granules VALUES ('C-FULL', 'G-FULL-0', "
-        "'s3://b/file0.h5', NULL, 0, NULL, ?, true, 'direct')",
+        "'s3://b/file0.h5', NULL, 0, NULL, ?, true, 'direct', NULL)",
         [now],
     )
     con.close()
@@ -221,12 +221,12 @@ def test_probe_command_to_stdout(tmp_path: Path) -> None:
     con.execute(
         "INSERT INTO collections VALUES "
         "('C-FULL', 'n', '1', 'PODAAC', 'PODAAC', 'NetCDF4', 'NetCDF-4', 1, "
-        "NULL, NULL, 'L3', NULL, now())"
+        "NULL, NULL, 'L3', NULL, now(), NULL)"
     )
     now = datetime.now(timezone.utc)
     con.execute(
         "INSERT INTO granules VALUES ('C-FULL', 'G-FULL-0', "
-        "'s3://b/file0.h5', NULL, 0, NULL, ?, true, 'direct')",
+        "'s3://b/file0.h5', NULL, 0, NULL, ?, true, 'direct', NULL)",
         [now],
     )
     con.close()

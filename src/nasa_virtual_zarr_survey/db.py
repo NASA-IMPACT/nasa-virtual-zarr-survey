@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS collections (
     time_end         TIMESTAMP,
     processing_level TEXT,
     skip_reason      TEXT,
-    discovered_at    TIMESTAMP
+    discovered_at    TIMESTAMP,
+    umm_json         JSON
 );
 
 CREATE TABLE IF NOT EXISTS granules (
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS granules (
     sampled_at            TIMESTAMP,
     stratified            BOOLEAN,
     access_mode           TEXT NOT NULL,
+    umm_json              JSON,
     PRIMARY KEY (collection_concept_id, granule_concept_id)
 );
 

@@ -91,12 +91,12 @@ def test_resolve_target_granule_db_hit(tmp_db_path: Path, monkeypatch) -> None:
     con.execute(
         "INSERT INTO collections VALUES "
         "('C-DB', 'n', '1', 'PODAAC', 'PODAAC', 'NetCDF4', 'NetCDF-4', 1, "
-        "NULL, NULL, 'L3', NULL, now())"
+        "NULL, NULL, 'L3', NULL, now(), NULL)"
     )
     now = datetime.now(timezone.utc)
     con.execute(
         "INSERT INTO granules VALUES ('C-DB', 'G-DB', "
-        "'s3://bucket/path/file.nc', NULL, 0, NULL, ?, true, 'direct')",
+        "'s3://bucket/path/file.nc', NULL, 0, NULL, ?, true, 'direct', NULL)",
         [now],
     )
     con.close()
@@ -214,17 +214,17 @@ def test_resolve_target_collection_db_with_granules(
     con.execute(
         "INSERT INTO collections VALUES "
         "('C-FULL', 'n', '1', 'NSIDC', 'NSIDC', 'HDF5', 'HDF5', 1, "
-        "NULL, NULL, 'L2', NULL, now())"
+        "NULL, NULL, 'L2', NULL, now(), NULL)"
     )
     now = datetime.now(timezone.utc)
     con.execute(
         "INSERT INTO granules VALUES ('C-FULL', 'G-FULL-1', "
-        "'s3://b/file1.h5', NULL, 1, NULL, ?, true, 'direct')",
+        "'s3://b/file1.h5', NULL, 1, NULL, ?, true, 'direct', NULL)",
         [now],
     )
     con.execute(
         "INSERT INTO granules VALUES ('C-FULL', 'G-FULL-0', "
-        "'s3://b/file0.h5', NULL, 0, NULL, ?, true, 'direct')",
+        "'s3://b/file0.h5', NULL, 0, NULL, ?, true, 'direct', NULL)",
         [now],
     )
     con.close()
@@ -254,7 +254,7 @@ def test_resolve_target_collection_db_no_granules(
     con.execute(
         "INSERT INTO collections VALUES "
         "('C-SKIPPED', 'n', '1', 'ASF', 'ASF', NULL, 'mystery format', 1, "
-        "NULL, NULL, 'L1', 'format_unknown', now())"
+        "NULL, NULL, 'L1', 'format_unknown', now(), NULL)"
     )
     con.close()
 

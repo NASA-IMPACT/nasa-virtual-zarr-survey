@@ -76,7 +76,7 @@ def test_run_sample_persists_granules(tmp_db_path: Path, monkeypatch):
         INSERT INTO collections VALUES
         ('C1','short','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',10,
          TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
-         'L3', NULL, now())
+         'L3', NULL, now(), NULL)
     """)
 
     class G:
@@ -84,7 +84,7 @@ def test_run_sample_persists_granules(tmp_db_path: Path, monkeypatch):
             self.gid = gid
 
         def __getitem__(self, k):
-            return {"meta": {"concept-id": self.gid}}[k]
+            return {"meta": {"concept-id": self.gid}, "umm": {}}[k]
 
         def data_links(self, access="direct"):
             return [f"s3://b/{self.gid}.nc"]
@@ -109,7 +109,7 @@ def test_sample_one_collection_no_temporal_extent(monkeypatch):
             self.gid = gid
 
         def __getitem__(self, k):
-            return {"meta": {"concept-id": self.gid}}[k]
+            return {"meta": {"concept-id": self.gid}, "umm": {}}[k]
 
         def data_links(self, access="direct"):
             return [f"s3://b/{self.gid}.nc"]
@@ -149,7 +149,7 @@ def test_sample_one_collection_external_access(monkeypatch):
             self.gid = gid
 
         def __getitem__(self, k):
-            return {"meta": {"concept-id": self.gid}}[k]
+            return {"meta": {"concept-id": self.gid}, "umm": {}}[k]
 
         def data_links(self, access="direct"):
             captured_accesses.append(access)
@@ -222,7 +222,7 @@ def test_update_collection_classification_array(tmp_db_path: Path):
         INSERT INTO collections VALUES
         ('C1','s','1','PODAAC','PODAAC',NULL,NULL,5,
          TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
-         'L3', 'format_unknown', now())
+         'L3', 'format_unknown', now(), NULL)
     """)
     resolved = _update_collection_classification(con, "C1", "NetCDF-4")
     assert resolved is None
@@ -239,7 +239,7 @@ def test_update_collection_classification_non_array(tmp_db_path: Path):
         INSERT INTO collections VALUES
         ('C2','s','1','PODAAC','PODAAC',NULL,NULL,5,
          TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
-         'L3', 'format_unknown', now())
+         'L3', 'format_unknown', now(), NULL)
     """)
     resolved = _update_collection_classification(con, "C2", "PDF")
     assert resolved == "non_array_format"
@@ -256,7 +256,7 @@ def test_update_collection_classification_still_unknown(tmp_db_path: Path):
         INSERT INTO collections VALUES
         ('C3','s','1','PODAAC','PODAAC',NULL,NULL,5,
          TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
-         'L3', 'format_unknown', now())
+         'L3', 'format_unknown', now(), NULL)
     """)
     resolved = _update_collection_classification(con, "C3", None)
     assert resolved == "format_unknown"
@@ -278,7 +278,7 @@ def test_run_sample_reclassifies_format_unknown(tmp_db_path: Path, monkeypatch):
         INSERT INTO collections VALUES
         ('C_UNKNOWN','shortname','1','PODAAC','PODAAC',NULL,NULL,5,
          TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
-         'L3', 'format_unknown', now())
+         'L3', 'format_unknown', now(), NULL)
     """)
 
     class G:
@@ -328,7 +328,7 @@ def test_run_sample_skips_unresolvable_format_unknown(tmp_db_path: Path, monkeyp
         INSERT INTO collections VALUES
         ('C_PDF','n','1','PODAAC','PODAAC',NULL,NULL,5,
          TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
-         'L3', 'format_unknown', now())
+         'L3', 'format_unknown', now(), NULL)
     """)
 
     class G:
@@ -376,16 +376,16 @@ def test_run_sample_resamples_when_access_mode_changes(
         INSERT INTO collections VALUES
         ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,
          TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
-         'L3', NULL, now())
+         'L3', NULL, now(), NULL)
     """)
     # Pre-populate with direct-mode rows.
     con.execute(
         "INSERT INTO granules VALUES "
-        "('C1','G0','s3://b/0.nc',NULL,0,100,now(),FALSE,'direct')"
+        "('C1','G0','s3://b/0.nc',NULL,0,100,now(),FALSE,'direct',NULL)"
     )
     con.execute(
         "INSERT INTO granules VALUES "
-        "('C1','G1','s3://b/1.nc',NULL,1,100,now(),FALSE,'direct')"
+        "('C1','G1','s3://b/1.nc',NULL,1,100,now(),FALSE,'direct',NULL)"
     )
 
     class G:
@@ -393,7 +393,7 @@ def test_run_sample_resamples_when_access_mode_changes(
             self.gid = gid
 
         def __getitem__(self, k):
-            return {"meta": {"concept-id": self.gid}}[k]
+            return {"meta": {"concept-id": self.gid}, "umm": {}}[k]
 
         def data_links(self, access="direct"):
             return [f"https://ex/{self.gid}.nc"]
@@ -419,6 +419,95 @@ def test_run_sample_resamples_when_access_mode_changes(
     assert any("re-sampling 1 collection" in r.getMessage() for r in caplog.records)
 
 
+def test_sample_one_collection_captures_umm_json(monkeypatch):
+    """Each GranuleInfo should carry the full ``{meta, umm}`` dict."""
+    fake_granule_dict = {
+        "meta": {"concept-id": "G1-PODAAC", "provider-id": "PODAAC"},
+        "umm": {
+            "GranuleUR": "FOO.nc",
+            "DataGranule": {
+                "ArchiveAndDistributionInformation": [
+                    {"Format": "NetCDF-4", "SizeInBytes": 1024}
+                ]
+            },
+        },
+    }
+
+    class FakeGranule:
+        def __init__(self, d):
+            self._d = d
+            # _granule_dict() prefers render_dict when present, mirroring
+            # earthaccess's DataCollection wrapper used in discover.py.
+            self.render_dict = d
+
+        def __getitem__(self, k):
+            return self._d[k]
+
+        def data_links(self, access="direct"):
+            return ["s3://bucket/FOO.nc"]
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data",
+        lambda **kw: [FakeGranule(fake_granule_dict)],
+    )
+    coll = {
+        "concept_id": "C1-PODAAC",
+        "time_start": datetime(2020, 1, 1, tzinfo=timezone.utc),
+        "time_end": datetime(2020, 1, 2, tzinfo=timezone.utc),
+    }
+    rows = sample_one_collection(coll, n_bins=1, access="direct")
+    assert len(rows) == 1
+    assert rows[0]["umm_json"] == fake_granule_dict
+
+
+def test_run_sample_round_trips_granule_umm_json(tmp_db_path: Path, monkeypatch):
+    """``run_sample`` should persist the granule blob so json_extract works."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute("""
+        INSERT INTO collections VALUES
+        ('C1','short','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,
+         TIMESTAMP '2020-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00',
+         'L3', NULL, now(), NULL)
+    """)
+
+    fake_granule_dict = {
+        "meta": {"concept-id": "G1-PODAAC", "provider-id": "PODAAC"},
+        "umm": {
+            "GranuleUR": "FOO.nc",
+            "DataGranule": {
+                "ArchiveAndDistributionInformation": [{"Format": "NetCDF-4"}]
+            },
+        },
+    }
+
+    class FakeGranule:
+        def __init__(self, d):
+            self._d = d
+            self.render_dict = d
+
+        def __getitem__(self, k):
+            return self._d[k]
+
+        def data_links(self, access="direct"):
+            return ["s3://bucket/FOO.nc"]
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample.earthaccess.search_data",
+        lambda **_: [FakeGranule(fake_granule_dict)],
+    )
+
+    n = run_sample(tmp_db_path, n_bins=1, access="direct")
+    assert n == 1
+
+    granule_ur = con.execute(
+        "SELECT json_extract(umm_json, '$.umm.GranuleUR') FROM granules "
+        "WHERE collection_concept_id = 'C1'"
+    ).fetchone()[0]
+    # DuckDB returns json_extract results as quoted JSON strings.
+    assert granule_ur == '"FOO.nc"'
+
+
 def test_run_sample_skips_when_already_in_requested_mode(
     tmp_db_path: Path, monkeypatch
 ):
@@ -429,11 +518,11 @@ def test_run_sample_skips_when_already_in_requested_mode(
     con.execute("""
         INSERT INTO collections VALUES
         ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,
-         NULL, NULL, 'L3', NULL, now())
+         NULL, NULL, 'L3', NULL, now(), NULL)
     """)
     con.execute(
         "INSERT INTO granules VALUES "
-        "('C1','G0','s3://b/0.nc',NULL,0,100,now(),FALSE,'direct')"
+        "('C1','G0','s3://b/0.nc',NULL,0,100,now(),FALSE,'direct',NULL)"
     )
 
     called = {"n": 0}

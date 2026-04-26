@@ -263,16 +263,16 @@ def test_find_failures_by_collection(tmp_db_path: Path, tmp_results_dir: Path):
     init_schema(con)
     con.execute(
         "INSERT INTO collections VALUES "
-        "('C1', 'n', '1', 'PODAAC', 'PODAAC', 'NetCDF4', 'NetCDF-4', 3, NULL, NULL, 'L3', NULL, now())"
+        "('C1', 'n', '1', 'PODAAC', 'PODAAC', 'NetCDF4', 'NetCDF-4', 3, NULL, NULL, 'L3', NULL, now(), NULL)"
     )
     # Also insert granule rows so data_url can be joined.
     now = datetime.now(timezone.utc)
     con.execute(
-        "INSERT INTO granules VALUES ('C1', 'G0', 'https://ex/good.nc', NULL, 0, NULL, ?, true, 'external')",
+        "INSERT INTO granules VALUES ('C1', 'G0', 'https://ex/good.nc', NULL, 0, NULL, ?, true, 'external', NULL)",
         [now],
     )
     con.execute(
-        "INSERT INTO granules VALUES ('C1', 'G1', 'https://ex/bad.nc', 'https://archive.example/bad.nc', 1, NULL, ?, true, 'external')",
+        "INSERT INTO granules VALUES ('C1', 'G1', 'https://ex/bad.nc', 'https://archive.example/bad.nc', 1, NULL, ?, true, 'external', NULL)",
         [now],
     )
     con.close()
@@ -335,10 +335,10 @@ def test_find_failures_by_granule(tmp_db_path: Path, tmp_results_dir: Path):
     now = datetime.now(timezone.utc)
     con.execute(
         "INSERT INTO collections VALUES "
-        "('C2', 'n', '1', 'NSIDC', 'NSIDC', 'HDF5', 'HDF5', 1, NULL, NULL, 'L2', NULL, now())"
+        "('C2', 'n', '1', 'NSIDC', 'NSIDC', 'HDF5', 'HDF5', 1, NULL, NULL, 'L2', NULL, now(), NULL)"
     )
     con.execute(
-        "INSERT INTO granules VALUES ('C2', 'G-target', 's3://bucket/file.h5', 'https://archive.example/file.h5', 0, NULL, ?, true, 'direct')",
+        "INSERT INTO granules VALUES ('C2', 'G-target', 's3://bucket/file.h5', 'https://archive.example/file.h5', 0, NULL, ?, true, 'direct', NULL)",
         [now],
     )
     con.close()
@@ -395,11 +395,11 @@ def test_find_failures_by_bucket(tmp_db_path: Path, tmp_results_dir: Path):
     now = datetime.now(timezone.utc)
     con.execute(
         "INSERT INTO collections VALUES "
-        "('C3', 'n', '1', 'GES_DISC', 'GES_DISC', 'NetCDF4', 'NetCDF-4', 2, NULL, NULL, 'L3', NULL, now())"
+        "('C3', 'n', '1', 'GES_DISC', 'GES_DISC', 'NetCDF4', 'NetCDF-4', 2, NULL, NULL, 'L3', NULL, now(), NULL)"
     )
     for i in range(2):
         con.execute(
-            f"INSERT INTO granules VALUES ('C3', 'G3-{i}', 'https://ex/file{i}.nc', NULL, {i}, NULL, ?, true, 'external')",
+            f"INSERT INTO granules VALUES ('C3', 'G3-{i}', 'https://ex/file{i}.nc', NULL, {i}, NULL, ?, true, 'external', NULL)",
             [now],
         )
     con.close()
@@ -471,10 +471,10 @@ def test_find_failures_phase_filter(tmp_db_path: Path, tmp_results_dir: Path):
     now = datetime.now(timezone.utc)
     con.execute(
         "INSERT INTO collections VALUES "
-        "('C4', 'n', '1', 'ORNL', 'ORNL', 'NetCDF4', 'NetCDF-4', 1, NULL, NULL, 'L4', NULL, now())"
+        "('C4', 'n', '1', 'ORNL', 'ORNL', 'NetCDF4', 'NetCDF-4', 1, NULL, NULL, 'L4', NULL, now(), NULL)"
     )
     con.execute(
-        "INSERT INTO granules VALUES ('C4', 'G4', 'https://ex/f.nc', NULL, 0, NULL, ?, true, 'external')",
+        "INSERT INTO granules VALUES ('C4', 'G4', 'https://ex/f.nc', NULL, 0, NULL, ?, true, 'external', NULL)",
         [now],
     )
     con.close()

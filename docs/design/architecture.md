@@ -497,7 +497,8 @@ CREATE TABLE collections (
   time_end         TIMESTAMP,
   processing_level TEXT,
   skip_reason      TEXT,      -- NULL | 'non_array_format' | 'format_unknown' | 'processing_level'
-  discovered_at    TIMESTAMP
+  discovered_at    TIMESTAMP,
+  umm_json         JSON       -- full top-level CMR response: {meta, umm}
 );
 
 CREATE TABLE granules (
@@ -509,9 +510,12 @@ CREATE TABLE granules (
   sampled_at            TIMESTAMP,
   stratified            BOOLEAN,
   access_mode           TEXT NOT NULL,  -- 'direct' | 'external'
+  umm_json              JSON,           -- full top-level CMR response: {meta, umm}
   PRIMARY KEY (collection_concept_id, granule_concept_id)
 );
 ```
+
+Both tables carry a `umm_json` column holding the full top-level CMR response (`{meta, umm}`) for that row. The pipeline only branches on the dedicated columns above; everything else (DOI, EntryTitle, platforms, GranuleSpatialRepresentation, DirectDistributionInformation, RelatedUrls, …) is read out via DuckDB JSON functions, e.g. `SELECT json_extract(umm_json, '$.umm.DOI.DOI') FROM collections`. UMM revision/version travels inside `meta`, so no separate version column is stored.
 
 Schema creation uses `CREATE TABLE IF NOT EXISTS`. No migrations: schema changes require deleting `output/survey.duckdb` and `output/results/` and re-running.
 

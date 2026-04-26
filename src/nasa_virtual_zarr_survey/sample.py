@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -100,6 +101,19 @@ def _update_collection_classification(
     return skip_reason
 
 
+def _granule_dict(g: DataGranule) -> dict[str, Any]:
+    """Return the full UMM-JSON dict (`{meta, umm}`) for a granule.
+
+    Mirrors the pattern in ``discover.fetch_collection_dicts``: prefer
+    ``render_dict`` when the earthaccess wrapper exposes it, otherwise
+    fall back to the mapping interface.
+    """
+    rd = getattr(g, "render_dict", None)
+    if isinstance(rd, dict):
+        return rd
+    return {"meta": g["meta"], "umm": g["umm"]}
+
+
 def _extract_size(g: DataGranule) -> int | None:
     try:
         info = g["umm"]["DataGranule"]["ArchiveAndDistributionInformation"]
@@ -142,6 +156,7 @@ def sample_one_collection(
                     sampled_at=now,
                     stratified=False,
                     access_mode=access,
+                    umm_json=_granule_dict(g),
                 )
             )
         return rows
@@ -167,6 +182,7 @@ def sample_one_collection(
                 sampled_at=now,
                 stratified=True,
                 access_mode=access,
+                umm_json=_granule_dict(g),
             )
         )
     return rows
@@ -268,8 +284,9 @@ def run_sample(
             con.execute(
                 """INSERT OR IGNORE INTO granules
                    (collection_concept_id, granule_concept_id, data_url, https_url,
-                    temporal_bin, size_bytes, sampled_at, stratified, access_mode)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    temporal_bin, size_bytes, sampled_at, stratified, access_mode,
+                    umm_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     r["collection_concept_id"],
                     r["granule_concept_id"],
@@ -280,6 +297,7 @@ def run_sample(
                     r["sampled_at"],
                     r["stratified"],
                     r["access_mode"],
+                    json.dumps(r["umm_json"]),
                 ],
             )
             total += 1

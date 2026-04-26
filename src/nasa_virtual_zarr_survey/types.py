@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 class CollectionRow(TypedDict):
@@ -22,6 +22,7 @@ class CollectionRow(TypedDict):
     processing_level: str | None
     skip_reason: str | None
     discovered_at: datetime
+    umm_json: dict[str, Any]
 
 
 class GranuleInfo(TypedDict):
@@ -36,6 +37,7 @@ class GranuleInfo(TypedDict):
     sampled_at: datetime
     stratified: bool
     access_mode: str
+    umm_json: dict[str, Any]
 
 
 class PendingGranule(TypedDict):

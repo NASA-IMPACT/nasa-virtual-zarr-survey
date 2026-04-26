@@ -106,7 +106,7 @@ def test_datatree_verdict_independent_of_dataset_verdict(tmp_db_path, tmp_result
     con = connect(tmp_db_path)
     init_schema(con)
     con.execute(
-        "INSERT INTO collections VALUES ('CTREE','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('CTREE','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.close()
 
@@ -147,10 +147,10 @@ def test_collection_verdicts_classifies_all_three(tmp_db_path, tmp_results_dir):
     init_schema(con)
     for cid in ["C_ALL", "C_PART", "C_NONE"]:
         con.execute(
-            f"INSERT INTO collections VALUES ('{cid}','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',5,NULL,NULL,'L3',NULL,now())"
+            f"INSERT INTO collections VALUES ('{cid}','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',5,NULL,NULL,'L3',NULL,now(), NULL)"
         )
     con.execute(
-        "INSERT INTO collections VALUES ('C_SKIP','s','1','PODAAC','PODAAC',NULL,'PDF',5,NULL,NULL,'L3','non_array_format',now())"
+        "INSERT INTO collections VALUES ('C_SKIP','s','1','PODAAC','PODAAC',NULL,'PDF',5,NULL,NULL,'L3','non_array_format',now(), NULL)"
     )
     con.close()
 
@@ -220,7 +220,7 @@ def test_parse_fail_means_dataset_not_attempted(tmp_db_path, tmp_results_dir):
     con = connect(tmp_db_path)
     init_schema(con)
     con.execute(
-        "INSERT INTO collections VALUES ('C_FAIL','s','1','PODAAC','PODAAC','HDF4','HDF',2,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('C_FAIL','s','1','PODAAC','PODAAC','HDF4','HDF',2,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.close()
 
@@ -305,16 +305,16 @@ def test_render_report_includes_skipped_by_format_section(
     init_schema(con)
     # One array-like (no skip), three skipped with two distinct declared formats.
     con.execute(
-        "INSERT INTO collections VALUES ('CARR','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('CARR','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.execute(
-        "INSERT INTO collections VALUES ('CPDF1','s','1','PODAAC','PODAAC',NULL,'PDF',1,NULL,NULL,'L3','non_array_format',now())"
+        "INSERT INTO collections VALUES ('CPDF1','s','1','PODAAC','PODAAC',NULL,'PDF',1,NULL,NULL,'L3','non_array_format',now(), NULL)"
     )
     con.execute(
-        "INSERT INTO collections VALUES ('CPDF2','s','1','PODAAC','PODAAC',NULL,'PDF',1,NULL,NULL,'L3','non_array_format',now())"
+        "INSERT INTO collections VALUES ('CPDF2','s','1','PODAAC','PODAAC',NULL,'PDF',1,NULL,NULL,'L3','non_array_format',now(), NULL)"
     )
     con.execute(
-        "INSERT INTO collections VALUES ('CGRIB','s','1','PODAAC','PODAAC',NULL,'GRIB',1,NULL,NULL,'L3','non_array_format',now())"
+        "INSERT INTO collections VALUES ('CGRIB','s','1','PODAAC','PODAAC',NULL,'GRIB',1,NULL,NULL,'L3','non_array_format',now(), NULL)"
     )
     con.close()
 
@@ -344,10 +344,10 @@ def test_render_report_reports_rescued_by_datatree_count(
     con = connect(tmp_db_path)
     init_schema(con)
     con.execute(
-        "INSERT INTO collections VALUES ('CRESCUE','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('CRESCUE','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.execute(
-        "INSERT INTO collections VALUES ('CCLEAN','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('CCLEAN','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.close()
 
@@ -391,7 +391,7 @@ def test_render_report_includes_metadata_block(tmp_db_path, tmp_results_dir, tmp
     con = connect(tmp_db_path)
     init_schema(con)
     con.execute(
-        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.execute(
         "INSERT INTO run_meta (key, value, updated_at) VALUES ('sampling_mode', 'top=200', now())"
@@ -422,10 +422,10 @@ def test_render_report_contains_counts(tmp_db_path, tmp_results_dir, tmp_path):
     con = connect(tmp_db_path)
     init_schema(con)
     con.execute(
-        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.execute(
-        "INSERT INTO collections VALUES ('C2','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('C2','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.close()
 
@@ -475,7 +475,7 @@ def test_render_report_incompatible_detection(tmp_db_path, tmp_results_dir, tmp_
     con = connect(tmp_db_path)
     init_schema(con)
     con.execute(
-        "INSERT INTO collections VALUES ('CINC','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('CINC','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.close()
 
@@ -539,10 +539,10 @@ def test_taxonomy_counts_reports_granule_and_collection_counts(
     con = connect(tmp_db_path)
     init_schema(con)
     con.execute(
-        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','HDF4','HDF',1,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','HDF4','HDF',1,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.execute(
-        "INSERT INTO collections VALUES ('C2','s','1','PODAAC','PODAAC','HDF4','HDF',1,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('C2','s','1','PODAAC','PODAAC','HDF4','HDF',1,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.close()
 
@@ -576,7 +576,7 @@ def test_three_phase_daac_table_format(tmp_db_path, tmp_results_dir, tmp_path):
     con = connect(tmp_db_path)
     init_schema(con)
     con.execute(
-        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.close()
 
@@ -610,10 +610,10 @@ def test_l2_collection_gets_excluded_by_policy_cubability(tmp_db_path, tmp_resul
     con = connect(tmp_db_path)
     init_schema(con)
     con.execute(
-        "INSERT INTO collections VALUES ('C_L2','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L2',NULL,now())"
+        "INSERT INTO collections VALUES ('C_L2','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L2',NULL,now(), NULL)"
     )
     con.execute(
-        "INSERT INTO collections VALUES ('C_L3','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('C_L3','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now(), NULL)"
     )
 
     now = datetime.now(timezone.utc)
@@ -646,10 +646,10 @@ def test_export_then_from_data_produces_identical_report(
     con = connect(tmp_db_path)
     init_schema(con)
     con.execute(
-        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('C1','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',1,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.execute(
-        "INSERT INTO collections VALUES ('C2','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now())"
+        "INSERT INTO collections VALUES ('C2','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now(), NULL)"
     )
     con.close()
 
