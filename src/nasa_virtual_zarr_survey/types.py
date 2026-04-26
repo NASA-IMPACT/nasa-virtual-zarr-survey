@@ -65,6 +65,7 @@ class VerdictRow(TypedDict):
     daac: str | None
     format_family: str | None
     skip_reason: str | None
+    processing_level: str | None
     stratified: bool | None
     parse_verdict: str
     dataset_verdict: str

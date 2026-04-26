@@ -135,6 +135,31 @@ def test_collection_row_from_umm_marks_null_format_as_unknown():
     assert row["skip_reason"] == "format_unknown"
 
 
+def test_collection_row_from_umm_marks_l1_as_processing_level_skip():
+    umm = _fake_umm("C-L1", "NetCDF-4")
+    umm["umm"]["ProcessingLevel"] = {"Id": "L1B"}
+    row = collection_row_from_umm(umm)
+    assert row["processing_level"] == "L1B"
+    assert row["skip_reason"] == "processing_level"
+    # format_family is still classified so the reason for the skip is unambiguous
+    assert row["format_family"] == "NetCDF4"
+
+
+def test_collection_row_from_umm_processing_level_takes_precedence_over_format_unknown():
+    umm = {
+        "meta": {"concept-id": "C-L0", "provider-id": "PODAAC"},
+        "umm": {
+            "ShortName": "L0",
+            "Version": "1",
+            "DataCenters": [{"ShortName": "PODAAC"}],
+            "ArchiveAndDistributionInformation": {},
+            "ProcessingLevel": {"Id": "0"},
+        },
+    }
+    row = collection_row_from_umm(umm)
+    assert row["skip_reason"] == "processing_level"
+
+
 def test_collection_row_from_umm_non_array_format_stays_non_array():
     umm = {
         "meta": {"concept-id": "C3", "provider-id": "PODAAC"},

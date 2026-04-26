@@ -26,12 +26,16 @@ class CubabilityVerdict(StrEnum):
       fingerprints, all granules identical).
     - `NOT_ATTEMPTED`: the collection did not reach the cubability gate (usually
       because Phase 4 was not `all_pass`).
+    - `EXCLUDED_BY_POLICY`: the collection is below the cube processing-level
+      threshold (e.g., L2 swath products) and is not expected to combine into a
+      single cube. See ``processing_level.CUBE_MIN_RANK``.
     """
 
     FEASIBLE = "FEASIBLE"
     INCOMPATIBLE = "INCOMPATIBLE"
     INCONCLUSIVE = "INCONCLUSIVE"
     NOT_ATTEMPTED = "NOT_ATTEMPTED"
+    EXCLUDED_BY_POLICY = "EXCLUDED_BY_POLICY"
 
 
 @dataclass

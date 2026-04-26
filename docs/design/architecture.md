@@ -109,6 +109,8 @@ No fingerprint is captured from the datatree (see Phase 5).
 
 Run at report time, not at attempt time. Gated on Phase 4a only — collections whose sampled granules all produced an `xr.Dataset`. Tree-only collections (4a failed, 4b succeeded) get `NOT_ATTEMPTED`; extending Cubability to `xr.DataTree` nodes is a future work item.
 
+Collections below `processing_level.CUBE_MIN_RANK` (L3 by default) are short-circuited to `EXCLUDED_BY_POLICY` before the check runs and are removed from the cubability denominator in the rolled-up tables. L2 swath/orbital products are not expected to combine into a single cube, so counting them as cubability failures would be misleading.
+
 For each eligible collection, `check_cubability(fingerprints)` runs a sequence of pass/fail checks:
 
 1. Variable name sets match across granules.
@@ -119,7 +121,7 @@ For each eligible collection, `check_cubability(fingerprints)` runs a sequence o
 6. Per-variable chunk sizes on non-concat axes match.
 7. Concat-dim coord ranges are monotonic and non-overlapping across granules.
 
-Verdicts: `FEASIBLE`, `INCOMPATIBLE`, `INCONCLUSIVE` (e.g. ambiguous concat dim, all granules identical), `NOT_ATTEMPTED` (Phase 4 didn't fully pass).
+Verdicts: `FEASIBLE`, `INCOMPATIBLE`, `INCONCLUSIVE` (e.g. ambiguous concat dim, all granules identical), `NOT_ATTEMPTED` (Phase 4 didn't fully pass), `EXCLUDED_BY_POLICY` (processing level below `CUBE_MIN_RANK`).
 
 ### Per-granule result record
 
@@ -177,6 +179,8 @@ Per granule (`sample._extract_*`):
 Collections with no declared format get `skip_reason="format_unknown"` at discover time. `sample` later probes one granule; if the granule's UMM-JSON also lacks a format, or the probed format is non-array, the collection stays skipped. This two-phase probing avoids burning granule queries on thousands of collections at discover time.
 
 Collections whose declared format is known but non-array (shapefile, CSV, PDF, etc.) get `skip_reason="non_array_format"` immediately.
+
+Collections whose CMR `ProcessingLevel.Id` parses to a rank below L2 (raw or instrument-calibrated radiances) get `skip_reason="processing_level"` and are not sampled — VirtualiZarr is not a useful fit for L0/L1 byte streams. This check takes precedence over the format-based reasons above. The threshold is set by `processing_level.DISCOVER_MIN_RANK`.
 
 ### Sampling
 
@@ -492,7 +496,7 @@ CREATE TABLE collections (
   time_start       TIMESTAMP,
   time_end         TIMESTAMP,
   processing_level TEXT,
-  skip_reason      TEXT,      -- NULL | 'non_array_format' | 'format_unknown'
+  skip_reason      TEXT,      -- NULL | 'non_array_format' | 'format_unknown' | 'processing_level'
   discovered_at    TIMESTAMP
 );
 

@@ -600,6 +600,45 @@ def test_three_phase_daac_table_format(tmp_db_path, tmp_results_dir, tmp_path):
     assert "PODAAC" in text
 
 
+def test_l2_collection_gets_excluded_by_policy_cubability(tmp_db_path, tmp_results_dir):
+    """An L2 collection that passes dataset all_pass is marked EXCLUDED_BY_POLICY,
+    not run through the cubability check, since L2 swath products are not
+    expected to combine into a single cube."""
+    from nasa_virtual_zarr_survey.cubability import CubabilityVerdict
+    from nasa_virtual_zarr_survey.report import _cubability_results
+
+    con = connect(tmp_db_path)
+    init_schema(con)
+    con.execute(
+        "INSERT INTO collections VALUES ('C_L2','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L2',NULL,now())"
+    )
+    con.execute(
+        "INSERT INTO collections VALUES ('C_L3','s','1','PODAAC','PODAAC','NetCDF4','NetCDF-4',2,NULL,NULL,'L3',NULL,now())"
+    )
+
+    now = datetime.now(timezone.utc)
+    fp = _make_fp("h", 0, 9)
+    _write_results(
+        tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet",
+        [
+            _row("C_L2", "G1", fingerprint=fp, now=now),
+            _row("C_L2", "G2", fingerprint=fp, now=now),
+            _row("C_L3", "G1", fingerprint=fp, now=now),
+            _row("C_L3", "G2", fingerprint=fp, now=now),
+        ],
+    )
+
+    verdicts = collection_verdicts(tmp_db_path, tmp_results_dir)
+    con = connect(tmp_db_path)
+    cube_results = _cubability_results(con, verdicts)
+    con.close()
+
+    assert cube_results["C_L2"].verdict == CubabilityVerdict.EXCLUDED_BY_POLICY
+    assert "L2" in cube_results["C_L2"].reason
+    # L3 still goes through the normal cubability machinery
+    assert cube_results["C_L3"].verdict != CubabilityVerdict.EXCLUDED_BY_POLICY
+
+
 def test_export_then_from_data_produces_identical_report(
     tmp_db_path, tmp_results_dir, tmp_path
 ):

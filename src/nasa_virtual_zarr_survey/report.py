@@ -17,6 +17,7 @@ from nasa_virtual_zarr_survey.cubability import (
     check_cubability,
     fingerprint_from_json,
 )
+from nasa_virtual_zarr_survey.processing_level import CUBE_MIN_RANK, parse_rank
 from nasa_virtual_zarr_survey.types import Fingerprint, VerdictRow
 
 # `figures` is imported lazily inside run_report so the base install (without
@@ -172,13 +173,14 @@ def collection_verdicts(
             FROM granules
             GROUP BY collection_concept_id
         )
-        SELECT c.concept_id, c.daac, c.format_family, c.skip_reason, s.stratified
+        SELECT c.concept_id, c.daac, c.format_family, c.skip_reason,
+               c.processing_level, s.stratified
         FROM collections c
         LEFT JOIN stratification s ON s.collection_concept_id = c.concept_id
     """
     rows = con.execute(q).fetchall()
     out: list[VerdictRow] = []
-    for concept_id, daac, family, skip, stratified in rows:
+    for concept_id, daac, family, skip, processing_level, stratified in rows:
         if skip:
             parse_verdict = "skipped"
             dataset_verdict = "skipped"
@@ -193,6 +195,7 @@ def collection_verdicts(
                 daac=daac,
                 format_family=family,
                 skip_reason=skip,
+                processing_level=processing_level,
                 stratified=stratified,
                 parse_verdict=parse_verdict,
                 dataset_verdict=dataset_verdict,
@@ -258,6 +261,13 @@ def _cubability_results(
     out: dict[str, CubabilityResult] = {}
     for v in verdicts:
         cid = v["concept_id"]
+        rank = parse_rank(v["processing_level"])
+        if rank is not None and rank < CUBE_MIN_RANK:
+            out[cid] = CubabilityResult(
+                CubabilityVerdict.EXCLUDED_BY_POLICY,
+                reason=f"processing_level={v['processing_level']} below L{CUBE_MIN_RANK}",
+            )
+            continue
         if v["dataset_verdict"] != "all_pass":
             out[cid] = CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)
             continue
@@ -402,17 +412,23 @@ def _render_three_phase_table(
         datatreeable = sum(
             1 for v in parsable_vs if v["datatree_verdict"] == "all_pass"
         )
-        cubable = sum(
-            1
-            for v in gv
-            if cube_results.get(
+        cube_eligible = [
+            v
+            for v in parsable_vs
+            if v["dataset_verdict"] == "all_pass"
+            and cube_results.get(
                 v["concept_id"], CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)
             ).verdict
-            == CubabilityVerdict.FEASIBLE
+            != CubabilityVerdict.EXCLUDED_BY_POLICY
+        ]
+        cubable = sum(
+            1
+            for v in cube_eligible
+            if cube_results[v["concept_id"]].verdict == CubabilityVerdict.FEASIBLE
         )
         lines.append(
             f"| {group} | {_pct(parsable, total)} | {_pct(datasetable, parsable)} | "
-            f"{_pct(datatreeable, parsable)} | {_pct(cubable, datasetable)} |"
+            f"{_pct(datatreeable, parsable)} | {_pct(cubable, len(cube_eligible))} |"
         )
     lines.append("")
     return lines
@@ -659,17 +675,29 @@ def render_report(
         for v in verdicts
         if v["parse_verdict"] == "all_pass" and v["dataset_verdict"] == "all_pass"
     )
+    excluded_count = sum(
+        1
+        for r in cube_results.values()
+        if r.verdict == CubabilityVerdict.EXCLUDED_BY_POLICY
+    )
     lines.append("## Phase 5: Cubability\n")
     lines.append(
         f"For collections whose all sampled granules produced xarray.Datasets "
         f"(denominator: {datasetable_count}), whether the granules can be combined "
-        f"into a coherent virtual store.\n"
+        f"into a coherent virtual store. {excluded_count} collection(s) below L"
+        f"{CUBE_MIN_RANK} are excluded by policy as inherently non-gridded.\n"
     )
     by_cube_verdict: Counter[str] = Counter(
         r.verdict.value for r in cube_results.values()
     )
     lines.append("| Verdict | Count |\n|---|---:|")
-    for k in ["FEASIBLE", "INCOMPATIBLE", "INCONCLUSIVE", "NOT_ATTEMPTED"]:
+    for k in [
+        "FEASIBLE",
+        "INCOMPATIBLE",
+        "INCONCLUSIVE",
+        "NOT_ATTEMPTED",
+        "EXCLUDED_BY_POLICY",
+    ]:
         if k in by_cube_verdict:
             lines.append(f"| {k} | {by_cube_verdict[k]} |")
     lines.append("")
