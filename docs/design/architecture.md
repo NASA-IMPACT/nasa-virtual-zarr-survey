@@ -260,6 +260,25 @@ Reviewers should weigh in on whether this is a faithful enough summary for the c
 - Writing (e.g. to Icechunk). The survey stops at an in-memory virtual dataset.
 - Concat across granules. Cubability is a *feasibility check*, not an actual combine — no `xr.concat` is ever run.
 
+#### Read-validation gap
+
+Phase 4a/4b record `dataset_success = True` once `ManifestStore.to_virtual_dataset(...)` returns an `xarray.Dataset` — no chunks are fetched through the manifest. Cubability (Phase 5) calls `.values` on coordinate variables only; data variables are never read.
+
+Failure modes this leaves uncaught:
+
+- Manifest builds with chunk records pointing at wrong byte offsets or lengths — reads return garbage with no construction-time error.
+- Manifest carries wrong codec metadata (e.g. mistaken filter pipeline, wrong endianness) — chunks decode to wrong values.
+- Fill-value, scale-factor, or add-offset misinterpretation between the parser and the source file's encoding.
+
+Reads through the virtual store are tested elsewhere — VirtualiZarr's own per-format test suite — so this survey trusts construction success as a proxy for readability. That trust is the right tradeoff while the survey's job is breadth (parser coverage across NASA), not re-litigating per-format correctness. It becomes the wrong tradeoff if the survey's outputs are cited as "VirtualiZarr supports N% of NASA collections" without qualification.
+
+Two designed avenues to close the gap, in increasing thoroughness and cost:
+
+1. **Slice-and-compare per granule.** Pick one numeric data variable, read its first chunk through the virtual dataset, and read the same slice directly from the source file (h5py for HDF5/NetCDF4, format-specific readers elsewhere). Compare with `numpy.array_equal` / `numpy.allclose`. Cost: roughly one extra chunk fetch per attempt. Catches: wrong-bytes, wrong-codec, wrong-fill in chunk #0. Misses: failures that only manifest in later chunks or in non-sampled variables.
+2. **Cache + full xarray-native compare.** With `--access external` (where the granule is already cached locally), open the cached file with `xr.open_dataset(...)` (or rioxarray / astropy where needed) using matched decode kwargs (`decode_cf=False, mask_and_scale=False`) and compare against the virtual dataset with `xr.testing.assert_allclose(..., equal_nan=True)`. Cost: full file load on both sides per attempt; potentially 10–100× slower. Catches: structural drift, wrong-bytes anywhere, missing variables, dtype/dim mismatches. Risk: false positives from attribute drift between backends — a curated ignore list is needed.
+
+Recommendation when this work is picked up: start with avenue 2 gated on `--access external` (cache present), record outcomes in new `read_*` columns on the per-granule Parquet log, and surface the result as a fourth funnel line in the report. Avenue 1 is a fallback only if avenue 2's runtime proves untenable.
+
 ## Access modes
 
 Two modes are supported end-to-end. `--access` plumbs through `sample` (which URL to store) and `attempt` (which store type to build). The rest of the pipeline is mode-agnostic because the registry keys on `scheme://netloc`.

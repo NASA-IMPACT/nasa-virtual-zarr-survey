@@ -12,6 +12,8 @@ The pipeline runs in five phases:
 
 Each failure is bucketed into an empirical taxonomy so the long tail can be triaged.
 
+> **What this measures.** Phases 3, 4a, and 4b verify that VirtualiZarr can *construct* a virtual reference and wrap it in xarray — they do not read chunk bytes through the manifest or compare them against the source file. A "successful" granule is constructable, not necessarily readable. See [What's not exercised](https://nasa-impact.github.io/nasa-virtual-zarr-survey/design/architecture/#whats-not-exercised) for the gap and proposed avenues to close it.
+
 ## Quick start
 
 ```bash
