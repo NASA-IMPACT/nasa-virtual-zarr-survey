@@ -12,9 +12,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
 
 from nasa_virtual_zarr_survey.overrides import CollectionOverride
+from nasa_virtual_zarr_survey.script_template import (
+    _registry_key,
+    render_cache_argparse,
+    render_cache_wiring,
+    render_login_and_store,
+)
 
 
 @dataclass
@@ -66,25 +71,6 @@ _PARSER_TABLE: dict[str, tuple[str, str]] = {
 }
 
 
-def _registry_key(url: str) -> str:
-    """Return the ``scheme://netloc`` prefix used as the ObjectStoreRegistry key."""
-    parsed = urlparse(url)
-    scheme = parsed.scheme or "https"
-    netloc = parsed.netloc
-    return f"{scheme}://{netloc}"
-
-
-def _s3_bucket(url: str) -> str:
-    """Extract the S3 bucket name from an ``s3://bucket/...`` URL."""
-    parsed = urlparse(url)
-    return parsed.netloc
-
-
-def _indent(text: str, prefix: str = "    ") -> str:
-    """Indent every line of *text* by *prefix*."""
-    return textwrap.indent(text, prefix)
-
-
 def _render_kwargs(kw: Mapping[str, Any]) -> str:
     """Render a kwargs dict as the inside of a function call: 'a=1, b="x"'."""
     if not kw:
@@ -106,6 +92,15 @@ def _format_url_lines(row: FailureRow) -> str:
             f"Download URL (HTTPS, EDL bearer token required): {row.https_url}"
         )
     return "\n".join(lines)
+
+
+_DUAL_USE_BLURB = (
+    "This script is also a working starting point for non-debugging "
+    "virtualization workflows: edit the parser/dataset kwargs (or strip "
+    "the failure-context docstring) and treat it as a runnable seed. "
+    "For structural inspection, run "
+    "``nasa-virtual-zarr-survey probe <granule-or-collection-id>``."
+)
 
 
 def generate_script(  # noqa: C901  (acceptable complexity)
@@ -218,39 +213,26 @@ def generate_script(  # noqa: C901  (acceptable complexity)
         f"    {row.error_type}: {row.error_message}\n"
         f"{tb_section}"
         f"\n"
+        f"{_DUAL_USE_BLURB}\n"
+        f"\n"
         f"Run with:\n"
         f"    uv run python {script_name}\n"
         f'"""\n'
     )
 
     # ------------------------------------------------------------------
-    # Store construction block
+    # Store construction + cache wiring (shared with probe via script_template)
     # ------------------------------------------------------------------
-    if is_s3:
-        bucket_name = _s3_bucket(url)
-        store_import = "from obstore.store import S3Store"
-        store_construction = (
-            f"creds = earthaccess.get_s3_credentials(provider={row.provider!r})\n"
-            f"    from obstore.store import S3Store\n"
-            f"    store = S3Store(\n"
-            f"        bucket={bucket_name!r},\n"
-            f'        access_key_id=creds["accessKeyId"],\n'
-            f'        secret_access_key=creds["secretAccessKey"],\n'
-            f'        session_token=creds["sessionToken"],\n'
-            f'        region="us-west-2",\n'
-            f"    )"
-        )
-    else:
-        store_import = "from obstore.store import HTTPStore"
-        store_construction = (
-            f'token_dict = getattr(earthaccess.__auth__, "token", None) or {{}}\n'
-            f'    token = token_dict.get("access_token")\n'
-            f"    from obstore.store import HTTPStore\n"
-            f"    store = HTTPStore.from_url(\n"
-            f"        {registry_key!r},\n"
-            f'        client_options={{"default_headers": {{"Authorization": f"Bearer {{token}}"}}}},\n'
-            f"    )"
-        )
+    store_block = render_login_and_store(
+        url=url, provider=row.provider, registry_key=registry_key
+    )
+    cache_block = render_cache_wiring(registry_key=registry_key)
+    argparse_block = render_cache_argparse()
+    store_import = (
+        "from obstore.store import S3Store"
+        if is_s3
+        else "from obstore.store import HTTPStore"
+    )
 
     # ------------------------------------------------------------------
     # Main body (attempt phase)
@@ -270,45 +252,17 @@ def generate_script(  # noqa: C901  (acceptable complexity)
 
     body = (
         f"def main() -> None:\n"
-        f"    import argparse\n"
-        f"    from pathlib import Path\n"
+        f"{argparse_block}"
         f"\n"
-        f"    parser_cli = argparse.ArgumentParser(description=__doc__)\n"
-        f"    mode = parser_cli.add_mutually_exclusive_group()\n"
-        f'    mode.add_argument("--inspect", action="store_true", help="structure dump only")\n'
-        f'    mode.add_argument("--attempt", action="store_true", help="virtualization attempt only")\n'
-        f'    parser_cli.add_argument("--cache", action="store_true", help="enable on-disk granule cache")\n'
-        f'    parser_cli.add_argument("--cache-dir", type=Path, default=Path.home() / ".cache" / "nasa-virtual-zarr-survey")\n'
-        f'    parser_cli.add_argument("--cache-max-size", type=int, default=50 * 1024**3, help="bytes")\n'
-        f"    args = parser_cli.parse_args()\n"
-        f"    do_inspect = not args.attempt\n"
-        f"    do_attempt = not args.inspect\n"
+        f"{store_block}"
         f"\n"
-        f'    earthaccess.login(strategy="netrc")\n'
-        f"    {store_construction}\n"
-        f"\n"
-        f"    if args.cache:\n"
-        f"        from nasa_virtual_zarr_survey.cache import (\n"
-        f"            CacheSizeTracker,\n"
-        f"            DiskCachingReadableStore,\n"
-        f"        )\n"
-        f"\n"
-        f"        tracker = CacheSizeTracker(args.cache_dir, max_bytes=args.cache_max_size)\n"
-        f"        store = DiskCachingReadableStore(\n"
-        f"            store, prefix={registry_key!r}, tracker=tracker\n"
-        f"        )\n"
+        f"{cache_block}"
         f"\n"
         f"    url = {url!r}\n"
         f"    registry = ObjectStoreRegistry({{{registry_key!r}: store}})\n"
-        f"    family = FormatFamily({row.format_family!r})\n"
         f"\n"
-        f"    if do_inspect:\n"
-        f"        inspect_url(url=url, family=family, store=store)\n"
-        f"\n"
-        f"    if do_attempt:\n"
-        f"        parser = {parser_construction}\n"
-        f"{textwrap.indent(call_lines, '    ')}"
-        f"\n"
+        f"    parser = {parser_construction}\n"
+        f"{call_lines}"
         f"\n"
         f'if __name__ == "__main__":\n'
         f"    main()\n"
@@ -321,8 +275,6 @@ def generate_script(  # noqa: C901  (acceptable complexity)
         + "import earthaccess\n"
         + f"{store_import}\n"
         + "from obspec_utils.registry import ObjectStoreRegistry\n"
-        + "from nasa_virtual_zarr_survey.formats import FormatFamily\n"
-        + "from nasa_virtual_zarr_survey.inspect import inspect_url\n"
         + f"{parser_import}\n"
         + "\n"
         + "\n"

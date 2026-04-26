@@ -36,6 +36,7 @@ dev = [
     "types-requests>=2.31",
     "pyarrow-stubs>=17",
     "tifffile[all]>=2026.4.11",
+    "h5netcdf>=1.8.1",
     {include-group = "docs"},
 ]
 docs = [

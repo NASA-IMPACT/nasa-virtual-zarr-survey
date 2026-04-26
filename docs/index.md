@@ -104,15 +104,32 @@ uv run nasa-virtual-zarr-survey repro --bucket UNDEFINED_FILL_VALUE --limit 3 --
 uv run nasa-virtual-zarr-survey repro --bucket CONFLICTING_DIM_SIZES --phase dataset --out reproductions/
 ```
 
-Each generated script first dumps the file's structure (group tree, dtypes, chunks, codecs, fill values) before attempting the failing operation:
+Each generated script attempts the failing parser / dataset call against the same URL the survey used:
 
 ```bash
-uv run python reproductions/repro_G123456789-POCLOUD.py             # default: inspect, then attempt
-uv run python reproductions/repro_G123456789-POCLOUD.py --inspect   # structure dump only
-uv run python reproductions/repro_G123456789-POCLOUD.py --attempt   # virtualization only
+uv run python reproductions/repro_G123456789-POCLOUD.py
+uv run python reproductions/repro_G123456789-POCLOUD.py --cache   # reuse fetched bytes locally
 ```
 
-The structure dump turns each repro into a datasheet for the granule, which is usually enough to file a precise upstream issue or design an override. By default the renderer bakes any matching collection override into the script; pass `--no-overrides` to render an unconfigured run (useful when investigating a regression).
+By default the renderer bakes any matching collection override into the script; pass `--no-overrides` to render an unconfigured run (useful when investigating a regression). The script also doubles as a working starting point for non-debugging virtualization workflows — edit the parser/dataset kwargs (or strip the failure-context docstring) and treat it as a runnable seed.
+
+For a structural dump (group tree, dtypes, chunks, codecs, fill values) — or to investigate a collection that `repro` cannot help with, e.g. one skipped at discover time with `format_unknown` — use `probe`.
+
+## Probing a collection or granule
+
+`probe` is the diagnostic counterpart to `repro`. Where `repro` reproduces a failure the survey already observed, `probe` investigates any concept ID — most importantly collections that were skipped at discover time (no Parquet failures to reproduce):
+
+```bash
+# write a probe script for a collection
+uv run nasa-virtual-zarr-survey probe C1214470488-ASF --out probes/
+
+# write a probe for a specific granule
+uv run nasa-virtual-zarr-survey probe G1245678901-ASF --out probes/
+```
+
+The generated script logs in via `earthaccess`, dumps the collection / granule UMM-JSON and both `direct` and `external` data links, and (when format can be sniffed from the URL extension) calls `inspect_url` for a structural dump. `probe` prefers the local survey DB and falls back to one or two CMR calls when the concept ID is absent — so it works against a fresh checkout as well as against a populated `output/survey.duckdb`.
+
+If `repro CONCEPT_ID` cannot find any failures because the collection was skipped or never sampled, the error message points you at the right `probe` invocation.
 
 ## Per-collection overrides
 

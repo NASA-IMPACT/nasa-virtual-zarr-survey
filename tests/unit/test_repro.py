@@ -559,14 +559,25 @@ def test_generated_script_without_override_omits_kwargs() -> None:
     assert "to_virtual_dataset()" in src
 
 
-def test_generated_script_has_argparse_mode_flag() -> None:
+def test_generated_script_has_cache_argparse_only() -> None:
+    """``probe`` owns inspection now — ``repro`` no longer emits the
+    ``--inspect``/``--attempt`` mutex or the ``inspect_url`` call."""
     row = _row()
     src = generate_script(row)
     assert "import argparse" in src
-    assert "--inspect" in src
-    assert "--attempt" in src
-    assert "from nasa_virtual_zarr_survey.inspect import inspect_url" in src
-    assert "from nasa_virtual_zarr_survey.formats import FormatFamily" in src
+    assert "--cache" in src
+    assert "--inspect" not in src
+    assert "--attempt" not in src
+    assert "if do_inspect" not in src
+    assert "inspect_url(" not in src
+    assert "from nasa_virtual_zarr_survey.inspect" not in src
+
+
+def test_generated_script_docstring_points_at_probe() -> None:
+    row = _row()
+    src = generate_script(row)
+    assert "nasa-virtual-zarr-survey probe" in src
+    assert "starting point for non-debugging" in src
 
 
 def test_generated_script_compiles() -> None:

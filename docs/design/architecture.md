@@ -402,11 +402,37 @@ Loaded eagerly at the top of `run_attempt`, so a malformed entry fails the run b
 - A CLI to edit the override file. TOML is short and structured; a CLI for "set a key in a TOML file" is friction.
 - Backporting overrides to existing failed result rows. A re-run after editing the file is the supported workflow.
 
-## Repro and structural inspection
+## Repro, probe, and structural inspection
 
-`repro.py` generates a self-contained Python script per failing granule that reproduces the failing operation against the same URL, parser, and kwargs the survey used. The renderer reads `collection_overrides.toml` and bakes any existing overrides into the script, so the repro mirrors current attempt behavior; `--no-overrides` forces the script to mirror an unconfigured run, useful when first investigating a regression.
+The survey ships two complementary diagnostic surfaces, both of which emit a runnable Python script as their artifact.
 
-When run, the generated script first dumps the file's structure *before* attempting the failing operation. This turns each repro into a datasheet for the granule and is the largest investment in debuggability the design makes. The new module `inspect.py` dispatches per `FormatFamily`:
+### `repro` — reproduce a recorded failure
+
+`repro.py` generates a self-contained script per failing granule that reproduces the failing operation against the same URL, parser, and kwargs the survey used. The renderer reads `collection_overrides.toml` and bakes any existing overrides into the script, so the repro mirrors current attempt behavior; `--no-overrides` forces the script to mirror an unconfigured run, useful when first investigating a regression.
+
+The generated script also doubles as a working starting point for non-debugging virtualization workflows: edit the parser/dataset kwargs (or strip the failure-context docstring) and treat it as a runnable seed.
+
+If `repro CONCEPT_ID` finds no matching failures because the collection was skipped at discover time (`skip_reason='format_unknown'`) or has no granules sampled / no Parquet rows, the error message points you at `probe`.
+
+### `probe` — investigate any concept ID
+
+`probe.py` is the diagnostic counterpart. It takes one concept ID (`C...` or `G...`, auto-detected by prefix) and emits a script that logs in, dumps the collection / granule UMM-JSON, prints both `direct` and `external` data links, constructs an obstore-backed store, and (when format can be sniffed from the URL extension) calls `inspect_url` for a structural dump.
+
+`probe` prefers the local survey DB and falls back to one or two CMR calls only when the concept ID is absent:
+
+| Input | Local DB state | CMR calls at gen time |
+|---|---|---|
+| `G456` | granule in DB | 0 |
+| `G456` | granule not in DB | 1 (`search_data`) |
+| `C123` | collection + granules in DB | 0 |
+| `C123` | collection in DB, no granules | 1 (`search_data`) |
+| `C123` | collection not in DB | 2 (`search_datasets` + `search_data`) |
+
+Probe is per-target by design — the script always inspects exactly one granule. To look at more granules, re-run `probe` with another granule ID. To force a CMR-free path, hand-edit the generated script.
+
+### `inspect.py` — per-format structural dispatch
+
+The shared `inspect.py` module dispatches per `FormatFamily`:
 
 - **HDF5 / NetCDF4** — `h5py` walk: per group, list datasets with `shape`, `dtype`, `chunks`, `compression`, `compression_opts`, attached dim scales, fillvalue, top 10 attrs.
 - **Zarr** — open via `zarr-python`, dump `zarr.json` hierarchy: arrays with shape/dtype/chunks/codecs and group attrs.
@@ -417,15 +443,13 @@ When run, the generated script first dumps the file's structure *before* attempt
 
 Two principles: the inspector reads through the same `obstore` `S3Store` / `HTTPStore` the parser uses (no separate auth path), and output is human-readable text *and* machine-parseable — a JSON blob block at the end of stdout, fenced with `<<<INSPECT_JSON_BEGIN>>>` ... `<<<INSPECT_JSON_END>>>` sentinels for downstream tooling.
 
-Generated repro scripts accept a small `argparse` interface:
+### Shared script template
 
-```text
-uv run python repro_G456.py             # default: inspect, then attempt
-uv run python repro_G456.py --inspect   # structure dump only
-uv run python repro_G456.py --attempt   # virtualization only
-```
+Both `repro` and `probe` compose their output from `script_template.py`, which exposes pure string-snippet emitters: `render_cache_argparse`, `render_earthaccess_login`, `render_store` / `render_login_and_store`, `render_cache_wiring`, `render_inspect_block`. This keeps the login / store / cache blocks identical across the two CLIs.
 
-`--inspect` is useful when virtualization hangs, times out, or 403s. `--attempt` is useful when iterating quickly on kwargs after reading the structure once.
+### Migration: `--inspect` / `--attempt` removed
+
+Earlier versions of `repro` emitted scripts with a `--inspect` / `--attempt` argparse mutex on the generated script: `--inspect` ran the structure dump only; `--attempt` ran the virtualization only. Both flags are gone. `probe` now owns structural inspection, so a `repro G456` run that previously needed `--inspect` becomes `probe G456` instead. Existing checked-in `repro_*.py` scripts continue to work — they're standalone, not regenerated.
 
 ### The debug loop
 
@@ -551,7 +575,7 @@ On the first run, `read_parquet` raises (no files yet); a `try/except` falls bac
 
 ## CLI
 
-Click-based. Subcommands: `version`, `discover`, `sample`, `attempt`, `report`, `pilot`, `repro` (minimizes any single failure into a runnable script), and `validate-overrides` (loads `config/collection_overrides.toml` and prints `OK` or the first validation error).
+Click-based. Subcommands: `version`, `discover`, `sample`, `attempt`, `report`, `pilot`, `repro` (minimizes any single failure into a runnable script), `probe` (emits a runnable script for investigating any concept ID, even one with no recorded failures), and `validate-overrides` (loads `config/collection_overrides.toml` and prints `OK` or the first validation error).
 
 Common flags across work phases:
 
@@ -578,10 +602,15 @@ Cache-related, on `attempt`, `pilot`, and generated repro scripts:
 - `--cache-dir PATH` — default `~/.cache/nasa-virtual-zarr-survey/` (also `NASA_VZ_SURVEY_CACHE_DIR`)
 - `--cache-max-size SIZE` — default `50GB`, accepts human-readable strings
 
-Repro-specific (on the `repro` subcommand and the generated scripts):
+Repro-specific (on the `repro` subcommand):
 
 - `--no-overrides` — generate / run as if `collection_overrides.toml` were empty
-- `--inspect` / `--attempt` — on the generated script, run only the structure dump or only the virtualization (mutually exclusive; default runs both)
+- `--bucket NAME`, `--phase {parse,dataset}`, `--limit N`
+
+Probe-specific (on the `probe` subcommand):
+
+- `--access {direct,external}` — selects the data link the script binds to
+- `--out PATH` — write `probe_<id>.py` to a directory; default stdout
 
 The `pilot` subcommand runs all phases end-to-end on a small sample (`--sample N`, default 50) so users can review raw errors and refine `taxonomy.py` before committing to a full survey.
 
@@ -602,7 +631,9 @@ Every module has mocked tests for its public API. Notable suites:
 - `test_overrides.py` — round-trips a representative TOML; rejects typo concept IDs, hallucinated kwarg names, contradictory `skip_dataset` + `dataset = {...}`, unknown top-level keys, missing `notes`. `for_collection` returns empty defaults for unknown IDs.
 - `test_inspect.py` — tiny generated fixtures in `tests/fixtures/inspect/` (HDF5, Zarr v3, NetCDF3, GeoTIFF, DMR++); asserts the dumped tree contains expected keys and snapshots the fenced JSON blob portion.
 - `test_cache.py` — round-trip `get` then `get` again serves from disk; `get_range` after a full `get` serves from cache; cap exceeded → no file written, fall through, warning logged once; two `DiskCachingReadableStore` instances against the same dir share state; atomic write under simulated crash leaves only `*.tmp`; underlying store error during a cache-miss fetch leaves no `*.tmp` and propagates.
-- `test_repro.py` — generated scripts pass `python -m py_compile`, contain `argparse` and the mode dispatch, and bake the right kwargs in when overrides exist for the collection. End-to-end: write a TOML override, generate a repro, exec it against a local fixture URL, assert `--inspect` and `--attempt` both work.
+- `test_repro.py` — generated scripts pass `python -m py_compile`, contain the cache `argparse` block, and bake the right kwargs in when overrides exist for the collection. The docstring points at `probe` for structural inspection.
+- `test_probe.py` — `resolve_target` honors the local DB and falls back to CMR with the documented call counts; `generate_script` emits section markers in order, omits the collection block for granule input, comments out the inspect call when format isn't sniffed, and produces output that passes `python -m py_compile`.
+- `test_script_template.py` — each renderer produces compilable snippets; `render_login_and_store` dispatches on URL scheme and rejects unknown schemes.
 
 ### Integration (`tests/integration/`, opt-in)
 

@@ -28,6 +28,7 @@ nav:
       - api/cubability.md
       - api/taxonomy.md
       - api/repro.md
+      - api/probe.md
       - api/inspect.md
   - "contributing.md"
 watch:

@@ -28,3 +28,4 @@ tests/fixtures/inspect/*.dmrpp
 tests/fixtures/inspect/*.zarr/
 
 .ipynb_checkpoints/
+*.ipynb
