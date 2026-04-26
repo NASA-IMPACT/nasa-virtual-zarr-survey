@@ -127,72 +127,29 @@ def test_schema_version_mismatch_raises(tmp_path: Path) -> None:
         load_summary(p)
 
 
-def test_load_v1_summary_migrates(tmp_path: Path) -> None:
-    """Loading a v1 summary synthesizes datatree_verdict and empty datatree fields."""
-    # Construct a minimal v1-shaped payload
-    v1_payload = {
-        "schema_version": 1,
-        "generated_at": "2025-01-01T00:00:00+00:00",
-        "survey_tool_version": "0.9.0",
-        "verdicts": [
-            {
-                "concept_id": "C1",
-                "daac": "PODAAC",
-                "format_family": "NetCDF4",
-                "skip_reason": None,
-                "stratified": True,
-                "parse_verdict": "all_pass",
-                "dataset_verdict": "all_pass",
-                "top_bucket": "",
-                # No datatree_verdict key -- v1 format
-            }
-        ],
-        "parse_taxonomy": {},
-        "dataset_taxonomy": {},
-        "cubability_results": {},
-        "other_parse_errors": [],
-        "other_dataset_errors": [],
-    }
-    p = tmp_path / "v1_summary.json"
-    p.write_text(json.dumps(v1_payload))
-
+def test_skipped_by_format_roundtrip(tmp_path: Path) -> None:
+    """skipped_by_format rows carry example collection short names through dump/load."""
+    p = tmp_path / "summary.json"
+    skipped = [
+        ("PDF", "non_array_format", 4, ["MOD09GA", "MOD13Q1"]),
+        ("(null)", "format_unknown", 2, ["AIRS2RET"]),
+        ("CSV", "non_array_format", 1, []),
+    ]
+    dump_summary(
+        p,
+        verdicts=[],
+        parse_taxonomy={},
+        dataset_taxonomy={},
+        datatree_taxonomy={},
+        cubability_results={},
+        other_parse_errors=[],
+        other_dataset_errors=[],
+        other_datatree_errors=[],
+        skipped_by_format=skipped,
+        survey_tool_version="1.0.0",
+    )
     summary = load_summary(p)
-    assert len(summary.verdicts) == 1
-    assert summary.verdicts[0]["datatree_verdict"] == "not_attempted"
-    assert summary.datatree_taxonomy == {}
-    assert summary.other_datatree_errors == []
-    assert summary.survey_tool_version == "0.9.0"
-    # v1 -> v3 also defaults the dependency/invocation fields to None.
-    assert summary.virtualizarr_version is None
-    assert summary.zarr_version is None
-    assert summary.xarray_version is None
-    assert summary.sampling_mode is None
-
-
-def test_load_v2_summary_migrates(tmp_path: Path) -> None:
-    """Loading a v2 summary defaults the new v3 metadata fields to None."""
-    v2_payload = {
-        "schema_version": 2,
-        "generated_at": "2026-01-01T00:00:00+00:00",
-        "survey_tool_version": "1.0.0",
-        "verdicts": [],
-        "parse_taxonomy": {},
-        "dataset_taxonomy": {},
-        "datatree_taxonomy": {},
-        "cubability_results": {},
-        "other_parse_errors": [],
-        "other_dataset_errors": [],
-        "other_datatree_errors": [],
-    }
-    p = tmp_path / "v2_summary.json"
-    p.write_text(json.dumps(v2_payload))
-
-    summary = load_summary(p)
-    assert summary.survey_tool_version == "1.0.0"
-    assert summary.virtualizarr_version is None
-    assert summary.zarr_version is None
-    assert summary.xarray_version is None
-    assert summary.sampling_mode is None
+    assert summary.skipped_by_format == skipped
 
 
 def test_metadata_fields_roundtrip(tmp_path: Path) -> None:

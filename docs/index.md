@@ -5,11 +5,10 @@ Surveys cloud-hosted NASA CMR collections for VirtualiZarr compatibility. The pi
 1. **Discover** (Phase 1): enumerate CMR collections into DuckDB.
 2. **Sample** (Phase 2): pick N granules per collection, stratified across its temporal extent.
 3. **Parsability** (Phase 3): the VirtualiZarr parser can produce a `ManifestStore` from a granule URL.
-4a. **Datasetability** (Phase 4a): the `ManifestStore` can be converted to an `xarray.Dataset`.
-4b. **Datatreeability** (Phase 4b): the `ManifestStore` can be converted to an `xarray.DataTree`. Attempted in parallel with 4a; captures hierarchical files that fail 4a with `CONFLICTING_DIM_SIZES`.
+4. **Datasetability / Datatreeability** (Phase 4a / 4b): the `ManifestStore` can be converted to an `xarray.Dataset` (4a) or `xarray.DataTree` (4b). 4b runs in parallel with 4a; it captures hierarchical files that fail 4a with `CONFLICTING_DIM_SIZES`.
 5. **Cubability** (Phase 5): the per-granule datasets can be combined into a coherent virtual store. Gated on Phase 4a `all_pass` (tree-only collections are not yet cubable).
 
-Failures in each phase are categorized into an empirically-derived taxonomy so VirtualiZarr maintainers and NASA DAAC operators can prioritize gaps.
+Failures in each phase are categorized into an empirically-derived taxonomy so VirtualiZarr maintainers and NASA DAAC operators can prioritize gaps. New to the terms (`granule`, `DAAC`, `ManifestStore`, `cubability`)? See the [glossary](glossary.md). For the bucket meanings, see [the taxonomy reference](design/taxonomy.md).
 
 ## Getting started
 
@@ -17,19 +16,15 @@ Failures in each phase are categorized into an empirically-derived taxonomy so V
 uv sync
 ```
 
-Requires Earthdata Login credentials in `~/.netrc`.
+Requires Earthdata Login credentials in `~/.netrc`. See NASA's [Earthdata Login setup guide](https://urs.earthdata.nasa.gov/) if you don't already have an account; the same `.netrc` entry powers both `--access external` (HTTPS + bearer token) and `--access direct` (S3 credentials minted via EDL).
 
 ### Pilot run
 
-Start small. The pilot runs discover → sample → attempt → report on a bounded set of collections so you can review raw errors and refine the failure taxonomy before committing to a full survey:
+Start small. The pilot runs discover, sample, attempt, report on a bounded set of collections so you can review raw errors and refine the failure taxonomy before committing to a full survey:
 
 ```bash
 uv run nasa-virtual-zarr-survey pilot --top 20 --n-bins 2 --access external
 ```
-
-- `--top N` surveys the top-N most-used collections across EOSDIS providers (ranked by CMR's `usage_score`). Swap for `--top-per-provider N` to survey N per provider.
-- `--n-bins 2` samples 2 granules stratified across each collection's temporal extent (default is 5).
-- `--access external` uses HTTPS URLs with an EDL bearer token so the tool works outside AWS us-west-2. Use `--access direct` when running on AWS us-west-2 compute for direct S3 access.
 
 ### Per-phase commands
 
@@ -42,9 +37,35 @@ uv run nasa-virtual-zarr-survey attempt --access external
 uv run nasa-virtual-zarr-survey report
 ```
 
+`discover` and `sample` are idempotent; `attempt` is resumable (it skips `(collection, granule)` pairs already present in the Parquet log); `report` is cheap and side-effect-free, so you can re-run it after refining the taxonomy without re-fetching anything.
+
+## Run modes in detail
+
+### Scope: `--top` vs `--top-per-provider` vs default
+
+Without a scope flag, `discover` enumerates **all** EOSDIS cloud-hosted collections (thousands). For most iteration that is too much:
+
+- `--top N`: surveys the top-N most-used collections across EOSDIS providers, ranked by CMR's `usage_score`.
+- `--top-per-provider N`: takes N per provider, so smaller DAACs are not drowned out by larger ones.
+
+Pick one or the other; the default (no scope flag) is reserved for a full survey.
+
+### Granule depth: `--n-bins`
+
+`--n-bins N` samples N granules per collection, stratified evenly across the collection's temporal extent. Default is 5. Use 2 for fast iteration; raise it to surface flakiness or long-tail per-granule heterogeneity (which shows up as `partial_pass` verdicts).
+
+### Access mode: `--access external` vs `--access direct`
+
+NASA's EOSDIS S3 buckets live in `us-west-2` and don't allow public direct-S3 reads from outside that region.
+
+- `--access external` (default for outside AWS): HTTPS URLs signed with an Earthdata Login bearer token. Works from anywhere with an `~/.netrc` EDL entry, but every byte goes through HTTPS rather than the cheaper S3 path.
+- `--access direct`: temporary S3 credentials minted via EDL's cloud-auth endpoint. Requires that you're running on `us-west-2` compute. Faster and avoids HTTPS gateway costs, but a `403 Forbidden` (taxonomy bucket `FORBIDDEN`) is the typical failure if you try this from outside the region.
+
+If you change access mode between runs, `sample` re-extracts the granule URLs (the URL format differs between the two), so a `discover` re-run is not needed.
+
 ### Inspecting skipped collections
 
-Collections whose declared format is not array-like (PDF, shapefile, CSV, etc.) are filtered during `discover`. To see the breakdown:
+Collections whose declared format is not array-like (PDF, shapefile, CSV, etc.) are filtered during `discover` so the survey doesn't waste attempts on them. To see the breakdown:
 
 ```bash
 uv run nasa-virtual-zarr-survey discover --top 50 --skipped
@@ -68,20 +89,80 @@ uv run nasa-virtual-zarr-survey pilot --cache --top 5 --n-bins 3 --access extern
 
 Override the location with `--cache-dir` or `NASA_VZ_SURVEY_CACHE_DIR`, and bound total size with `--cache-max-size`. See the contributing guide for cache layout and inspection tips.
 
-## Architecture at a glance
+## Reproducing a single failure
 
+After a `report` run, the most common next step is investigating one specific failure. The `repro` subcommand emits a self-contained Python script that reproduces the failing operation against the same URL, parser, and kwargs the survey used:
+
+```bash
+# emit one repro for a specific collection
+uv run nasa-virtual-zarr-survey repro C1996881146-POCLOUD --out reproductions/
+
+# emit up to 3 repros for a failure bucket (great for triage)
+uv run nasa-virtual-zarr-survey repro --bucket UNDEFINED_FILL_VALUE --limit 3 --out reproductions/
+
+# emit only failures from a specific phase
+uv run nasa-virtual-zarr-survey repro --bucket CONFLICTING_DIM_SIZES --phase dataset --out reproductions/
 ```
-earthaccess.search_datasets(...)        (Phase 1: discover)
-  ↓
-stratified temporal sampling            (Phase 2: sample)
-  ↓
-parse (Phase 3)                         (attempt)
-  ├── to_virtual_dataset  (Phase 4a)
-  └── to_virtual_datatree (Phase 4b)
-  ↓
-cubability (Phase 5) + report render
+
+Each generated script first dumps the file's structure (group tree, dtypes, chunks, codecs, fill values) before attempting the failing operation:
+
+```bash
+uv run python reproductions/repro_G123456789-POCLOUD.py             # default: inspect, then attempt
+uv run python reproductions/repro_G123456789-POCLOUD.py --inspect   # structure dump only
+uv run python reproductions/repro_G123456789-POCLOUD.py --attempt   # virtualization only
 ```
 
-State is persisted in a DuckDB database (`output/survey.duckdb`) for checkpoint data, and in DAAC-partitioned Parquet shards (`output/results/`) for the append-only per-attempt log. Both phases are resumable.
+The structure dump turns each repro into a datasheet for the granule, which is usually enough to file a precise upstream issue or design an override. By default the renderer bakes any matching collection override into the script; pass `--no-overrides` to render an unconfigured run (useful when investigating a regression).
 
-For a full design walk-through see the [design document](design/architecture.md).
+## Per-collection overrides
+
+Many CMR collections that fail under a naive `attempt` would parse cleanly with the right kwargs (`group="science"` for an HDF5 file whose science variables live under a sub-group, `drop_variables=` to skip a single compound-dtype variable, or simply `skip_dataset = true` for a collection whose dimensions can't be flattened). The override mechanism lets you record those fixes once, in `config/collection_overrides.toml`, and have every future `attempt` pick them up:
+
+```toml
+[C1996881146-POCLOUD]
+parser = { group = "science", drop_variables = ["status_flag"] }
+dataset = { loadable_variables = [] }
+notes = "Top-level group has no array vars; descend to /science."
+
+[C2208418228-POCLOUD]
+skip_dataset = true
+notes = "to_virtual_dataset raises ConflictingDimSizes; datatree path works."
+```
+
+The `notes` field is required on every non-empty entry, so the file doubles as a "lessons learned" register that's diff-able and PR-reviewable.
+
+After editing the file, validate it before running anything that reads it:
+
+```bash
+uv run nasa-virtual-zarr-survey validate-overrides
+```
+
+The check enforces concept-ID format, allowed sub-keys, kwarg names against each parser's signature, and contradictory combinations (e.g. `skip_dataset = true` plus `dataset = {...}`).
+
+The full debug loop is: naive `attempt` records a failure, `repro` to investigate, edit `collection_overrides.toml`, `validate-overrides` to confirm, then re-run `attempt` for that collection. The next `report` will mark the collection as `override_applied = true`. See [the design doc](design/architecture.md#per-collection-overrides) for the full schema and validation rules.
+
+## Querying the raw data
+
+The Parquet log at `output/results/` is the canonical per-attempt record (one row per granule per phase). DuckDB can read it directly and is the fastest way to answer questions like "which DAACs hit `UNSUPPORTED_CODEC` most?":
+
+```bash
+uv run python -c "
+import duckdb
+print(duckdb.sql('''
+    SELECT daac, parse_error_type, count(*) AS n
+    FROM read_parquet(\"output/results/**/*.parquet\", union_by_name=true, hive_partitioning=true)
+    WHERE parse_success = false
+    GROUP BY 1, 2
+    ORDER BY n DESC
+    LIMIT 20
+'''))
+"
+```
+
+`output/survey.duckdb` carries the discover/sample state (collections, granules, run metadata). The Parquet log carries every per-attempt result. Together they're enough to recompute the report from scratch with `report --from-data` skipped.
+
+## Architecture
+
+State is persisted in a DuckDB database (`output/survey.duckdb`) for checkpoint data, and in DAAC-partitioned Parquet shards (`output/results/`) for the append-only per-attempt log. Both stages are resumable: `discover` and `sample` are idempotent, `attempt` skips already-recorded `(collection, granule)` pairs.
+
+For the full design, including the override mechanism, the repro renderer, and per-format inspectors, see the [design document](design/architecture.md).

@@ -16,6 +16,7 @@ nav:
   - "index.md"
   - Results:
       - results/index.md
+  - "glossary.md"
   - Design:
       - design/architecture.md
       - design/taxonomy.md
@@ -26,6 +27,8 @@ nav:
       - api/report.md
       - api/cubability.md
       - api/taxonomy.md
+      - api/repro.md
+      - api/inspect.md
   - "contributing.md"
 watch:
   - src/nasa_virtual_zarr_survey

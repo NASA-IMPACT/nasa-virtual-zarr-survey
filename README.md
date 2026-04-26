@@ -25,9 +25,10 @@ Requires Earthdata Login credentials in `~/.netrc`. Use `--access direct` instea
 
 The full documentation site is at <https://nasa-impact.github.io/nasa-virtual-zarr-survey/>:
 
-- [Usage and run modes](https://nasa-impact.github.io/nasa-virtual-zarr-survey/): pilot, per-phase commands, granule cache, etc.
-- [Latest survey results](https://nasa-impact.github.io/nasa-virtual-zarr-survey/results/): figures and per-collection breakdowns.
-- [Architecture](https://nasa-impact.github.io/nasa-virtual-zarr-survey/design/architecture/) and [taxonomy design](https://nasa-impact.github.io/nasa-virtual-zarr-survey/design/taxonomy/).
+- [Latest survey results](https://nasa-impact.github.io/nasa-virtual-zarr-survey/results/): figures, taxonomy breakdown, per-DAAC and per-collection rollups.
+- [Usage and run modes](https://nasa-impact.github.io/nasa-virtual-zarr-survey/): pilot, per-phase commands, `--access` modes, overrides, reproducing a single failure, granule cache.
+- [Glossary](https://nasa-impact.github.io/nasa-virtual-zarr-survey/glossary/) and [failure taxonomy](https://nasa-impact.github.io/nasa-virtual-zarr-survey/design/taxonomy/) for terms and bucket meanings.
+- [Architecture](https://nasa-impact.github.io/nasa-virtual-zarr-survey/design/architecture/) for the full design walk-through.
 - [Contributing](https://nasa-impact.github.io/nasa-virtual-zarr-survey/contributing/): dev setup, tests, regenerating committed figures, extending the taxonomy.
 
 ## License

@@ -94,12 +94,15 @@ The pipeline itself is documented in the [design document](design/architecture.m
 
 ### Refining the taxonomy
 
-After a pilot run, open `output/report.md` and scroll to "Top 20 Raw Errors in `OTHER`". Each recurring uncategorized error is a candidate for a new rule:
+After a pilot run, open `output/report.md` and scroll to "Top 20 Raw Errors in `OTHER`". Each recurring uncategorized error is a candidate for a new rule. Before promoting one to its own bucket, generate a `repro` script for the failing granule (`uv run nasa-virtual-zarr-survey repro --bucket OTHER --limit 3 --out reproductions/`) and run it: the structure dump tells you whether the error is genuinely a new failure mode or a more specific case of an existing bucket.
+
+Then:
 
 1. Add a new value to `Bucket` in `src/nasa_virtual_zarr_survey/taxonomy.py` if it represents a genuinely new failure mode.
 2. Add a `(type_regex, message_regex, bucket)` tuple to `_RULES`. Order matters: first match wins.
 3. Add a test case to `tests/unit/test_taxonomy.py` using the `@pytest.mark.parametrize` list.
-4. Re-run `report`; no need to re-run `attempt`.
+4. Update the bucket table in `docs/design/taxonomy.md`.
+5. Re-run `report`; no need to re-run `attempt`.
 
 ### Adding a format family
 

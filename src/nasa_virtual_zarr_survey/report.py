@@ -268,15 +268,22 @@ def _cubability_results(
 
 def _skipped_by_format(
     con: duckdb.DuckDBPyConnection,
-) -> list[tuple[str, str, int]]:
-    """Return ``(format_declared, skip_reason, count)`` rows for skipped collections,
-    sorted descending by count then format."""
+) -> list[tuple[str, str, int, list[str]]]:
+    """Return ``(format_declared, skip_reason, count, example_short_names)`` rows
+    for skipped collections, sorted descending by count then format.
+
+    ``example_short_names`` is up to three alphabetically-sorted collection
+    short names from the (fmt, reason) group, included so a reader can
+    recognize which dataset families are masked behind ``(null)`` or rare
+    declared formats.
+    """
     try:
         rows = con.execute(
             """
             SELECT COALESCE(format_declared, '(null)') AS fmt,
                    skip_reason,
-                   count(*) AS n
+                   count(*) AS n,
+                   list_sort(array_agg(short_name) FILTER (WHERE short_name IS NOT NULL)) AS short_names
             FROM collections
             WHERE skip_reason IS NOT NULL
             GROUP BY fmt, skip_reason
@@ -285,7 +292,10 @@ def _skipped_by_format(
         ).fetchall()
     except Exception:
         return []
-    return [(str(fmt), str(reason), int(n)) for fmt, reason, n in rows]
+    return [
+        (str(fmt), str(reason), int(n), [str(s) for s in (names or [])[:3]])
+        for fmt, reason, n, names in rows
+    ]
 
 
 def _other_errors_for_phase(
@@ -413,8 +423,14 @@ def _iframe(name: str) -> str:
     return f'<iframe src="figures/{name}.html" width="100%" height="500" frameborder="0"></iframe>'
 
 
-def _render_metadata_block(meta: RunMetadata) -> list[str]:
-    """Emit a bullet list of run metadata. Skips lines whose value is None."""
+def _render_metadata_block(
+    meta: RunMetadata, verdicts: list[VerdictRow] | None = None
+) -> list[str]:
+    """Emit a bullet list of run metadata. Skips lines whose value is None.
+
+    When ``verdicts`` is provided, also emits derived run-scope rows
+    (collections sampled, DAACs covered, format families seen).
+    """
     rows: list[tuple[str, str | None]] = [
         ("Generated", meta.generated_at),
         ("Survey tool", meta.survey_tool_version),
@@ -423,32 +439,94 @@ def _render_metadata_block(meta: RunMetadata) -> list[str]:
         ("Xarray", meta.xarray_version),
         ("Sampling mode", meta.sampling_mode),
     ]
+    if verdicts is not None:
+        total = len(verdicts)
+        skipped = sum(1 for v in verdicts if v.get("skip_reason"))
+        sampled = total - skipped
+        daacs = sorted({v["daac"] for v in verdicts if v["daac"]})
+        families = sorted({v["format_family"] for v in verdicts if v["format_family"]})
+        rows.append(
+            (
+                "Collections",
+                f"{total} total ({sampled} sampled, {skipped} skipped pre-sample)",
+            )
+        )
+        if daacs:
+            rows.append(("DAACs covered", f"{len(daacs)} ({', '.join(daacs)})"))
+        if families:
+            rows.append(("Format families seen", ", ".join(families)))
     lines = [f"- **{label}:** {value}" for label, value in rows if value]
     lines.append("")
     return lines
 
 
+def _render_reading_guide() -> list[str]:
+    """Emit the 'How to read this report' preamble shown above every report.
+
+    Cross-links to the docs site so the report is intelligible for a reader who
+    arrived via search or a direct DAAC link.
+    """
+    return [
+        "## How to read this report\n",
+        (
+            "The survey runs five phases against each cloud-hosted CMR "
+            "collection: **Discover** (1), **Sample** (2), **Parsability** "
+            "(3), **Datasetability / Datatreeability** (4a / 4b), and "
+            "**Cubability** (5). Each phase below shows per-collection "
+            "verdicts and, for failures, a [taxonomy](../design/taxonomy.md) "
+            "bucket.\n"
+        ),
+        (
+            "Verdict labels are `all_pass`, `partial_pass`, `all_fail`, "
+            "`not_attempted`, and `skipped`. See the "
+            "[glossary](../glossary.md) for definitions of these and other "
+            "terms (granule, DAAC, ManifestStore, fingerprint, stratified "
+            "sampling). For methodology and the run-mode flags that produced "
+            "this report, see the [usage docs](../index.md).\n"
+        ),
+        (
+            "Tip: search this page (`Ctrl-F`) for your DAAC short code "
+            "(e.g. `LPCLOUD`, `POCLOUD`) or a CMR concept ID to jump straight "
+            "to your collection's row in the table at the bottom.\n"
+        ),
+    ]
+
+
 def _render_skipped_by_format(
-    rows: list[tuple[str, str, int]],
+    rows: list[tuple[str, str, int, list[str]]],
 ) -> list[str]:
     """Render the "Skipped collections by declared format" section body.
 
-    ``rows`` is ``(format_declared, skip_reason, count)`` sorted descending.
+    ``rows`` is ``(format_declared, skip_reason, count, example_short_names)``
+    sorted descending. The ``Example collections`` column is omitted when no
+    row carries any examples (e.g. when re-rendering from an older summary).
     """
     lines = ["## Skipped collections by declared format\n"]
     lines.append(
         "Collections filtered out before sampling because no VirtualiZarr parser "
         "exists for the declared format. Sorted descending by count; the top "
-        "rows are the highest-impact targets for new-parser work.\n"
+        "rows are the highest-impact targets for new-parser work. A `(null)` "
+        "declared format means the CMR record didn't list a format in either "
+        "`FileDistributionInformation` or `FileArchiveInformation`; the "
+        "`Example collections` column shows representative short names so the "
+        "underlying dataset family is still recognizable.\n"
     )
     if not rows:
         lines.append("_No skipped collections._")
         lines.append("")
         return lines
-    lines.append("| Declared format | Reason | Collections |")
-    lines.append("|---|---|---:|")
-    for fmt, reason, n in rows:
-        lines.append(f"| {fmt} | {reason} | {n} |")
+    has_examples = any(examples for *_, examples in rows)
+    if has_examples:
+        lines.append("| Declared format | Reason | Collections | Example collections |")
+        lines.append("|---|---|---:|---|")
+        for fmt, reason, n, examples in rows:
+            ex = ", ".join(examples) if examples else ""
+            lines.append(f"| {fmt} | {reason} | {n} | {ex} |")
+    else:
+        lines.append("| Declared format | Reason | Collections |")
+        lines.append("|---|---|---:|")
+        for fmt, reason, n, _examples in rows:
+            lines.append(f"| {fmt} | {reason} | {n} |")
     lines.append("")
     return lines
 
@@ -464,7 +542,7 @@ def render_report(
     datatree_tax: dict[str, tuple[int, int]] | None = None,
     other_datatree_errors: list[tuple[int, str, str]] | None = None,
     metadata: RunMetadata | None = None,
-    skipped_by_format: list[tuple[str, str, int]] | None = None,
+    skipped_by_format: list[tuple[str, str, int, list[str]]] | None = None,
 ) -> str:
     """Render the full Markdown report from pre-computed phase verdicts and taxonomy counts.
 
@@ -489,14 +567,16 @@ def render_report(
     fs = figure_stems or {}
     _datatree_tax: dict[str, tuple[int, int]] = datatree_tax or {}
     _other_datatree_errors: list[tuple[int, str, str]] = other_datatree_errors or []
-    _skipped_by_format: list[tuple[str, str, int]] = skipped_by_format or []
+    _skipped_by_format: list[tuple[str, str, int, list[str]]] = skipped_by_format or []
 
     total = len(verdicts)
     lines: list[str] = []
     lines.append("# NASA VirtualiZarr Survey Report\n")
 
     if metadata is not None:
-        lines.extend(_render_metadata_block(metadata))
+        lines.extend(_render_metadata_block(metadata, verdicts))
+
+    lines.extend(_render_reading_guide())
 
     # Overview section with Sankey
     lines.append("## Overview\n")
@@ -515,13 +595,15 @@ def render_report(
     lines.append("## Phase 3: Parsability\n")
     lines.append(
         "Per-collection verdicts based on whether the VirtualiZarr parser "
-        "successfully produced a ManifestStore for each sampled granule.\n"
+        "successfully produced a ManifestStore for each sampled granule. "
+        "Failure-bucket meanings: see "
+        "[the taxonomy reference](../design/taxonomy.md).\n"
     )
     lines.extend(_render_verdict_counts(verdicts, "parse_verdict"))
     lines.append("")
     lines.extend(_render_taxonomy_table(parse_tax, "Parse Failure Taxonomy"))
     lines.append("")
-    if "taxonomy_parse" in fs:
+    if parse_tax and "taxonomy_parse" in fs:
         lines.append(_iframe("taxonomy_parse"))
         lines.append("")
 
@@ -531,14 +613,15 @@ def render_report(
     lines.append(
         f"Per-collection verdicts based on whether the ManifestStore converted to an "
         f"xarray.Dataset. Denominator: {parsable_count} collections whose sampled "
-        f"granules all parsed successfully.\n"
+        f"granules all parsed successfully. Failure-bucket meanings: see "
+        f"[the taxonomy reference](../design/taxonomy.md).\n"
     )
     parsable_verdicts = [v for v in verdicts if v["parse_verdict"] == "all_pass"]
     lines.extend(_render_verdict_counts(parsable_verdicts, "dataset_verdict"))
     lines.append("")
     lines.extend(_render_taxonomy_table(dataset_tax, "Dataset Failure Taxonomy"))
     lines.append("")
-    if "taxonomy_dataset" in fs:
+    if dataset_tax and "taxonomy_dataset" in fs:
         lines.append(_iframe("taxonomy_dataset"))
         lines.append("")
 
@@ -547,7 +630,9 @@ def render_report(
     lines.append(
         f"Per-collection verdicts based on whether the ManifestStore converted to an "
         f"xarray.DataTree. Attempted in parallel with Phase 4a for all collections "
-        f"that parsed successfully (denominator: {parsable_count}).\n"
+        f"that parsed successfully (denominator: {parsable_count}). "
+        f"Failure-bucket meanings: see "
+        f"[the taxonomy reference](../design/taxonomy.md).\n"
     )
     rescued_by_datatree = sum(
         1
@@ -564,7 +649,7 @@ def render_report(
     lines.append("")
     lines.extend(_render_taxonomy_table(_datatree_tax, "Datatree Failure Taxonomy"))
     lines.append("")
-    if "taxonomy_datatree" in fs:
+    if _datatree_tax and "taxonomy_datatree" in fs:
         lines.append(_iframe("taxonomy_datatree"))
         lines.append("")
 

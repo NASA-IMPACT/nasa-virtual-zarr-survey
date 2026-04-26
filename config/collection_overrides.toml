@@ -3,4 +3,6 @@
 # datatree (each an inline table of kwargs), skip_dataset, skip_datatree
 # (booleans), notes (required one-line rationale on every non-empty entry).
 #
-# See docs/design/collection-overrides.md for the schema.
+# See docs/design/architecture.md#per-collection-overrides for the schema and
+# validation rules, or docs/index.md#per-collection-overrides for the user-facing
+# walk-through (repro -> override -> validate-overrides -> re-attempt).

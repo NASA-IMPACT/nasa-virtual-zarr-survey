@@ -2,13 +2,15 @@
 
 ## Purpose
 
-Measure, for each cloud-hosted NASA CMR collection of an array-like format, how far the stack gets when asked to virtualize it — broken into three independently-observable phases:
+Measure, for each cloud-hosted NASA CMR collection of an array-like format, how far the stack gets when asked to virtualize it. The pipeline runs in five phases, of which 3, 4a, 4b, and 5 are the substantive measurement points (1 and 2 are setup):
 
-1. **Parsability** — can a VirtualiZarr parser read the file's metadata into a `ManifestStore`?
-2. **Datasetability** — can that `ManifestStore` be materialized into an `xarray.Dataset` via `ManifestStore.to_virtual_dataset()`?
-3. **Cubability** — across N stratified granules of a collection, are the per-granule datasets structurally compatible enough to be concatenated into one coherent virtual cube?
+1. **Discover** (Phase 1): enumerate CMR collections into DuckDB.
+2. **Sample** (Phase 2): pick N granules per collection, stratified across the temporal extent.
+3. **Parsability** (Phase 3): can a VirtualiZarr parser read the file's metadata into a `ManifestStore`?
+4. **Datasetability / Datatreeability** (Phase 4a / 4b): can that `ManifestStore` be materialized into an `xarray.Dataset` (4a) or `xarray.DataTree` (4b)? 4b runs in parallel with 4a so hierarchical files that fail 4a with `CONFLICTING_DIM_SIZES` are still rescued.
+5. **Cubability** (Phase 5): across N stratified granules of a collection, are the per-granule datasets structurally compatible enough to be concatenated into one coherent virtual cube?
 
-The output is a per-collection verdict table plus a Markdown report that VirtualiZarr maintainers and NASA DAAC operators can act on.
+The same numbering is used in [the user-facing usage docs](../index.md), in the [report](../results/index.md), and in API page headers; treat that listing as the canonical reference. The output is a per-collection verdict table plus a Markdown report that VirtualiZarr maintainers and NASA DAAC operators can act on.
 
 ## Scope
 
