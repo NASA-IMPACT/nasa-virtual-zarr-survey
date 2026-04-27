@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import signal
+import logging
 import sys
 import threading
 import time
@@ -33,6 +33,8 @@ from nasa_virtual_zarr_survey.overrides import (
     apply_to_datatree_call,
 )
 from nasa_virtual_zarr_survey.types import PendingGranule
+
+_LOG = logging.getLogger(__name__)
 
 DEFAULT_OVERRIDES_PATH = Path("config/collection_overrides.toml")
 
@@ -170,6 +172,16 @@ def attempt_one(
     datatree_done = threading.Event()
 
     def _runner() -> None:
+        # The three phase blocks below catch `BaseException` (not `Exception`)
+        # so the per-phase event still fires and the result row still gets
+        # populated when a parser raises something exotic (e.g. `SystemExit`
+        # from a misbehaving third-party library). Do not narrow to
+        # `Exception` without replacing this safety net.
+        #
+        # This does NOT suppress user interrupts: `KeyboardInterrupt` is
+        # delivered to the main thread, not this daemon worker, and the
+        # `event.wait` loop below remains interruptible.
+
         # Phase 3: Parsability
         try:
             t = time.monotonic()
@@ -286,9 +298,16 @@ def attempt_one(
             result.fingerprint = fingerprint_to_json(
                 extract_fingerprint(dataset_ref[0])
             )
-        except Exception:
-            # Fingerprint extraction is best-effort; never fail the attempt.
-            pass
+        except Exception as exc:
+            # Best-effort: don't fail the attempt, but make the failure visible
+            # so a regression in extract_fingerprint can't silently disable
+            # the cubability phase.
+            _LOG.warning(
+                "fingerprint extraction failed for %s: %s: %s",
+                result.granule_concept_id,
+                type(exc).__name__,
+                exc,
+            )
 
     return result
 
@@ -558,12 +577,6 @@ def run_attempt(
         cache_max_bytes=cache_max_bytes,
     )
 
-    def _sigint(_sig, _frm):
-        writer.close()
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, _sigint)
-
     from nasa_virtual_zarr_survey.taxonomy import Bucket, classify
 
     consecutive_forbidden = 0
@@ -596,20 +609,13 @@ def run_attempt(
             flush=True,
         )
 
-    n = 0
-    for i, row in enumerate(pending, 1):
-        cid = row["collection_concept_id"]
-        if cid != current_collection:
-            _flush_collection_progress()
-            current_collection = cid
-            collection_idx += 1
-            collection_pass = 0
-            collection_fail = 0
-
+    def _attempt_row(row: PendingGranule) -> AttemptResult:
+        """Build an AttemptResult for one pending granule (sample-invalid,
+        auth-unavailable, or a real attempt_one run)."""
         family_str = row["format_family"]
         family = FormatFamily(family_str) if family_str else None
         if family is None or not row["data_url"] or not row["provider"]:
-            result = AttemptResult(
+            return AttemptResult(
                 collection_concept_id=row["collection_concept_id"],
                 granule_concept_id=row["granule_concept_id"],
                 daac=row["daac"],
@@ -618,62 +624,76 @@ def run_attempt(
                 parse_error_message="missing format family, data URL, or provider",
                 attempted_at=datetime.now(timezone.utc),
             )
-        else:
-            try:
-                store = cache.get_store(provider=row["provider"], url=row["data_url"])
-            except AuthUnavailable as e:
-                result = AttemptResult(
-                    collection_concept_id=row["collection_concept_id"],
-                    granule_concept_id=row["granule_concept_id"],
-                    daac=row["daac"],
-                    format_family=family_str,
-                    parse_error_type="AuthUnavailable",
-                    parse_error_message=str(e),
-                    attempted_at=datetime.now(timezone.utc),
-                )
-            else:
-                result = attempt_one(
-                    url=row["data_url"],
-                    family=family,
-                    store=store,
-                    timeout_s=timeout_s,
-                    collection_concept_id=row["collection_concept_id"],
-                    granule_concept_id=row["granule_concept_id"],
-                    daac=row["daac"],
-                    override=override_registry.for_collection(
-                        row["collection_concept_id"]
-                    ),
-                )
-        writer.append(result)
-        n += 1
-        if result.success:
-            collection_pass += 1
-        else:
-            collection_fail += 1
-
-        if access == "direct" and not result.success:
-            parse_bucket = classify(result.parse_error_type, result.parse_error_message)
-            dataset_bucket = classify(
-                result.dataset_error_type, result.dataset_error_message
+        try:
+            store = cache.get_store(provider=row["provider"], url=row["data_url"])
+        except AuthUnavailable as e:
+            return AttemptResult(
+                collection_concept_id=row["collection_concept_id"],
+                granule_concept_id=row["granule_concept_id"],
+                daac=row["daac"],
+                format_family=family_str,
+                parse_error_type="AuthUnavailable",
+                parse_error_message=str(e),
+                attempted_at=datetime.now(timezone.utc),
             )
-            if parse_bucket is Bucket.FORBIDDEN or dataset_bucket is Bucket.FORBIDDEN:
-                consecutive_forbidden += 1
+        return attempt_one(
+            url=row["data_url"],
+            family=family,
+            store=store,
+            timeout_s=timeout_s,
+            collection_concept_id=row["collection_concept_id"],
+            granule_concept_id=row["granule_concept_id"],
+            daac=row["daac"],
+            override=override_registry.for_collection(row["collection_concept_id"]),
+        )
+
+    n = 0
+    try:
+        for i, row in enumerate(pending, 1):
+            cid = row["collection_concept_id"]
+            if cid != current_collection:
+                _flush_collection_progress()
+                current_collection = cid
+                collection_idx += 1
+                collection_pass = 0
+                collection_fail = 0
+
+            result = _attempt_row(row)
+            writer.append(result)
+            n += 1
+            if result.success:
+                collection_pass += 1
+            else:
+                collection_fail += 1
+
+            if access == "direct" and not result.success:
+                parse_bucket = classify(
+                    result.parse_error_type, result.parse_error_message
+                )
+                dataset_bucket = classify(
+                    result.dataset_error_type, result.dataset_error_message
+                )
+                if (
+                    parse_bucket is Bucket.FORBIDDEN
+                    or dataset_bucket is Bucket.FORBIDDEN
+                ):
+                    consecutive_forbidden += 1
+                else:
+                    consecutive_forbidden = 0
             else:
                 consecutive_forbidden = 0
-        else:
-            consecutive_forbidden = 0
 
-        if consecutive_forbidden >= FORBIDDEN_ABORT_THRESHOLD:
-            writer.close()
-            raise SystemExit(
-                f"\nERROR: {consecutive_forbidden} consecutive direct-S3 requests returned 403/Forbidden.\n"
-                "This usually means you are running outside AWS us-west-2. NASA S3\n"
-                "buckets only permit direct access from in-region compute.\n\n"
-                "Try re-running with: --access external\n"
-                f"(First delete output/survey.duckdb and output/results/ since sampled\n"
-                "URLs differ between access modes.)\n"
-            )
+            if consecutive_forbidden >= FORBIDDEN_ABORT_THRESHOLD:
+                raise SystemExit(
+                    f"\nERROR: {consecutive_forbidden} consecutive direct-S3 requests returned 403/Forbidden.\n"
+                    "This usually means you are running outside AWS us-west-2. NASA S3\n"
+                    "buckets only permit direct access from in-region compute.\n\n"
+                    "Try re-running with: --access external\n"
+                    f"(First delete output/survey.duckdb and output/results/ since sampled\n"
+                    "URLs differ between access modes.)\n"
+                )
 
-    _flush_collection_progress()
-    writer.close()
+        _flush_collection_progress()
+    finally:
+        writer.close()
     return n

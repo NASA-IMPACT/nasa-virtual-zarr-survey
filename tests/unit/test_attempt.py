@@ -114,6 +114,64 @@ def test_attempt_one_success(monkeypatch):
     assert result.duration_s >= 0
 
 
+def test_attempt_one_logs_when_fingerprint_extraction_fails(monkeypatch, caplog):
+    """If extract_fingerprint raises, the attempt still succeeds but the
+    failure is logged at WARNING so a regression in the fingerprint helper
+    can't silently disable the cubability phase."""
+    import logging
+
+    fake_ds = MagicMock(name="Dataset")
+    fake_dt = MagicMock(name="DataTree")
+    fake_ms = MagicMock(name="ManifestStore")
+    fake_ms.to_virtual_dataset.return_value = fake_ds
+    fake_ms.to_virtual_datatree.return_value = fake_dt
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
+    )
+    fake_parser = MagicMock(side_effect=lambda url, registry: fake_ms)
+    fake_parser.__class__.__name__ = "HDFParser"
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
+        lambda family, **_: fake_parser,
+    )
+
+    def boom(_ds):
+        raise RuntimeError("fingerprint boom")
+
+    monkeypatch.setattr("nasa_virtual_zarr_survey.cubability.extract_fingerprint", boom)
+
+    with caplog.at_level(logging.WARNING, logger="nasa_virtual_zarr_survey.attempt"):
+        result = attempt_one(
+            url="s3://bucket/file.nc",
+            family=FormatFamily.NETCDF4,
+            store=object(),
+            timeout_s=5,
+            granule_concept_id="G_BOOM",
+        )
+
+    # Attempt itself still succeeds (fingerprint is best-effort).
+    assert result.success is True
+    assert result.dataset_success is True
+    assert result.fingerprint is None
+
+    # But the failure is visible in logs.
+    matching = [
+        rec
+        for rec in caplog.records
+        if rec.name == "nasa_virtual_zarr_survey.attempt"
+        and rec.levelno == logging.WARNING
+        and "fingerprint" in rec.getMessage().lower()
+    ]
+    assert matching, (
+        "Expected a WARNING log on fingerprint extraction failure; "
+        f"got: {[(r.name, r.levelname, r.getMessage()) for r in caplog.records]}"
+    )
+    msg = matching[0].getMessage()
+    assert "G_BOOM" in msg
+    assert "RuntimeError" in msg or "fingerprint boom" in msg
+
+
 def test_attempt_one_captures_parse_exception(monkeypatch):
     """Parser raises: parse_success=False, dataset_success=None, datatree_success=None."""
 
