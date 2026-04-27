@@ -6,12 +6,13 @@ import only what they need without dragging the rest of the CLI along.
 
 from __future__ import annotations
 
+import functools
 import re
 from pathlib import Path
 
 import click
 
-from nasa_virtual_zarr_survey.cli import DEFAULT_CACHE_DIR
+from nasa_virtual_zarr_survey.cli import DEFAULT_CACHE_DIR, DEFAULT_CACHE_MAX_SIZE
 
 _SIZE_RE = re.compile(r"^\s*([\d_.]+)\s*([KMGT]B?)?\s*$", re.IGNORECASE)
 _SIZE_UNITS = {
@@ -54,9 +55,11 @@ def _cache_options(f=None, *, default_use_cache: bool = False):
             "--cache-max-size",
             "cache_max_size",
             type=str,
-            default="50GB",
+            default=DEFAULT_CACHE_MAX_SIZE,
+            envvar="NASA_VZ_SURVEY_CACHE_MAX_SIZE",
             help="Soft cap on total cache size; supports human-readable units "
-            "(e.g. 50GB, 500MB).",
+            "(e.g. 50GB, 500MB). Reads NASA_VZ_SURVEY_CACHE_MAX_SIZE for "
+            "symmetry with --cache-dir's NASA_VZ_SURVEY_CACHE_DIR.",
         )(fn)
         fn = click.option(
             "--cache-dir",
@@ -123,8 +126,40 @@ def require_cache_dir_for_cache_only(
     """Raise click.UsageError when ``--cache-only`` is set but no cache dir resolved.
 
     Centralizes the guard the attempt/report/snapshot subcommands all need.
+    Most subcommands now reach this through ``_cache_options_with_only`` —
+    keep the helper public for the few places where the decorator can't (e.g.,
+    when a non-decorated function path also needs the check).
     """
     if cache_only and effective_cache_dir is None:
         raise click.UsageError(
             "--cache-only requires --cache (the cache directory must be known)."
         )
+
+
+def _cache_options_with_only(f=None, *, default_use_cache: bool = False):
+    """``_cache_options`` + ``_cache_only_option`` + the cross-flag check.
+
+    Used by ``attempt``, ``report``, and ``snapshot``: all three accept
+    ``--cache-only``, and all three need to reject ``--cache-only`` without
+    ``--cache`` (the cache directory must be known so the run can scope to
+    granules already on disk).
+
+    ``prefetch`` is intentionally excluded — its job is to populate the cache,
+    so ``--cache-only`` would never make sense there.
+    """
+
+    def _apply(fn):
+        fn = _cache_only_option(fn)
+        fn = _cache_options(fn, default_use_cache=default_use_cache)
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            if kwargs.get("cache_only") and not kwargs.get("use_cache"):
+                raise click.UsageError(
+                    "--cache-only requires --cache (the cache directory must be known)."
+                )
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    return _apply if f is None else _apply(f)

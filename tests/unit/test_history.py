@@ -61,6 +61,27 @@ def test_history_renders_minimal_page(tmp_path: Path) -> None:
     assert "2026-04-01" in text
 
 
+def test_load_all_sorts_null_dates_last(tmp_path: Path) -> None:
+    """Summaries with snapshot_date=None must sort *after* dated ones,
+    so a hand-edited or in-progress digest doesn't render as the
+    leftmost (earliest) point on trend charts."""
+    from nasa_virtual_zarr_survey.history import _load_all
+
+    history_dir = tmp_path / "history"
+    history_dir.mkdir()
+    s_early = _summary("2026-01-01")
+    s_late = _summary("2026-03-01")
+    s_undated = _summary("2026-02-01")
+    s_undated["snapshot_date"] = None
+    (history_dir / "early.summary.json").write_text(json.dumps(s_early))
+    (history_dir / "undated.summary.json").write_text(json.dumps(s_undated))
+    (history_dir / "late.summary.json").write_text(json.dumps(s_late))
+
+    summaries = _load_all(history_dir)
+    dates = [s.snapshot_date for s in summaries]
+    assert dates == ["2026-01-01", "2026-03-01", None]
+
+
 def test_history_rejects_v5_summary(tmp_path: Path) -> None:
     history_dir = tmp_path / "history"
     history_dir.mkdir()

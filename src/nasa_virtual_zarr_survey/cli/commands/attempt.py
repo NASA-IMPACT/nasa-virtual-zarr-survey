@@ -9,12 +9,10 @@ import click
 
 from nasa_virtual_zarr_survey.cli import DEFAULT_DB, DEFAULT_RESULTS, AccessMode
 from nasa_virtual_zarr_survey.cli._options import (
-    _cache_only_option,
-    _cache_options,
+    _cache_options_with_only,
     _max_granule_size_option,
     _parse_size,
     _resolve_cache_params,
-    require_cache_dir_for_cache_only,
 )
 from nasa_virtual_zarr_survey.cli._summaries import _attempt_summary
 
@@ -56,7 +54,7 @@ def register(group: click.Group) -> None:
         help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 compute). "
         "'external' uses HTTPS URLs with EDL bearer token.",
     )
-    @_cache_options
+    @_cache_options_with_only
     @click.option(
         "--overrides",
         "overrides_path",
@@ -80,7 +78,6 @@ def register(group: click.Group) -> None:
         "runtime exceptions from incompatible kwargs are captured per attempt.",
     )
     @_max_granule_size_option
-    @_cache_only_option
     def attempt(
         db_path: Path,
         locked_sample_path: Path | None,
@@ -114,7 +111,7 @@ def register(group: click.Group) -> None:
             use_cache, cache_dir, cache_max_size
         )
         max_granule_bytes = _parse_size(max_granule_size) if max_granule_size else None
-        require_cache_dir_for_cache_only(cache_only, effective_cache_dir)
+        # _cache_options_with_only already enforces "--cache-only requires --cache".
         n = run_attempt(
             session,
             results_dir,

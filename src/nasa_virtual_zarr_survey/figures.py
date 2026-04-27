@@ -115,19 +115,22 @@ def _funnel_tiers(
 # ---------------------------------------------------------------------------
 
 
-def generate_sankey(
+def _sankey_edges(
     verdicts: list[VerdictRow],
     cube_results: dict[str, CubabilityResult],
-    stem: Path,
-) -> None:
-    """Write {stem}.png and {stem}.html with a Sankey of phase attrition.
+) -> list[tuple[str, str, int]]:
+    """Return the Sankey edge list ``[(src, tgt, value), ...]``.
 
-    The interactive HTML uses hv.Sankey (Bokeh).  The PNG falls back to a
-    horizontal bar chart since matplotlib has no Sankey support in HoloViews.
+    Pure helper, exported for unit testing the funnel's mass-balance
+    invariant (every internal node's inflow equals its outflow).
+
+    Datatree is intentionally **not** part of the headline Sankey: it is a
+    parallel surface attempted on the same parsed manifest as the dataset
+    phase, not a downstream step. Including it would double-count outflow
+    from ``Parsable`` and break node mass balance. Datatree pass-rate lives
+    in the per-DAAC and per-format figures instead.
     """
-    if not verdicts:
-        _placeholder(stem, "No data for Sankey")
-        return
+    not_attempted = CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)
 
     total = len(verdicts)
     array_like = sum(1 for v in verdicts if v["skip_reason"] is None)
@@ -149,23 +152,16 @@ def generate_sankey(
         and v["dataset_verdict"] in ("all_fail", "partial_pass")
     )
     dataset_na = parsable - datasetable - dataset_fail
-    datatreeable = sum(
-        1
-        for v in verdicts
-        if v["parse_verdict"] == "all_pass" and v.get("datatree_verdict") == "all_pass"
-    )
-    datatree_fail = sum(
-        1
-        for v in verdicts
-        if v["parse_verdict"] == "all_pass"
-        and v.get("datatree_verdict") in ("all_fail", "partial_pass")
-    )
+
+    # Both halves of the Datasetable→Cubable split share the same upstream
+    # filter so any future change to ``cube_results`` semantics keeps the
+    # node mass balance instead of silently breaking it.
     cubable = sum(
         1
         for v in verdicts
-        if cube_results.get(
-            v["concept_id"], CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)
-        ).verdict
+        if v["parse_verdict"] == "all_pass"
+        and v["dataset_verdict"] == "all_pass"
+        and cube_results.get(v["concept_id"], not_attempted).verdict
         == CubabilityVerdict.FEASIBLE
     )
     not_cubable = sum(
@@ -173,29 +169,46 @@ def generate_sankey(
         for v in verdicts
         if v["parse_verdict"] == "all_pass"
         and v["dataset_verdict"] == "all_pass"
-        and cube_results.get(
-            v["concept_id"], CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)
-        ).verdict
+        and cube_results.get(v["concept_id"], not_attempted).verdict
         != CubabilityVerdict.FEASIBLE
     )
 
-    edges = []
-    for src, tgt, val in [
-        ("Discovered", "Array-like", array_like),
-        ("Discovered", "Skipped", skipped),
-        ("Array-like", "Parsable", parsable),
-        ("Array-like", "Parse fail", parse_fail),
-        ("Array-like", "Not attempted (parse)", parse_na),
-        ("Parsable", "Datasetable", datasetable),
-        ("Parsable", "Dataset fail", dataset_fail),
-        ("Parsable", "Not attempted (dataset)", dataset_na),
-        ("Parsable", "Datatreeable", datatreeable),
-        ("Parsable", "Datatree fail", datatree_fail),
-        ("Datasetable", "Cubable", cubable),
-        ("Datasetable", "Not cubable", not_cubable),
-    ]:
-        if val > 0:
-            edges.append((src, tgt, val))
+    return [
+        (src, tgt, val)
+        for src, tgt, val in [
+            ("Discovered", "Array-like", array_like),
+            ("Discovered", "Skipped", skipped),
+            ("Array-like", "Parsable", parsable),
+            ("Array-like", "Parse fail", parse_fail),
+            ("Array-like", "Not attempted (parse)", parse_na),
+            ("Parsable", "Datasetable", datasetable),
+            ("Parsable", "Dataset fail", dataset_fail),
+            ("Parsable", "Not attempted (dataset)", dataset_na),
+            ("Datasetable", "Cubable", cubable),
+            ("Datasetable", "Not cubable", not_cubable),
+        ]
+        if val > 0
+    ]
+
+
+def generate_sankey(
+    verdicts: list[VerdictRow],
+    cube_results: dict[str, CubabilityResult],
+    stem: Path,
+) -> None:
+    """Write {stem}.png and {stem}.html with a Sankey of phase attrition.
+
+    The interactive HTML uses hv.Sankey (Bokeh).  The PNG falls back to a
+    horizontal bar chart since matplotlib has no Sankey support in HoloViews.
+
+    Datatree-only success isn't shown here — see the per-DAAC and per-format
+    figures for that surface.
+    """
+    if not verdicts:
+        _placeholder(stem, "No data for Sankey")
+        return
+
+    edges = _sankey_edges(verdicts, cube_results)
 
     if not edges:
         _placeholder(stem, "No data for Sankey")

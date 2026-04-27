@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 import earthaccess
 
+from nasa_virtual_zarr_survey._defaults import DEFAULT_CACHE_MAX_BYTES
 from nasa_virtual_zarr_survey.cache import CacheSizeTracker, DiskCachingReadableStore
 
 if TYPE_CHECKING:
@@ -103,7 +104,7 @@ class StoreCache:
 
     access: Literal["direct", "external"] = "direct"
     cache_dir: Path | None = None
-    cache_max_bytes: int = 50 * 1024**3
+    cache_max_bytes: int = DEFAULT_CACHE_MAX_BYTES
     _s3: DAACStoreCache = field(default_factory=DAACStoreCache)
     _http: dict[str, HTTPStore] = field(default_factory=dict)
     _wrapped: dict[tuple[str, str], DiskCachingReadableStore] = field(

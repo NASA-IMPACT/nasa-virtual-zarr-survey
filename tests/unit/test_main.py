@@ -482,3 +482,17 @@ def test_discover_skipped_flag_no_longer_accepted(tmp_path: Path, monkeypatch) -
     result = runner.invoke(cli, ["discover", "--limit", "1", "--skipped", "--dry-run"])
     assert result.exit_code != 0
     assert "no such option" in result.output.lower() or "--skipped" in result.output
+
+
+@pytest.mark.parametrize("subcommand", ["attempt", "snapshot"])
+def test_cache_only_without_cache_is_rejected(subcommand: str) -> None:
+    """``--cache-only --no-cache`` must fail with a usage error in every
+    subcommand that takes ``--cache-only``. Centralized in
+    ``_cache_options_with_only`` — guards against regressions if a
+    subcommand stops applying that decorator."""
+    from nasa_virtual_zarr_survey.__main__ import cli
+
+    runner = CliRunner()
+    result = runner.invoke(cli, [subcommand, "--no-cache", "--cache-only"])
+    assert result.exit_code != 0
+    assert "--cache-only requires --cache" in result.output

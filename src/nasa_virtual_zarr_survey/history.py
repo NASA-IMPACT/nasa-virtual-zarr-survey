@@ -25,7 +25,10 @@ def _load_all(history_dir: Path) -> list[LoadedSummary]:
     summaries: list[LoadedSummary] = []
     for path in sorted(history_dir.glob("*.summary.json")):
         summaries.append(load_summary(path))
-    summaries.sort(key=lambda s: s.snapshot_date or "")
+    # Nulls-last: dated summaries first in chronological order, then any
+    # undated ones at the end. The tuple's first element puts True (None case)
+    # after False so missing-date doesn't read as "prehistoric".
+    summaries.sort(key=lambda s: (s.snapshot_date is None, s.snapshot_date or ""))
     return summaries
 
 

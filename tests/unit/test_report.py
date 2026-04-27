@@ -597,7 +597,7 @@ def test_three_phase_table_handles_missing_concept_id_in_cube_results():
     """A dataset-passing row whose concept_id is absent from cube_results
     must not crash _render_three_phase_table; it should be counted as
     cube-eligible-but-not-feasible (NOT_ATTEMPTED)."""
-    from nasa_virtual_zarr_survey.report import _render_three_phase_table
+    from nasa_virtual_zarr_survey.report._markdown import _render_three_phase_table
     from nasa_virtual_zarr_survey.types import VerdictRow
 
     row: VerdictRow = {
@@ -623,7 +623,9 @@ def test_l2_collection_gets_excluded_by_policy_cubability(tmp_db_path, tmp_resul
     not run through the cubability check, since L2 swath products are not
     expected to combine into a single cube."""
     from nasa_virtual_zarr_survey.cubability import CubabilityVerdict
-    from nasa_virtual_zarr_survey.report import _cubability_results
+    from nasa_virtual_zarr_survey.report._aggregate import (
+        cubability_results as _cubability_results,
+    )
 
     con = connect(tmp_db_path)
     init_schema(con)

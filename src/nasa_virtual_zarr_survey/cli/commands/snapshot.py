@@ -9,12 +9,10 @@ import click
 
 from nasa_virtual_zarr_survey.cli import AccessMode
 from nasa_virtual_zarr_survey.cli._options import (
-    _cache_only_option,
-    _cache_options,
+    _cache_options_with_only,
     _max_granule_size_option,
     _parse_size,
     _resolve_cache_params,
-    require_cache_dir_for_cache_only,
 )
 
 
@@ -79,9 +77,8 @@ def register(group: click.Group) -> None:
         type=click.Path(path_type=Path),
         default=Path("docs/results/history"),
     )
-    @_cache_options(default_use_cache=True)
+    @_cache_options_with_only(default_use_cache=True)
     @_max_granule_size_option
-    @_cache_only_option
     def snapshot(
         snapshot_date: str | None,
         label: str | None,
@@ -114,7 +111,7 @@ def register(group: click.Group) -> None:
             use_cache, cache_dir, cache_max_size
         )
         max_granule_bytes = _parse_size(max_granule_size) if max_granule_size else None
-        require_cache_dir_for_cache_only(cache_only, effective_cache_dir)
+        # _cache_options_with_only already enforces "--cache-only requires --cache".
         try:
             out = run_snapshot(
                 snapshot_date=snapshot_date,

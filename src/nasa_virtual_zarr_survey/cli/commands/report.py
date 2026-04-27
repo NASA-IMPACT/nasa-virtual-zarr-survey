@@ -14,10 +14,8 @@ from nasa_virtual_zarr_survey.cli import (
     AccessMode,
 )
 from nasa_virtual_zarr_survey.cli._options import (
-    _cache_only_option,
-    _cache_options,
+    _cache_options_with_only,
     _resolve_cache_params,
-    require_cache_dir_for_cache_only,
 )
 
 
@@ -95,8 +93,7 @@ def register(group: click.Group) -> None:
         help="Skip the markdown + figures output. Useful when only the "
         "--export JSON digest is wanted.",
     )
-    @_cache_options(default_use_cache=True)
-    @_cache_only_option
+    @_cache_options_with_only(default_use_cache=True)
     def report(
         db_path: Path,
         locked_sample_path: Path | None,
@@ -137,7 +134,7 @@ def register(group: click.Group) -> None:
         effective_cache_dir, _ = _resolve_cache_params(
             use_cache, cache_dir, cache_max_size
         )
-        require_cache_dir_for_cache_only(cache_only, effective_cache_dir)
+        # _cache_options_with_only already enforces "--cache-only requires --cache".
 
         session: SurveySession | None
         if from_data is not None:

@@ -7,7 +7,12 @@ from typing import cast
 
 import click
 
-from nasa_virtual_zarr_survey.cli import DEFAULT_CACHE_DIR, DEFAULT_DB, AccessMode
+from nasa_virtual_zarr_survey.cli import (
+    DEFAULT_CACHE_DIR,
+    DEFAULT_CACHE_MAX_SIZE,
+    DEFAULT_DB,
+    AccessMode,
+)
 from nasa_virtual_zarr_survey.cli._options import (
     _max_granule_size_option,
     _parse_size,
@@ -30,9 +35,12 @@ def register(group: click.Group) -> None:
         "--cache-max-size",
         "cache_max_size",
         type=str,
-        default="100GB",
+        default=DEFAULT_CACHE_MAX_SIZE,
+        envvar="NASA_VZ_SURVEY_CACHE_MAX_SIZE",
         help="Soft cap on cache size; checked at collection boundaries, so the "
-        "collection that crosses the cap finishes writing before the run stops.",
+        "collection that crosses the cap finishes writing before the run stops. "
+        "Shares the default with attempt/report/snapshot — bump it via the flag "
+        "or NASA_VZ_SURVEY_CACHE_MAX_SIZE if prefetching needs more headroom.",
     )
     @click.option(
         "--access",

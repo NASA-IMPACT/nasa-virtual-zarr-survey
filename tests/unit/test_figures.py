@@ -14,13 +14,20 @@ from nasa_virtual_zarr_survey.figures import (
 
 
 def _verdict(
-    cid: str, daac: str, fmt: str, pv: str, dv: str, tv: str = "not_attempted"
+    cid: str,
+    daac: str,
+    fmt: str,
+    pv: str,
+    dv: str,
+    tv: str = "not_attempted",
+    *,
+    skip_reason: str | None = None,
 ) -> dict:
     return {
         "concept_id": cid,
         "daac": daac,
         "format_family": fmt,
-        "skip_reason": None,
+        "skip_reason": skip_reason,
         "parse_verdict": pv,
         "dataset_verdict": dv,
         "datatree_verdict": tv,
@@ -102,15 +109,64 @@ def test_generate_sankey(tmp_path: Path):
     stem = tmp_path / "sankey"
     generate_sankey(verdicts, cube, stem)
     _assert_both(stem)
-    # The Sankey HTML should reference Datatreeable node
+    # The Sankey shows the dataset funnel; datatree is omitted by design
+    # (it's a parallel surface, not a downstream step).
     html_content = (stem.with_suffix(".html")).read_text()
-    assert "Datatreeable" in html_content
+    assert "Datasetable" in html_content
+    assert "Datatreeable" not in html_content
 
 
 def test_generate_sankey_empty(tmp_path: Path):
     stem = tmp_path / "sankey"
     generate_sankey([], {}, stem)
     _assert_both(stem)
+
+
+def test_sankey_edges_balance_internal_nodes():
+    """Every internal node's inflow must equal its outflow.
+
+    Regression: previously ``Parsable`` had outflow ≈ 2x its inflow because
+    the dataset and datatree branches were both wired in parallel.
+    """
+    from collections import defaultdict
+
+    from nasa_virtual_zarr_survey.figures import _sankey_edges
+
+    verdicts = [
+        # 2 parsable & dataset-pass; datatree is overrideskipped on one row
+        _verdict("C1", "X", "NetCDF4", "all_pass", "all_pass", "not_attempted"),
+        _verdict("C2", "X", "NetCDF4", "all_pass", "all_pass", "all_pass"),
+        # 1 parsable but dataset-fail
+        _verdict("C3", "X", "NetCDF4", "all_pass", "all_fail", "not_attempted"),
+        # 1 parse-fail
+        _verdict("C4", "X", "NetCDF4", "all_fail", "not_attempted", "not_attempted"),
+        # 1 skipped pre-sample
+        _verdict(
+            "C5",
+            "X",
+            "NetCDF4",
+            "skipped",
+            "skipped",
+            "skipped",
+            skip_reason="non_array_format",
+        ),
+    ]
+    cube = {
+        "C1": CubabilityResult(CubabilityVerdict.FEASIBLE),
+        "C2": CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED),
+    }
+    edges = _sankey_edges(verdicts, cube)
+
+    inflow: dict[str, int] = defaultdict(int)
+    outflow: dict[str, int] = defaultdict(int)
+    for src, tgt, val in edges:
+        outflow[src] += val
+        inflow[tgt] += val
+
+    for node in ("Array-like", "Parsable", "Datasetable"):
+        assert inflow[node] == outflow[node], (
+            f"{node}: in={inflow[node]} out={outflow[node]}"
+        )
 
 
 def test_generate_all_creates_all_files(tmp_path: Path):
