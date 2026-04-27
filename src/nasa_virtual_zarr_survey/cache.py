@@ -52,6 +52,22 @@ _LOGGER = logging.getLogger(__name__)
 _CAP_WARNING_EMITTED = False
 
 
+def cache_layout_path(cache_dir: Path, url: str) -> Path:
+    """Return the on-disk cache path that ``DiskCachingReadableStore`` would use
+    for *url*, without instantiating a wrapped store.
+
+    Mirrors ``DiskCachingReadableStore._local_path`` exactly (same hash basis,
+    same directory layout) so callers can probe whether a granule is already
+    cached without going through obstore or EDL login.
+    """
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError(f"url must be scheme://host/..., got {url!r}")
+    full_url = f"{parsed.scheme}://{parsed.netloc}/{parsed.path.lstrip('/')}"
+    digest = hashlib.sha256(full_url.encode("utf-8")).hexdigest()
+    return cache_dir / parsed.scheme / parsed.netloc / digest
+
+
 def cache_size(cache_dir: Path) -> int:
     """Return the total size in bytes of all regular files under *cache_dir*.
 

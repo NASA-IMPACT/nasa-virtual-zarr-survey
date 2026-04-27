@@ -102,6 +102,7 @@ def run_snapshot(
     cache_dir: Path | None = None,
     cache_max_bytes: int = 50 * 1024**3,
     max_granule_bytes: int | None = None,
+    cache_only: bool = False,
 ) -> Path:
     """Run attempt + report and write the snapshot's summary digest.
 
@@ -183,6 +184,7 @@ def run_snapshot(
         cache_dir=cache_dir,
         cache_max_bytes=cache_max_bytes,
         max_granule_bytes=max_granule_bytes,
+        cache_only=cache_only,
     )
     run_report(
         session,

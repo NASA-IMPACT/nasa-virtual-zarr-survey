@@ -483,6 +483,7 @@ def run_attempt(
     no_overrides: bool = False,
     skip_override_validation: bool = False,
     max_granule_bytes: int | None = None,
+    cache_only: bool = False,
 ) -> int:
     """Attempt every pending granule. Returns count attempted in this call."""
     con = session.con
@@ -523,6 +524,25 @@ def run_attempt(
                 file=sys.stderr,
                 flush=True,
             )
+
+    if cache_only:
+        if cache_dir is None:
+            raise ValueError("cache_only=True requires cache_dir to be set")
+        from nasa_virtual_zarr_survey.cache import cache_layout_path
+
+        before = len(pending)
+        kept: list[PendingGranule] = []
+        for p in pending:
+            url = p["data_url"]
+            if url and cache_layout_path(cache_dir, url).exists():
+                kept.append(p)
+        pending = kept
+        print(
+            f"attempt: --cache-only kept {len(pending)} of {before} pending "
+            f"granule(s) found in {cache_dir}",
+            file=sys.stderr,
+            flush=True,
+        )
     writer = ResultWriter(results_dir, shard_size=shard_size)
     cache = StoreCache(
         access=access,

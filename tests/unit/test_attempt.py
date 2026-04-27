@@ -942,6 +942,80 @@ def test_pending_granules_filters_by_max_granule_bytes(tmp_path) -> None:
     assert sorted({r["collection_concept_id"] for r in rows}) == ["C-small"]
 
 
+def test_run_attempt_cache_only_filters_to_cached_granules(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """--cache-only restricts attempt to granules already on disk in the cache."""
+    from nasa_virtual_zarr_survey.attempt import run_attempt
+    from nasa_virtual_zarr_survey.auth import StoreCache
+    from nasa_virtual_zarr_survey.cache import cache_layout_path
+
+    db_path = tmp_path / "db.duckdb"
+    results_dir = tmp_path / "results"
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    con = connect(str(db_path))
+    init_schema(con)
+    insert_collection(con, "C-1")
+    insert_granule(con, "C-1", "g-cached", data_url="s3://b/cached.nc", size_bytes=10)
+    insert_granule(con, "C-1", "g-missing", data_url="s3://b/missing.nc", size_bytes=10)
+    con.close()
+
+    # Pre-populate the cache for one of the two granules.
+    cached = cache_layout_path(cache_dir, "s3://b/cached.nc")
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    cached.write_bytes(b"x" * 10)
+
+    # Avoid real EDL login when run_attempt resolves a store per granule.
+    monkeypatch.setattr(
+        StoreCache, "get_store", lambda self, *, provider, url: object()
+    )
+
+    session = SurveySession.from_duckdb(db_path)
+    captured: list[str] = []
+
+    def fake_attempt_one(*, url, **_kw):
+        captured.append(url)
+        return _make_attempt_result(
+            collection_concept_id="C-1",
+            granule_concept_id=url.rsplit("/", 1)[-1],
+            success=True,
+        )
+
+    with patch(
+        "nasa_virtual_zarr_survey.attempt.attempt_one", side_effect=fake_attempt_one
+    ):
+        n = run_attempt(
+            session,
+            results_dir,
+            cache_dir=cache_dir,
+            cache_only=True,
+            no_overrides=True,
+        )
+
+    assert n == 1
+    assert captured == ["s3://b/cached.nc"]
+
+
+def test_run_attempt_cache_only_without_cache_dir_raises(tmp_path: Path) -> None:
+    from nasa_virtual_zarr_survey.attempt import run_attempt
+
+    db_path = tmp_path / "db.duckdb"
+    results_dir = tmp_path / "results"
+    con = connect(str(db_path))
+    init_schema(con)
+    con.close()
+
+    session = SurveySession.from_duckdb(db_path)
+    import pytest
+
+    with pytest.raises(ValueError, match="cache_dir"):
+        run_attempt(
+            session, results_dir, cache_dir=None, cache_only=True, no_overrides=True
+        )
+
+
 def test_pending_granules_max_granule_bytes_null_passes_through(tmp_path) -> None:
     from nasa_virtual_zarr_survey.attempt import _pending_granules
 

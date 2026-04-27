@@ -134,6 +134,26 @@ def test_fetch_and_cache_tolerates_head_failure(tmp_path: Path) -> None:
     assert tracker.current_size == 5
 
 
+def test_cache_layout_path_matches_local_path(tmp_path: Path) -> None:
+    """The standalone helper produces the same path as the wrapper's _local_path."""
+    from nasa_virtual_zarr_survey.cache import cache_layout_path
+
+    underlying = MemoryStore()
+    tracker = CacheSizeTracker(tmp_path, max_bytes=10_000)
+    cached = DiskCachingReadableStore(
+        underlying, prefix="s3://bucket-x", tracker=tracker
+    )
+    url = "s3://bucket-x/key/in/bucket.nc"
+    assert cache_layout_path(tmp_path, url) == cached._local_path("key/in/bucket.nc")
+
+
+def test_cache_layout_path_rejects_bare_paths(tmp_path: Path) -> None:
+    from nasa_virtual_zarr_survey.cache import cache_layout_path
+
+    with pytest.raises(ValueError, match="scheme://host"):
+        cache_layout_path(tmp_path, "/no/scheme.nc")
+
+
 def test_is_cached_and_cached_path(tmp_path: Path) -> None:
     underlying_inner = MemoryStore()
     underlying_inner.put("foo.bin", b"hello")

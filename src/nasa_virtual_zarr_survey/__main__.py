@@ -130,6 +130,23 @@ def _max_granule_size_option(f):
     )(f)
 
 
+def _cache_only_option(f):
+    """``--cache-only`` flag for attempt and snapshot.
+
+    Restricts the run to granules already present in --cache-dir. Useful after
+    a prefetch run to avoid any network fetches during attempt/snapshot.
+    """
+    return click.option(
+        "--cache-only",
+        "cache_only",
+        is_flag=True,
+        default=False,
+        help="Only attempt granules already present in --cache-dir. Skips any "
+        "granule that would otherwise be fetched from origin. Pair with "
+        "--cache (the default for snapshot) so the cache directory is set.",
+    )(f)
+
+
 def _discover_summary(db_path: Path) -> str:
     from nasa_virtual_zarr_survey.db import connect, init_schema
 
@@ -744,6 +761,7 @@ def prefetch(
     "runtime exceptions from incompatible kwargs are captured per attempt.",
 )
 @_max_granule_size_option
+@_cache_only_option
 def attempt(
     db_path: Path,
     locked_sample_path: Path | None,
@@ -760,6 +778,7 @@ def attempt(
     no_overrides: bool,
     skip_override_validation: bool,
     max_granule_size: str | None,
+    cache_only: bool,
 ) -> None:
     """Phases 3 and 4 (attempt): parsability + datasetability per granule; write Parquet rows."""
     from nasa_virtual_zarr_survey.attempt import run_attempt
@@ -776,6 +795,10 @@ def attempt(
         use_cache, cache_dir, cache_max_size
     )
     max_granule_bytes = _parse_size(max_granule_size) if max_granule_size else None
+    if cache_only and effective_cache_dir is None:
+        raise click.UsageError(
+            "--cache-only requires --cache (the cache directory must be known)."
+        )
     n = run_attempt(
         session,
         results_dir,
@@ -790,6 +813,7 @@ def attempt(
         no_overrides=no_overrides,
         skip_override_validation=skip_override_validation,
         max_granule_bytes=max_granule_bytes,
+        cache_only=cache_only,
     )
     if locked_sample_path is None:
         click.echo(_attempt_summary(db_path, results_dir, n))
@@ -1163,6 +1187,7 @@ def pilot(
 )
 @_cache_options(default_use_cache=True)
 @_max_granule_size_option
+@_cache_only_option
 def snapshot(
     snapshot_date: str | None,
     label: str | None,
@@ -1177,6 +1202,7 @@ def snapshot(
     cache_dir: Path | None,
     cache_max_size: str,
     max_granule_size: str | None,
+    cache_only: bool,
 ) -> None:
     """Run attempt + report and emit a `*.summary.json` digest.
 
@@ -1194,6 +1220,10 @@ def snapshot(
         use_cache, cache_dir, cache_max_size
     )
     max_granule_bytes = _parse_size(max_granule_size) if max_granule_size else None
+    if cache_only and effective_cache_dir is None:
+        raise click.UsageError(
+            "--cache-only requires --cache (the cache directory must be known)."
+        )
     try:
         out = run_snapshot(
             snapshot_date=snapshot_date,
@@ -1208,6 +1238,7 @@ def snapshot(
             cache_dir=effective_cache_dir,
             cache_max_bytes=cache_max_bytes,
             max_granule_bytes=max_granule_bytes,
+            cache_only=cache_only,
         )
     except SnapshotError as e:
         raise click.ClickException(str(e)) from e
