@@ -25,13 +25,14 @@ from nasa_virtual_zarr_survey.snapshot import (
 
 def _locked_sample_payload() -> dict:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "created_at": "2026-04-26T12:00:00Z",
         "sampling_mode": "top=1",
         "collections": [
             {
                 "concept_id": "C1-T",
                 "daac": "X.DAAC",
+                "provider": "PODAAC",
                 "format_family": "NetCDF4",
                 "processing_level": "L4",
                 "short_name": "FOO",

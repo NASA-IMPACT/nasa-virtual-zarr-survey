@@ -19,11 +19,11 @@ def _populate_db(db_path: Path) -> None:
     con.execute(
         """
         INSERT INTO collections
-        (concept_id, daac, format_family, processing_level, short_name, version,
-         discovered_at, umm_json)
+        (concept_id, daac, provider, format_family, processing_level, short_name,
+         version, discovered_at, umm_json)
         VALUES
-        ('C2-Y', 'Y.DAAC', 'HDF5', 'L3', 'BAR', '2.1', ?, '{}'),
-        ('C1-X', 'X.DAAC', 'NETCDF4', 'L4', 'FOO', '1.0', ?, '{}')
+        ('C2-Y', 'Y.DAAC', 'POCLOUD', 'HDF5', 'L3', 'BAR', '2.1', ?, '{}'),
+        ('C1-X', 'X.DAAC', 'PODAAC',  'NETCDF4', 'L4', 'FOO', '1.0', ?, '{}')
         """,
         [now, now],
     )
@@ -58,9 +58,10 @@ def test_lock_sample_writes_canonical_json(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
 
     data = json.loads(out.read_text())
-    assert data["schema_version"] == 2
+    assert data["schema_version"] == 3
     assert data["sampling_mode"] == "top=2"
     assert [c["concept_id"] for c in data["collections"]] == ["C1-X", "C2-Y"]
+    assert [c["provider"] for c in data["collections"]] == ["PODAAC", "POCLOUD"]
     assert [g["granule_concept_id"] for g in data["granules"]] == ["G1-X", "G2-Y"]
     g0, g1 = data["granules"]
     assert g0["s3_url"] == "s3://b/k1"

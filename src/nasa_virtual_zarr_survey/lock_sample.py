@@ -9,7 +9,7 @@ from typing import Any
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
 
-LOCKED_SAMPLE_SCHEMA_VERSION = 2
+LOCKED_SAMPLE_SCHEMA_VERSION = 3
 
 
 def write_locked_sample(db_path: Path | str, out_path: Path | str) -> Path:
@@ -35,14 +35,15 @@ def write_locked_sample(db_path: Path | str, out_path: Path | str) -> Path:
         {
             "concept_id": cid,
             "daac": daac,
+            "provider": provider,
             "format_family": fam,
             "processing_level": level,
             "short_name": short,
             "version": ver,
         }
-        for cid, daac, fam, level, short, ver in con.execute(
+        for cid, daac, provider, fam, level, short, ver in con.execute(
             """
-            SELECT concept_id, daac, format_family, processing_level,
+            SELECT concept_id, daac, provider, format_family, processing_level,
                    short_name, version
             FROM collections
             WHERE skip_reason IS NULL

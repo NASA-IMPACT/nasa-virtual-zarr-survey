@@ -37,10 +37,11 @@ class SurveySession:
         access: AccessMode,
     ) -> "SurveySession":
         data = json.loads(Path(path).read_text())
-        if data.get("schema_version") != 2:
+        if data.get("schema_version") != 3:
             raise ValueError(
                 f"Unsupported locked_sample schema_version: "
-                f"{data.get('schema_version')!r}"
+                f"{data.get('schema_version')!r}; expected 3. Re-run "
+                f"`nasa-virtual-zarr-survey lock-sample` to refresh."
             )
 
         con = duckdb.connect(":memory:")
@@ -51,13 +52,14 @@ class SurveySession:
             con.execute(
                 """
                 INSERT INTO collections
-                (concept_id, daac, format_family, processing_level,
+                (concept_id, daac, provider, format_family, processing_level,
                  short_name, version, discovered_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     c["concept_id"],
                     c.get("daac"),
+                    c.get("provider"),
                     c.get("format_family"),
                     c.get("processing_level"),
                     c.get("short_name"),

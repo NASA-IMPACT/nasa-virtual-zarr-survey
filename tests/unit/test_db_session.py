@@ -30,13 +30,14 @@ def test_from_duckdb_persists(tmp_path: Path) -> None:
 
 def _sample_payload() -> dict:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "created_at": "2026-04-26T12:00:00Z",
         "sampling_mode": "top=2",
         "collections": [
             {
                 "concept_id": "C1-T",
                 "daac": "X.DAAC",
+                "provider": "PODAAC",
                 "format_family": "NETCDF4",
                 "processing_level": "L4",
                 "short_name": "FOO",
@@ -96,6 +97,7 @@ def test_from_locked_sample_collections_loaded(tmp_path: Path) -> None:
     path.write_text(json.dumps(_sample_payload()))
     session = SurveySession.from_locked_sample(path, access="direct")
     rows = session.con.execute(
-        "SELECT concept_id, daac, format_family, processing_level FROM collections"
+        "SELECT concept_id, daac, provider, format_family, processing_level "
+        "FROM collections"
     ).fetchall()
-    assert rows == [("C1-T", "X.DAAC", "NETCDF4", "L4")]
+    assert rows == [("C1-T", "X.DAAC", "PODAAC", "NETCDF4", "L4")]
