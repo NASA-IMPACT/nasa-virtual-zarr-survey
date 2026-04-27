@@ -10,7 +10,7 @@ Classification is a first-match-wins regex pipeline against the recorded `error_
 |---|---|---|---|
 | `SUCCESS` | Phase succeeded, not a failure bucket. | (no error) | Nothing to do. |
 | `NO_PARSER` | VirtualiZarr has no parser registered for this format family. | `No VirtualiZarr parser registered for HDF4` | Affects HDF4 and GeoTIFF-without-virtual-tiff. Add a parser upstream or extend `dispatch_parser`. |
-| `TIMEOUT` | The parse or dataset-construction phase didn't finish within the configured `--timeout`. | `parse timed out after 60s` | Very large files, slow network, or parser-level hang. Increase `--timeout` or investigate the specific granule. |
+| `TIMEOUT` | The parse, dataset, or datatree phase didn't finish within the configured `--timeout` shared budget. | `dataset did not complete within 60s overall budget (elapsed 47.3s)` | Very large files, slow network, or parser-level hang. Increase `--timeout` or investigate the specific granule. |
 | `FORBIDDEN` | HTTP 403 / AccessDenied on the granule URL. | `403 Forbidden`, `AccessDenied` | Running direct-S3 outside us-west-2, missing EULA acceptance, or an expired bearer token. |
 | `AUTH_UNAVAILABLE` | `earthaccess.get_s3_credentials` returned no credentials for the DAAC. | `earthaccess returned no S3 credentials for provider 'X'` | Provider unknown to EDL's cloud-auth endpoint, or EDL login failed at session start. |
 | `CANT_OPEN_FILE` | File bytes don't conform to the expected format. | `not a valid HDF5 file`, `signature of a valid netCDF` | Corrupted or truncated file, or the wrong parser was dispatched. |

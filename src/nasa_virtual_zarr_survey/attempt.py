@@ -236,27 +236,35 @@ def attempt_one(
     thread.start()
 
     t0 = time.monotonic()
-    # Wait on each event sequentially; the first timeout terminates the wait loop.
-    phase_budgets = [
+    deadline = t0 + timeout_s
+    # timeout_s is the total budget across all phases, not a per-phase cap.
+    # Each event.wait gets the remaining budget so a single granule can't
+    # consume up to 3*timeout_s of wall time.
+    for phase_name, event in [
         ("parse", parse_done),
         ("dataset", dataset_done),
         ("datatree", datatree_done),
-    ]
-    for phase_name, event in phase_budgets:
-        if not event.wait(timeout=timeout_s):
+    ]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not event.wait(timeout=remaining):
+            elapsed = time.monotonic() - t0
             result.timed_out = True
             result.timed_out_phase = phase_name
+            msg = (
+                f"{phase_name} did not complete within {timeout_s}s "
+                f"overall budget (elapsed {elapsed:.1f}s)"
+            )
             if phase_name == "parse":
                 result.parse_error_type = "TimeoutError"
-                result.parse_error_message = f"parse timed out after {timeout_s}s"
+                result.parse_error_message = msg
             elif phase_name == "dataset":
                 result.dataset_success = False
                 result.dataset_error_type = "TimeoutError"
-                result.dataset_error_message = f"dataset timed out after {timeout_s}s"
+                result.dataset_error_message = msg
             else:
                 result.datatree_success = False
                 result.datatree_error_type = "TimeoutError"
-                result.datatree_error_message = f"datatree timed out after {timeout_s}s"
+                result.datatree_error_message = msg
             break
 
     result.duration_s = time.monotonic() - t0

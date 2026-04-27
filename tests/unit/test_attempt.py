@@ -365,6 +365,58 @@ def test_attempt_one_timeout_during_datatree(monkeypatch):
     assert result.success is True
 
 
+def test_attempt_one_enforces_shared_timeout_budget(monkeypatch):
+    """timeout_s is the *total* budget across phases, not a per-phase cap.
+
+    Setup: parse and dataset each sleep 60% of the budget. Individually each
+    fits inside timeout_s, but parse + dataset together exceed it. With a
+    per-phase budget the run completes "successfully" at ~1.8x the cap; with
+    a shared deadline, dataset times out and parse_success is preserved.
+    """
+    import time
+
+    fake_dt = MagicMock(name="DataTree")
+    fake_ms = MagicMock(name="ManifestStore")
+
+    BUDGET = 1.0
+    PER_PHASE_SLEEP = 0.6  # 60% of BUDGET
+
+    def slow_parse(url, registry):
+        time.sleep(PER_PHASE_SLEEP)
+        return fake_ms
+
+    def slow_dataset(**_kw):
+        time.sleep(PER_PHASE_SLEEP)
+        return MagicMock(name="Dataset")
+
+    fake_ms.to_virtual_dataset.side_effect = slow_dataset
+    fake_ms.to_virtual_datatree.return_value = fake_dt
+
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
+    )
+    fake_parser = MagicMock(side_effect=slow_parse)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
+        lambda family, **_: fake_parser,
+    )
+
+    result = attempt_one(
+        url="s3://bucket/file.nc",
+        family=FormatFamily.NETCDF4,
+        store=object(),
+        timeout_s=BUDGET,
+    )
+
+    # Parse fits within the budget and must record success.
+    assert result.parse_success is True
+    # Dataset starts with only ~40% of the budget remaining and must time out.
+    assert result.timed_out is True
+    assert result.timed_out_phase == "dataset"
+    assert result.dataset_success is False
+    assert result.dataset_error_type == "TimeoutError"
+
+
 def test_result_writer_rotates_shards(tmp_results_dir: Path):
     w = ResultWriter(tmp_results_dir, shard_size=2)
     for i in range(5):
