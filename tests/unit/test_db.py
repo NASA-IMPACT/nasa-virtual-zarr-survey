@@ -3,7 +3,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from nasa_virtual_zarr_survey.db import connect, init_schema
+from nasa_virtual_zarr_survey.db import connect, init_schema, session
 from tests.conftest import insert_granule
 
 
@@ -132,3 +132,39 @@ def test_init_schema_raises_on_stale_db(tmp_db_path: Path):
 
     with pytest.raises(RuntimeError, match="umm_json"):
         init_schema(con)
+
+
+def test_session_closes_connection_on_exit(tmp_db_path: Path):
+    """``session()`` is a context manager that closes its connection."""
+    with session(tmp_db_path) as con:
+        init_schema(con)
+        con.execute("SELECT 1").fetchone()
+    # After the block, the connection is closed; further use must fail.
+    with pytest.raises(duckdb.ConnectionException):
+        con.execute("SELECT 1")
+
+
+def test_summary_helpers_run_back_to_back(tmp_db_path: Path, tmp_results_dir: Path):
+    """The CLI summary helpers must not leak DuckDB connections.
+
+    Regression: previously each helper called ``connect()`` without ever
+    closing it. Calling them in sequence in a single process (e.g., a
+    long-lived test runner) eventually collided on the .duckdb write lock.
+    """
+    from nasa_virtual_zarr_survey.__main__ import (
+        _attempt_summary,
+        _discover_summary,
+        _sample_summary,
+    )
+
+    # Sequential calls in one process must all succeed.
+    assert "discover:" in _discover_summary(tmp_db_path)
+    assert "sample:" in _sample_summary(tmp_db_path)
+    assert "attempt:" in _attempt_summary(tmp_db_path, tmp_results_dir, this_run=0)
+
+    # And after the helpers run, a fresh writable connection must still open.
+    con = connect(tmp_db_path)
+    try:
+        con.execute("CREATE TABLE _probe (x INT)")
+    finally:
+        con.close()

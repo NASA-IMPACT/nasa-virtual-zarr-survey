@@ -36,6 +36,12 @@ class SurveySession:
         *,
         access: AccessMode,
     ) -> "SurveySession":
+        """Build an in-memory session from a locked-sample JSON.
+
+        The returned session owns a DuckDB connection that the caller is
+        responsible for closing (via ``session.con.close()`` or by wrapping
+        the call in ``contextlib.closing``).
+        """
         data = json.loads(Path(path).read_text())
         if data.get("schema_version") != 3:
             raise ValueError(

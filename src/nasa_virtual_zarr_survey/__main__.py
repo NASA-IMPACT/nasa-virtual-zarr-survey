@@ -153,17 +153,17 @@ def _cache_only_option(f):
 
 
 def _discover_summary(db_path: Path) -> str:
-    from nasa_virtual_zarr_survey.db import connect, init_schema
+    from nasa_virtual_zarr_survey.db import init_schema, session
 
-    con = connect(db_path)
-    init_schema(con)
-    total = (con.execute("SELECT count(*) FROM collections").fetchone() or (0,))[0]
-    skipped = (
-        con.execute(
-            "SELECT count(*) FROM collections WHERE skip_reason IS NOT NULL"
-        ).fetchone()
-        or (0,)
-    )[0]
+    with session(db_path) as con:
+        init_schema(con)
+        total = (con.execute("SELECT count(*) FROM collections").fetchone() or (0,))[0]
+        skipped = (
+            con.execute(
+                "SELECT count(*) FROM collections WHERE skip_reason IS NOT NULL"
+            ).fetchone()
+            or (0,)
+        )[0]
     array_like = total - skipped
     return (
         f"discover: {total} collections "
@@ -283,17 +283,17 @@ def _render_collection_listing(
 
 
 def _sample_summary(db_path: Path) -> str:
-    from nasa_virtual_zarr_survey.db import connect, init_schema
+    from nasa_virtual_zarr_survey.db import init_schema, session
 
-    con = connect(db_path)
-    init_schema(con)
-    n_gran = (con.execute("SELECT count(*) FROM granules").fetchone() or (0,))[0]
-    n_coll = (
-        con.execute(
-            "SELECT count(DISTINCT collection_concept_id) FROM granules"
-        ).fetchone()
-        or (0,)
-    )[0]
+    with session(db_path) as con:
+        init_schema(con)
+        n_gran = (con.execute("SELECT count(*) FROM granules").fetchone() or (0,))[0]
+        n_coll = (
+            con.execute(
+                "SELECT count(DISTINCT collection_concept_id) FROM granules"
+            ).fetchone()
+            or (0,)
+        )[0]
     return f"sample: {n_gran} granules across {n_coll} collections"
 
 
@@ -388,43 +388,48 @@ def _probe_hint(db_path: Path, results_dir: Path, concept_id: str) -> str | None
 
 
 def _attempt_summary(db_path: Path, results_dir: Path, this_run: int) -> str:
-    from nasa_virtual_zarr_survey.db import connect, init_schema
+    from nasa_virtual_zarr_survey.db import init_schema, session
 
-    con = connect(db_path)
-    init_schema(con)
-    total_granules = (con.execute("SELECT count(*) FROM granules").fetchone() or (0,))[
-        0
-    ]
+    with session(db_path) as con:
+        init_schema(con)
+        total_granules = (
+            con.execute("SELECT count(*) FROM granules").fetchone() or (0,)
+        )[0]
 
-    if total_granules == 0:
-        return (
-            "attempt: 0 new attempts (the granules table is empty; "
-            "run 'sample' or 'discover' first)"
-        )
-
-    shards = list(results_dir.glob("**/*.parquet"))
-    if not shards:
-        if this_run == 0:
+        if total_granules == 0:
             return (
-                f"attempt: 0 new attempts "
-                f"({total_granules} granules pending, 0 results written; "
-                "if you expected attempts to happen, check --daac filters or logs above)"
+                "attempt: 0 new attempts (the granules table is empty; "
+                "run 'sample' or 'discover' first)"
             )
-        return (
-            f"attempt: {this_run} new attempts "
-            f"(0 of {total_granules} total granules complete; no results written yet)"
-        )
 
-    glob = str(results_dir / "**" / "*.parquet")
-    q = f"""
-        SELECT
-            count(*) AS total,
-            sum(CASE WHEN parse_success THEN 1 ELSE 0 END) AS parsed,
-            sum(CASE WHEN dataset_success THEN 1 ELSE 0 END) AS datasetable,
-            sum(CASE WHEN success THEN 1 ELSE 0 END) AS succeeded
-        FROM read_parquet('{glob}', union_by_name=true, hive_partitioning=true)
-    """
-    total, parsed, datasetable, succeeded = con.execute(q).fetchone() or (0, 0, 0, 0)
+        shards = list(results_dir.glob("**/*.parquet"))
+        if not shards:
+            if this_run == 0:
+                return (
+                    f"attempt: 0 new attempts "
+                    f"({total_granules} granules pending, 0 results written; "
+                    "if you expected attempts to happen, check --daac filters or logs above)"
+                )
+            return (
+                f"attempt: {this_run} new attempts "
+                f"(0 of {total_granules} total granules complete; no results written yet)"
+            )
+
+        glob = str(results_dir / "**" / "*.parquet")
+        q = f"""
+            SELECT
+                count(*) AS total,
+                sum(CASE WHEN parse_success THEN 1 ELSE 0 END) AS parsed,
+                sum(CASE WHEN dataset_success THEN 1 ELSE 0 END) AS datasetable,
+                sum(CASE WHEN success THEN 1 ELSE 0 END) AS succeeded
+            FROM read_parquet('{glob}', union_by_name=true, hive_partitioning=true)
+        """
+        total, parsed, datasetable, succeeded = con.execute(q).fetchone() or (
+            0,
+            0,
+            0,
+            0,
+        )
     parsed = parsed or 0
     datasetable = datasetable or 0
     succeeded = succeeded or 0
@@ -514,7 +519,7 @@ def discover(
     """Phase 1 (discover): enumerate CMR collections and write to DuckDB."""
     from datetime import datetime, timezone
 
-    from nasa_virtual_zarr_survey.db import connect, init_schema
+    from nasa_virtual_zarr_survey.db import init_schema, session
     from nasa_virtual_zarr_survey.discover import (
         collection_row_from_umm,
         fetch_collection_dicts,
@@ -553,17 +558,18 @@ def discover(
         )
     else:
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        con = connect(db_path)
-        init_schema(con)
-        persist_collections(con, dicts, score_map=score_map)
-        con.execute(
-            "INSERT OR REPLACE INTO run_meta (key, value, updated_at) VALUES (?, ?, ?)",
-            [
-                "sampling_mode",
-                sampling_mode_string(limit, top_per_provider, top_total),
-                datetime.now(timezone.utc),
-            ],
-        )
+        with session(db_path) as con:
+            init_schema(con)
+            persist_collections(con, dicts, score_map=score_map)
+            con.execute(
+                "INSERT OR REPLACE INTO run_meta (key, value, updated_at) "
+                "VALUES (?, ?, ?)",
+                [
+                    "sampling_mode",
+                    sampling_mode_string(limit, top_per_provider, top_total),
+                    datetime.now(timezone.utc),
+                ],
+            )
         click.echo(
             f"discover: {total} collections "
             f"({array_like} array-like, {skipped} skipped as non-array format)"
@@ -836,22 +842,22 @@ def attempt(
 )
 def validate_overrides_cmd(db_path: Path, config_path: Path) -> None:
     """Validate the override TOML against the collections in the survey DB."""
-    from nasa_virtual_zarr_survey.db import connect, init_schema
+    from nasa_virtual_zarr_survey.db import init_schema, session
     from nasa_virtual_zarr_survey.formats import FormatFamily
     from nasa_virtual_zarr_survey.overrides import OverrideError, OverrideRegistry
 
     reg = OverrideRegistry.from_toml(config_path)
-    con = connect(db_path)
-    init_schema(con)
     format_for: dict[str, FormatFamily] = {}
-    for cid, fam_str in con.execute(
-        "SELECT concept_id, format_family FROM collections "
-        "WHERE format_family IS NOT NULL"
-    ).fetchall():
-        try:
-            format_for[cid] = FormatFamily(fam_str)
-        except ValueError:
-            continue
+    with session(db_path) as con:
+        init_schema(con)
+        for cid, fam_str in con.execute(
+            "SELECT concept_id, format_family FROM collections "
+            "WHERE format_family IS NOT NULL"
+        ).fetchall():
+            try:
+                format_for[cid] = FormatFamily(fam_str)
+            except ValueError:
+                continue
     try:
         reg.validate(format_for=format_for)
     except OverrideError as e:

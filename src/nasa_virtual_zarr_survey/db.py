@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 from pathlib import Path
+from typing import ContextManager
 
 import duckdb
 
@@ -74,6 +76,15 @@ CREATE INDEX IF NOT EXISTS idx_prefetch_log_collection
 def connect(path: Path | str) -> duckdb.DuckDBPyConnection:
     """Open (or create) a DuckDB database at `path`."""
     return duckdb.connect(str(path))
+
+
+def session(path: Path | str) -> ContextManager[duckdb.DuckDBPyConnection]:
+    """Context-managed DuckDB connection: ``with session(p) as con: ...``.
+
+    Closes the connection on block exit so short-lived CLI helpers don't
+    leak handles into a shared process (e.g., a long-lived test runner).
+    """
+    return closing(connect(path))
 
 
 # Columns that signal a stale schema when missing. CREATE TABLE IF NOT EXISTS
