@@ -30,7 +30,9 @@ def test_run_sample_persists_granules(tmp_db_path: Path, monkeypatch):
     counter = iter(range(100))
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.sample._fetch_with_retry",
-        lambda concept_id, offset, *, bin_index: make_fake_granule(f"G{next(counter)}"),
+        lambda concept_id, offset, *, sort_key, bin_index: make_fake_granule(
+            f"G{next(counter)}"
+        ),
     )
 
     n = run_sample(tmp_db_path, n_bins=3)
@@ -50,7 +52,9 @@ def test_sample_one_collection_external_access(monkeypatch):
 
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.sample._fetch_with_retry",
-        lambda concept_id, offset, *, bin_index: make_fake_granule("G1", urls=url_for),
+        lambda concept_id, offset, *, sort_key, bin_index: make_fake_granule(
+            "G1", urls=url_for
+        ),
     )
 
     coll = {"concept_id": "C1", "time_start": None, "time_end": None, "num_granules": 1}
@@ -164,7 +168,7 @@ def test_run_sample_reclassifies_format_unknown(tmp_db_path: Path, monkeypatch):
     )
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.sample._fetch_with_retry",
-        lambda concept_id, offset, *, bin_index: make_fake_granule(
+        lambda concept_id, offset, *, sort_key, bin_index: make_fake_granule(
             f"G{next(counter)}", umm=fmt_umm
         ),
     )
@@ -206,7 +210,7 @@ def test_run_sample_skips_unresolvable_format_unknown(tmp_db_path: Path, monkeyp
     )
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.sample._fetch_with_retry",
-        lambda concept_id, offset, *, bin_index: make_fake_granule(
+        lambda concept_id, offset, *, sort_key, bin_index: make_fake_granule(
             "GP", umm=pdf_umm, urls=["s3://b/whatever.pdf"]
         ),
     )
@@ -251,7 +255,7 @@ def test_run_sample_resamples_when_access_mode_changes(
     counter = iter(range(100))
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.sample._fetch_with_retry",
-        lambda concept_id, offset, *, bin_index: make_fake_granule(
+        lambda concept_id, offset, *, sort_key, bin_index: make_fake_granule(
             f"NEW{next(counter)}",
             urls=lambda access: ["https://ex/NEW.nc"],
         ),
@@ -291,7 +295,7 @@ def test_sample_one_collection_captures_umm_json(monkeypatch):
 
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.sample._fetch_with_retry",
-        lambda concept_id, offset, *, bin_index: fake,
+        lambda concept_id, offset, *, sort_key, bin_index: fake,
     )
     coll = {
         "concept_id": "C1-PODAAC",
@@ -332,7 +336,7 @@ def test_run_sample_round_trips_granule_umm_json(tmp_db_path: Path, monkeypatch)
 
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.sample._fetch_with_retry",
-        lambda concept_id, offset, *, bin_index: fake,
+        lambda concept_id, offset, *, sort_key, bin_index: fake,
     )
 
     n = run_sample(tmp_db_path, n_bins=1, access="direct")
@@ -381,7 +385,7 @@ def test_sample_one_collection_records_dmrpp_url_for_opendap_collection(
     """When the collection has cloud OPeNDAP, dmrpp_granule_url = https_url + .dmrpp."""
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.sample._fetch_with_retry",
-        lambda concept_id, offset, *, bin_index: make_fake_granule(
+        lambda concept_id, offset, *, sort_key, bin_index: make_fake_granule(
             "G1",
             urls=lambda access: ["s3://b/G1.h5"]
             if access == "direct"
@@ -405,7 +409,7 @@ def test_sample_one_collection_records_dmrpp_url_for_opendap_collection(
 def test_sample_one_collection_dmrpp_url_none_when_no_opendap(monkeypatch):
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.sample._fetch_with_retry",
-        lambda concept_id, offset, *, bin_index: make_fake_granule(
+        lambda concept_id, offset, *, sort_key, bin_index: make_fake_granule(
             "G1", urls=["s3://b/G1.h5"]
         ),
     )
@@ -423,7 +427,7 @@ def test_sample_one_collection_verify_dmrpp_nulls_on_404(monkeypatch):
     """verify_dmrpp=True clears the URL when the HEAD check fails."""
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.sample._fetch_with_retry",
-        lambda concept_id, offset, *, bin_index: make_fake_granule(
+        lambda concept_id, offset, *, sort_key, bin_index: make_fake_granule(
             "G1",
             urls=lambda access: ["https://x/G1.h5"],
         ),
@@ -446,7 +450,7 @@ def test_sample_one_collection_verify_dmrpp_nulls_on_404(monkeypatch):
 def test_sample_one_collection_verify_dmrpp_keeps_on_200(monkeypatch):
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.sample._fetch_with_retry",
-        lambda concept_id, offset, *, bin_index: make_fake_granule(
+        lambda concept_id, offset, *, sort_key, bin_index: make_fake_granule(
             "G1", urls=lambda access: ["https://x/G1.h5"]
         ),
     )
@@ -496,7 +500,7 @@ def test_run_sample_persists_dmrpp_url(tmp_db_path: Path, monkeypatch):
     counter = iter(range(100))
     monkeypatch.setattr(
         "nasa_virtual_zarr_survey.sample._fetch_with_retry",
-        lambda concept_id, offset, *, bin_index: make_fake_granule(
+        lambda concept_id, offset, *, sort_key, bin_index: make_fake_granule(
             f"G{next(counter)}",
             urls=lambda access: ["https://x/g.h5"],
         ),
@@ -606,21 +610,59 @@ def _fake_granule(concept_id: str):
 
 
 @pytest.mark.parametrize(
-    "num_granules, n_bins, expected_offsets",
+    "num_granules, n_bins, expected_calls",
     [
-        (1000, 5, [0, 200, 400, 600, 800]),
-        (3, 5, [0, 1, 2]),
-        (10, 1, [0]),
+        # (1000, 5): bin 0 = asc 0, bins 1..4 = desc reversed [750, 500, 250, 0]
+        (
+            1000,
+            5,
+            [
+                (0, "revision_date", 0),
+                (1, "-revision_date", 750),
+                (2, "-revision_date", 500),
+                (3, "-revision_date", 250),
+                (4, "-revision_date", 0),
+            ],
+        ),
+        # (3, 5): n_total <= n_bins, fetch all in ascending revision order
+        (
+            3,
+            5,
+            [
+                (0, "revision_date", 0),
+                (1, "revision_date", 1),
+                (2, "revision_date", 2),
+            ],
+        ),
+        # (10, 1): n_bins=1 means just bin 0 (oldest, ascending offset 0)
+        (10, 1, [(0, "revision_date", 0)]),
+        # (2_000_000, 5): exercises the cap. effective = 1_000_000.
+        # bin 0 = asc 0 (absolute oldest of 2M).
+        # desc_offsets = [0, 250000, 500000, 750000]
+        # reversed → bins 1..4 = desc [750000, 500000, 250000, 0]
+        (
+            2_000_000,
+            5,
+            [
+                (0, "revision_date", 0),
+                (1, "-revision_date", 750_000),
+                (2, "-revision_date", 500_000),
+                (3, "-revision_date", 250_000),
+                (4, "-revision_date", 0),
+            ],
+        ),
     ],
 )
-def test_stratifies(monkeypatch, num_granules, n_bins, expected_offsets):
-    captured_offsets: list[int] = []
+def test_stratifies(monkeypatch, num_granules, n_bins, expected_calls):
+    captured: list[tuple[int, str, int]] = []  # (bin_index, sort_key, offset)
 
-    def fake_fetch(concept_id, offset):
-        captured_offsets.append(offset)
-        return _fake_granule(f"G{offset}")
+    def fake_fetch_with_retry(concept_id, offset, *, sort_key, bin_index):
+        captured.append((bin_index, sort_key, offset))
+        return _fake_granule(f"G_{sort_key}_{offset}")
 
-    monkeypatch.setattr("nasa_virtual_zarr_survey.sample._fetch_at_offset", fake_fetch)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample._fetch_with_retry", fake_fetch_with_retry
+    )
 
     coll = {
         "concept_id": "C1",
@@ -629,15 +671,15 @@ def test_stratifies(monkeypatch, num_granules, n_bins, expected_offsets):
         "num_granules": num_granules,
     }
     rows = sample_one_collection(coll, n_bins=n_bins)
-    assert captured_offsets == expected_offsets
-    assert len(rows) == len(expected_offsets)
+    assert captured == expected_calls
+    assert len(rows) == len(expected_calls)
     assert all(r["n_total_at_sample"] == num_granules for r in rows)
-    assert [r["stratification_bin"] for r in rows] == list(range(len(expected_offsets)))
+    assert [r["stratification_bin"] for r in rows] == [c[0] for c in expected_calls]
 
 
-def test_stratifies_uses_revision_date_sort(monkeypatch):
-    """Verify the wire format: sort_key=revision_date and page_size=1."""
-    captured: dict = {}
+def test_stratifies_uses_both_sort_directions(monkeypatch):
+    """Verify the wire format: bin 0 uses ascending revision_date; bins 1..n use descending."""
+    captured: list[dict] = []
 
     class FakeResponse:
         def raise_for_status(self):
@@ -649,7 +691,7 @@ def test_stratifies_uses_revision_date_sort(monkeypatch):
             }
 
     def fake_get(url, params=None, timeout=None):
-        captured["params"] = params
+        captured.append(dict(params))
         return FakeResponse()
 
     monkeypatch.setattr("nasa_virtual_zarr_survey.sample.requests.get", fake_get)
@@ -658,11 +700,15 @@ def test_stratifies_uses_revision_date_sort(monkeypatch):
         "concept_id": "C1",
         "time_start": None,
         "time_end": None,
-        "num_granules": 5,
+        "num_granules": 100,
     }
-    sample_one_collection(coll, n_bins=1)
-    assert captured["params"]["sort_key"] == "revision_date"
-    assert captured["params"]["page_size"] == 1
+    sample_one_collection(coll, n_bins=5)
+
+    sort_keys = [c["sort_key"] for c in captured]
+    assert sort_keys[0] == "revision_date"
+    assert sort_keys[1:] == ["-revision_date"] * 4
+    # All page_size=1
+    assert all(c["page_size"] == 1 for c in captured)
 
 
 def test_calls_hits_when_count_missing(monkeypatch):
@@ -672,14 +718,16 @@ def test_calls_hits_when_count_missing(monkeypatch):
         hits_calls.append(concept_id)
         return 42
 
-    fetch_offsets: list[int] = []
+    captured: list[tuple[int, str, int]] = []
 
-    def fake_fetch(concept_id, offset):
-        fetch_offsets.append(offset)
-        return _fake_granule(f"G{offset}")
+    def fake_fetch_with_retry(concept_id, offset, *, sort_key, bin_index):
+        captured.append((bin_index, sort_key, offset))
+        return _fake_granule(f"G_{offset}")
 
     monkeypatch.setattr("nasa_virtual_zarr_survey.sample._hits", fake_hits)
-    monkeypatch.setattr("nasa_virtual_zarr_survey.sample._fetch_at_offset", fake_fetch)
+    monkeypatch.setattr(
+        "nasa_virtual_zarr_survey.sample._fetch_with_retry", fake_fetch_with_retry
+    )
 
     coll = {
         "concept_id": "C1",
@@ -689,25 +737,37 @@ def test_calls_hits_when_count_missing(monkeypatch):
     }
     rows = sample_one_collection(coll, n_bins=5)
     assert hits_calls == ["C1"]
-    assert fetch_offsets == [0, 8, 16, 25, 33]  # i * 42 // 5 for i in 0..4
+    # bin 0 = asc 0; bins 1-4 = desc reversed([0, 10, 21, 31])
+    assert captured == [
+        (0, "revision_date", 0),
+        (1, "-revision_date", 31),
+        (2, "-revision_date", 21),
+        (3, "-revision_date", 10),
+        (4, "-revision_date", 0),
+    ]
     assert all(r["n_total_at_sample"] == 42 for r in rows)
 
 
 @pytest.mark.parametrize(
-    "empty_offsets, expected_bins, expect_warning",
+    "empty_calls, expected_bins, expect_warning",
     [
-        ({40}, {0, 1, 2, 3, 4}, False),  # bin 2 (offset 40) empty, retry at 39 succeeds
-        ({40, 39}, {0, 1, 3, 4}, True),  # both fail, bin 2 dropped, warn
-        ({0}, {0, 1, 2, 3, 4}, False),  # bin 0 boundary: retries at +1
+        # bin 2 uses (sort_key=-revision_date, offset=50). empty at that offset alone;
+        # retry at offset 49 succeeds → all 5 bins present.
+        ({("-revision_date", 50)}, {0, 1, 2, 3, 4}, False),
+        # both attempts (50 and 49) fail → bin 2 dropped, warning logged.
+        ({("-revision_date", 50), ("-revision_date", 49)}, {0, 1, 3, 4}, True),
+        # bin 4 uses (sort_key=-revision_date, offset=0). offset 0 boundary:
+        # retry at +1 (offset 1) succeeds → all 5 bins.
+        ({("-revision_date", 0)}, {0, 1, 2, 3, 4}, False),
     ],
 )
 def test_retry_on_empty_bin(
-    monkeypatch, caplog, empty_offsets, expected_bins, expect_warning
+    monkeypatch, caplog, empty_calls, expected_bins, expect_warning
 ):
-    def fake_fetch(concept_id, offset):
-        if offset in empty_offsets:
+    def fake_fetch(concept_id, offset, *, sort_key="revision_date"):
+        if (sort_key, offset) in empty_calls:
             return None
-        return _fake_granule(f"G{offset}")
+        return _fake_granule(f"G_{sort_key}_{offset}")
 
     monkeypatch.setattr("nasa_virtual_zarr_survey.sample._fetch_at_offset", fake_fetch)
 

@@ -21,6 +21,12 @@ _LOGGER = logging.getLogger(__name__)
 
 _CMR_GRANULES_URL = "https://cmr.earthdata.nasa.gov/search/granules.umm_json"
 
+_CMR_OFFSET_CAP = 1_000_000
+"""CMR's hard limit: ``page_num * page_size <= 1_000_000``. With ``page_size=1`` this
+caps positional access at offset 999_999. Collections with more granules than this
+are stratified across only the newest ``_CMR_OFFSET_CAP`` revisions — see
+``sample_one_collection``."""
+
 
 def _extract_url(g: DataGranule, access: str = "direct") -> str | None:
     for link in g.data_links(access=access) or []:
@@ -169,20 +175,27 @@ def _is_cloud_hosted(umm: dict[str, Any]) -> bool:
     return False
 
 
-def _fetch_at_offset(concept_id: str, offset: int) -> DataGranule | None:
+def _fetch_at_offset(
+    concept_id: str, offset: int, *, sort_key: str = "revision_date"
+) -> DataGranule | None:
     """Fetch the single granule at the given positional offset.
 
-    Sorts by ``revision_date`` ascending so offset 0 is the oldest revision.
-    Returns ``None`` if the response carries no items (race with deletion,
-    or pagination edge with concurrent ingests).
+    `sort_key` is passed through to CMR's ``sort_key`` parameter — typically
+    ``"revision_date"`` (ascending, oldest first) or ``"-revision_date"``
+    (descending, newest first). Returns ``None`` if the response carries no
+    items (race with deletion, or pagination edge with concurrent ingests).
     """
     params: dict[str, str | int] = {
         "collection_concept_id": concept_id,
-        "sort_key": "revision_date",
+        "sort_key": sort_key,
         "page_size": 1,
         "page_num": offset + 1,  # CMR pages are 1-indexed
     }
-    response = requests.get(_CMR_GRANULES_URL, params=params, timeout=60)
+    response = requests.get(
+        _CMR_GRANULES_URL,
+        params=params,
+        timeout=60,
+    )
     response.raise_for_status()
     items = response.json().get("items") or []
     if not items:
@@ -192,26 +205,28 @@ def _fetch_at_offset(concept_id: str, offset: int) -> DataGranule | None:
 
 
 def _fetch_with_retry(
-    concept_id: str, offset: int, *, bin_index: int
+    concept_id: str, offset: int, *, sort_key: str, bin_index: int
 ) -> DataGranule | None:
-    """Fetch a granule at `offset`; on empty response, retry once at the adjacent offset.
+    """Fetch a granule at `offset` with the given `sort_key`; on empty response,
+    retry once at the adjacent offset.
 
     Adjacent direction: ``offset - 1`` normally, or ``offset + 1`` when
     ``offset == 0``. On second failure, log a warning and return ``None``;
     caller drops the bin.
     """
-    g = _fetch_at_offset(concept_id, offset)
+    g = _fetch_at_offset(concept_id, offset, sort_key=sort_key)
     if g is not None:
         return g
     retry_offset = offset + 1 if offset == 0 else offset - 1
-    g = _fetch_at_offset(concept_id, retry_offset)
+    g = _fetch_at_offset(concept_id, retry_offset, sort_key=sort_key)
     if g is not None:
         return g
     _LOGGER.warning(
-        "collection %s bin %d (offset=%d) returned no granule after retry",
+        "collection %s bin %d (offset=%d, sort_key=%s) returned no granule after retry",
         concept_id,
         bin_index,
         offset,
+        sort_key,
     )
     return None
 
@@ -226,15 +241,24 @@ def sample_one_collection(
     """Return up to `n_bins` granule rows for `coll`, stratified across CMR's
     ``revision_date`` ordering.
 
-    For collections with ``num_granules`` granules, fetches the granules at
-    offsets ``[i * num_granules // n_bins for i in range(n_bins)]`` against the
-    CMR ``granules.umm_json`` endpoint sorted by ``revision_date`` ascending.
+    Bin 0 is always the absolute oldest revision (one ascending fetch).
+    Bins 1..n_bins-1 are stratified across the newest
+    ``min(num_granules, _CMR_OFFSET_CAP)`` revisions using descending sort, so:
+
+    - For collections within the CMR offset cap (≤ ~1.25M granules with
+      n_bins=5), this produces a textbook stratified sample across the full
+      revision range.
+    - For larger collections (HLS, big MOD/MYD products), this produces a
+      sample anchored at both temporal extremes plus the most-recent
+      ``effective // (n_bins - 1) * (n_bins - 2)`` revisions; the middle of
+      the population is uncovered. ``n_total_at_sample`` records the live
+      total so downstream analysis can quantify the gap.
 
     When ``coll['num_granules']`` is ``None``, calls ``_hits`` once to fetch
     the live count from CMR.
 
     When the population is smaller than ``n_bins``, fetches every granule
-    (offsets ``range(num_granules)``).
+    (offsets ``range(num_granules)`` in ascending revision order).
 
     On a CMR query that returns no granule for a bin (rare race condition with
     granule deletion or concurrent ingest), retries once at the adjacent
@@ -246,17 +270,24 @@ def sample_one_collection(
         n_total = _hits(concept_id)
     if n_total == 0:
         return []
+
     if n_total <= n_bins:
-        offsets = list(range(n_total))
+        plan = [(i, "revision_date", i) for i in range(n_total)]
     else:
-        offsets = [i * n_total // n_bins for i in range(n_bins)]
+        plan = [(0, "revision_date", 0)]
+        effective = min(n_total, _CMR_OFFSET_CAP)
+        desc_offsets = [i * effective // (n_bins - 1) for i in range(n_bins - 1)]
+        for bin_index, offset in zip(range(1, n_bins), reversed(desc_offsets)):
+            plan.append((bin_index, "-revision_date", offset))
 
     has_opendap = bool(coll.get("has_cloud_opendap"))
     now = datetime.now(timezone.utc)
     rows: list[GranuleInfo] = []
 
-    for bin_index, offset in enumerate(offsets):
-        g = _fetch_with_retry(concept_id, offset, bin_index=bin_index)
+    for bin_index, sort_key, offset in plan:
+        g = _fetch_with_retry(
+            concept_id, offset, sort_key=sort_key, bin_index=bin_index
+        )
         if g is None:
             continue
         data_url, https_url = _extract_urls(g, access)
