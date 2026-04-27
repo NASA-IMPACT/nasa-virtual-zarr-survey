@@ -80,3 +80,6 @@ ignore_missing_imports = true
 
 [tool.codespell]
 ignore-words-list = "strat"
+
+[tool.uv]
+exclude-newer = "2026-04-23"

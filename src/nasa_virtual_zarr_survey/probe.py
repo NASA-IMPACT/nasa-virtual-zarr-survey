@@ -93,7 +93,7 @@ def _resolve_granule_from_db(
         FROM granules g
         LEFT JOIN collections c ON c.concept_id = g.collection_concept_id
         WHERE g.granule_concept_id = ? AND g.access_mode = ?
-        ORDER BY g.temporal_bin
+        ORDER BY g.stratification_bin
         LIMIT 1
         """,
         [granule_concept_id, access],
@@ -171,7 +171,7 @@ def _resolve_collection_granule_from_db(
         SELECT granule_concept_id, data_url
         FROM granules
         WHERE collection_concept_id = ? AND access_mode = ? AND data_url IS NOT NULL
-        ORDER BY temporal_bin
+        ORDER BY stratification_bin
         LIMIT 1
         """,
         [collection_concept_id, access],

@@ -225,7 +225,7 @@ def test_resolve_target_collection_db_with_granules(
         "C-FULL",
         "G-FULL-1",
         data_url="s3://b/file1.h5",
-        temporal_bin=1,
+        stratification_bin=1,
         sampled_at=now,
     )
     insert_granule(
@@ -233,7 +233,7 @@ def test_resolve_target_collection_db_with_granules(
         "C-FULL",
         "G-FULL-0",
         data_url="s3://b/file0.h5",
-        temporal_bin=0,
+        stratification_bin=0,
         sampled_at=now,
     )
     con.close()
@@ -246,7 +246,7 @@ def test_resolve_target_collection_db_with_granules(
     target = resolve_target(tmp_db_path, "C-FULL", "direct")
     assert target.source == "db"
     assert target.kind == "collection"
-    # Lowest temporal_bin first.
+    # Lowest stratification_bin first.
     assert target.granule_concept_id == "G-FULL-0"
     assert target.data_url == "s3://b/file0.h5"
     assert target.sniffed_family == FormatFamily.HDF5

@@ -1,8 +1,8 @@
 # Sample (Phase 2)
 
-Stratified temporal granule sampling plus sample-time re-classification of `format_unknown` collections.
+Positional-stratification granule sampling plus sample-time re-classification of `format_unknown` collections.
 
-The CLI entry point is `nasa-virtual-zarr-survey sample`. `run_sample` drives the full phase; `sample_one_collection` is the per-collection unit (useful when iterating on one collection in a notebook); `temporal_bins` is the binning helper exposed for testing.
+The CLI entry point is `nasa-virtual-zarr-survey sample`. `run_sample` drives the full phase; `sample_one_collection` is the per-collection unit (useful when iterating on one collection in a notebook).
 
 For collections discovered with `has_cloud_opendap=True`, each sampled granule's `dmrpp_granule_url` is recorded as `https_url + ".dmrpp"`. By default the URL is constructed without a network check (the collection's UMM-S association is treated as authoritative). Pass `--verify-dmrpp` to HEAD-check every sidecar against its upstream object store and null out missing ones — a one-time audit; the flag costs one extra request per sampled granule.
 
@@ -18,9 +18,6 @@ uv run nasa-virtual-zarr-survey sample --n-bins 5 --verify-dmrpp
     handler: python
 
 ::: nasa_virtual_zarr_survey.sample.sample_one_collection
-    handler: python
-
-::: nasa_virtual_zarr_survey.sample.temporal_bins
     handler: python
 
 ## DMR++ helpers

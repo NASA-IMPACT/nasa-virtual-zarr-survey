@@ -180,19 +180,13 @@ def collection_verdicts(
     top_buckets = _top_buckets_from_db(con)
 
     q = """
-        WITH stratification AS (
-            SELECT collection_concept_id, MAX(stratified) AS stratified
-            FROM granules
-            GROUP BY collection_concept_id
-        )
         SELECT c.concept_id, c.daac, c.format_family, c.skip_reason,
-               c.processing_level, s.stratified
+               c.processing_level
         FROM collections c
-        LEFT JOIN stratification s ON s.collection_concept_id = c.concept_id
     """
     rows = con.execute(q).fetchall()
     out: list[VerdictRow] = []
-    for concept_id, daac, family, skip, processing_level, stratified in rows:
+    for concept_id, daac, family, skip, processing_level in rows:
         if skip:
             parse_verdict = "skipped"
             dataset_verdict = "skipped"
@@ -208,7 +202,6 @@ def collection_verdicts(
                 format_family=family,
                 skip_reason=skip,
                 processing_level=processing_level,
-                stratified=stratified,
                 parse_verdict=parse_verdict,
                 dataset_verdict=dataset_verdict,
                 datatree_verdict=datatree_verdict,
@@ -508,8 +501,8 @@ def _render_reading_guide() -> list[str]:
             "Verdict labels are `all_pass`, `partial_pass`, `all_fail`, "
             "`not_attempted`, and `skipped`. See the "
             "[glossary](../glossary.md) for definitions of these and other "
-            "terms (granule, DAAC, ManifestStore, fingerprint, stratified "
-            "sampling). For methodology and the run-mode flags that produced "
+            "terms (granule, DAAC, ManifestStore, fingerprint, sampling). "
+            "For methodology and the run-mode flags that produced "
             "this report, see the [usage docs](../index.md).\n"
         ),
         (
@@ -767,25 +760,6 @@ def render_report(
                 verdicts, cube_results, "By Format Family", "format_family"
             )
         )
-
-    # Stratification
-    lines.append("## Stratification\n")
-    lines.append("| Sampling mode | Attempted | parse_all_pass | dataset_all_pass |")
-    lines.append("|---|---:|---:|---:|")
-    for mode_label, mode_filter in [
-        ("stratified", lambda v: v["stratified"] is True),
-        ("fallback", lambda v: v["stratified"] is False),
-        ("unsampled", lambda v: v["stratified"] is None),
-    ]:
-        mode_vs = [v for v in verdicts if mode_filter(v)]
-        attempted = len(mode_vs)
-        mc_parse = Counter(v["parse_verdict"] for v in mode_vs)
-        mc_dataset = Counter(v["dataset_verdict"] for v in mode_vs)
-        lines.append(
-            f"| {mode_label} | {attempted} | {mc_parse.get('all_pass', 0)} | "
-            f"{mc_dataset.get('all_pass', 0)} |"
-        )
-    lines.append("")
 
     # Top 20 OTHER errors per phase (pre-computed by caller)
     for phase_label, error_list in [

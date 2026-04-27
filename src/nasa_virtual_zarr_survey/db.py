@@ -31,10 +31,10 @@ CREATE TABLE IF NOT EXISTS granules (
     data_url              TEXT,
     https_url             TEXT,
     dmrpp_granule_url     TEXT,
-    temporal_bin          INTEGER,
+    stratification_bin    INTEGER,
+    n_total_at_sample     BIGINT,
     size_bytes            BIGINT,
     sampled_at            TIMESTAMP,
-    stratified            BOOLEAN,
     access_mode           TEXT NOT NULL,
     umm_json              JSON,
     PRIMARY KEY (collection_concept_id, granule_concept_id)
@@ -62,7 +62,12 @@ def connect(path: Path | str) -> duckdb.DuckDBPyConnection:
 # DuckDB binder error at INSERT time into an actionable message at startup.
 _REQUIRED_COLUMNS: dict[str, set[str]] = {
     "collections": {"umm_json", "has_cloud_opendap"},
-    "granules": {"umm_json", "dmrpp_granule_url"},
+    "granules": {
+        "umm_json",
+        "dmrpp_granule_url",
+        "stratification_bin",
+        "n_total_at_sample",
+    },
 }
 
 

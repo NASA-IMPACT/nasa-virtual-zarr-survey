@@ -16,7 +16,7 @@ Terms used throughout this site, the report, and the design docs. Headings are a
 
 **EDL (Earthdata Login).** NASA's SSO. The survey uses an EDL bearer token (`--access external`) or temporary S3 credentials minted via EDL (`--access direct`). Credentials live in `~/.netrc`.
 
-**Granule.** A single data file in a collection (one swath, one tile, one timestamp). The survey samples up to N granules per collection across the temporal extent and runs phases 3, 4a, 4b on each.
+**Granule.** A single data file in a collection (one swath, one tile, one timestamp). The survey samples up to N granules per collection across CMR's `revision_date` ordering and runs phases 3, 4a, 4b on each.
 
 **`usage_score`.** CMR's popularity metric per collection. `--top N` ranks collections by `usage_score` so the survey targets the most-used data first.
 
@@ -34,9 +34,7 @@ Terms used throughout this site, the report, and the design docs. Headings are a
 
 ## Sampling
 
-**Stratified sampling.** Granules picked evenly across the temporal extent (e.g. one per N equal-time bins). Default mode for the survey.
-
-**Fallback sampling.** Used when a collection's temporal extent is missing or degenerate; falls back to a simple top-N pick.
+**Stratified sampling.** Granules picked at evenly-spaced positional offsets in CMR's `revision_date`-sorted ordering (one per N equal-position bins). The only mode for the survey.
 
 **Unsampled.** A collection in the database that wasn't picked up by `sample` (e.g. zero granules returned by CMR). Shown for completeness in the Stratification table.
 

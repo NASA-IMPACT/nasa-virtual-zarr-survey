@@ -37,7 +37,7 @@ class SurveySession:
         access: AccessMode,
     ) -> "SurveySession":
         data = json.loads(Path(path).read_text())
-        if data.get("schema_version") != 1:
+        if data.get("schema_version") != 2:
             raise ValueError(
                 f"Unsupported locked_sample schema_version: "
                 f"{data.get('schema_version')!r}"
@@ -75,7 +75,7 @@ class SurveySession:
                 """
                 INSERT INTO granules
                 (collection_concept_id, granule_concept_id, data_url,
-                 https_url, temporal_bin, size_bytes, stratified,
+                 https_url, stratification_bin, n_total_at_sample, size_bytes,
                  access_mode, sampled_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -84,9 +84,9 @@ class SurveySession:
                     g["granule_concept_id"],
                     url,
                     g.get("https_url"),
-                    g.get("temporal_bin"),
+                    g.get("stratification_bin"),
+                    g.get("n_total_at_sample"),
                     g.get("size_bytes"),
-                    g.get("stratified", False),
                     access,
                     now,
                 ],

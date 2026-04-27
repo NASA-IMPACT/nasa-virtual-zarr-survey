@@ -30,11 +30,11 @@ def _populate_db(db_path: Path) -> None:
     con.execute(
         """
         INSERT INTO granules
-        (collection_concept_id, granule_concept_id, data_url, temporal_bin,
-         size_bytes, stratified, access_mode, sampled_at, umm_json)
+        (collection_concept_id, granule_concept_id, data_url, stratification_bin,
+         size_bytes, access_mode, sampled_at, umm_json)
         VALUES
-        ('C1-X', 'G1-X', 's3://b/k1', 0, 100, true, 'direct', ?, '{}'),
-        ('C2-Y', 'G2-Y', 'https://h/k2', 1, NULL, false, 'external', ?, '{}')
+        ('C1-X', 'G1-X', 's3://b/k1', 0, 100, 'direct', ?, '{}'),
+        ('C2-Y', 'G2-Y', 'https://h/k2', 1, NULL, 'external', ?, '{}')
         """,
         [now, now],
     )
@@ -58,7 +58,7 @@ def test_lock_sample_writes_canonical_json(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
 
     data = json.loads(out.read_text())
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == 2
     assert data["sampling_mode"] == "top=2"
     assert [c["concept_id"] for c in data["collections"]] == ["C1-X", "C2-Y"]
     assert [g["granule_concept_id"] for g in data["granules"]] == ["G1-X", "G2-Y"]

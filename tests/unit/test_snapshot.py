@@ -25,7 +25,7 @@ from nasa_virtual_zarr_survey.snapshot import (
 
 def _locked_sample_payload() -> dict:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at": "2026-04-26T12:00:00Z",
         "sampling_mode": "top=1",
         "collections": [
@@ -44,9 +44,9 @@ def _locked_sample_payload() -> dict:
                 "granule_concept_id": "G1-T",
                 "s3_url": "s3://b/k1",
                 "https_url": "https://h/k1",
-                "temporal_bin": 0,
+                "stratification_bin": 0,
+                "n_total_at_sample": 100,
                 "size_bytes": 100,
-                "stratified": True,
             }
         ],
     }

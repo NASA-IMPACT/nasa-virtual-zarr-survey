@@ -9,7 +9,7 @@ from typing import Any
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
 
-LOCKED_SAMPLE_SCHEMA_VERSION = 1
+LOCKED_SAMPLE_SCHEMA_VERSION = 2
 
 
 def write_locked_sample(db_path: Path | str, out_path: Path | str) -> Path:
@@ -58,15 +58,15 @@ def write_locked_sample(db_path: Path | str, out_path: Path | str) -> Path:
         data_url,
         https_url,
         bin_,
+        n_total,
         size,
-        strat,
         access_mode,
     ) in con.execute(
         """
         SELECT collection_concept_id, granule_concept_id, data_url,
-               https_url, temporal_bin, size_bytes, stratified, access_mode
+               https_url, stratification_bin, n_total_at_sample, size_bytes, access_mode
         FROM granules
-        ORDER BY collection_concept_id, temporal_bin, granule_concept_id
+        ORDER BY collection_concept_id, stratification_bin, granule_concept_id
         """
     ).fetchall():
         s3_url: str | None
@@ -83,9 +83,9 @@ def write_locked_sample(db_path: Path | str, out_path: Path | str) -> Path:
                 "granule_concept_id": granule_id,
                 "s3_url": s3_url,
                 "https_url": ext_url,
-                "temporal_bin": bin_,
+                "stratification_bin": bin_,
+                "n_total_at_sample": n_total,
                 "size_bytes": size,
-                "stratified": strat,
             }
         )
 

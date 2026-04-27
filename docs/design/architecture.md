@@ -5,7 +5,7 @@
 Measure, for each cloud-hosted NASA CMR collection of an array-like format, how far the stack gets when asked to virtualize it. The pipeline runs in five phases, of which 3, 4a, 4b, and 5 are the substantive measurement points (1 and 2 are setup):
 
 1. **Discover** (Phase 1): enumerate CMR collections into DuckDB.
-2. **Sample** (Phase 2): pick N granules per collection, stratified across the temporal extent.
+2. **Sample** (Phase 2): pick N granules per collection, stratified across positional offsets in CMR's `revision_date` ordering.
 3. **Parsability** (Phase 3): can a VirtualiZarr parser read the file's metadata into a `ManifestStore`?
 4. **Datasetability / Datatreeability** (Phase 4a / 4b): can that `ManifestStore` be materialized into an `xarray.Dataset` (4a) or `xarray.DataTree` (4b)? 4b runs in parallel with 4a so hierarchical files that fail 4a with `CONFLICTING_DIM_SIZES` are still rescued.
 5. **Cubability** (Phase 5): across N stratified granules of a collection, are the per-granule datasets structurally compatible enough to be concatenated into one coherent virtual cube?
@@ -184,12 +184,11 @@ Collections whose declared format is known but non-array (shapefile, CSV, PDF, e
 
 ### Sampling
 
-For each array-like collection, 5 granules are sampled.
+For each array-like collection, 5 granules are sampled using a single positional-stratification path.
 
-- **Stratified (preferred):** split the temporal extent into 5 equal bins; for each bin, call `earthaccess.search_data(concept_id, temporal=(bin_start, bin_end), count=1)`. If a bin returns no granules, it is silently dropped (fewer than 5 rows but still `stratified=True`).
-- **Fallback:** if the temporal extent is missing, call `search_data(concept_id, count=5)` and assign synthetic `temporal_bin=0..4` with `stratified=False`.
+Granules are sorted by `revision_date` ascending (CMR sort key). `n_bins` evenly-spaced positional offsets are computed across `coll["num_granules"]`; if that count is `None`, `_hits()` issues one CMR request reading the `cmr-hits` response header to refresh it. For each offset, `_fetch_at_offset(concept_id, offset)` calls `cmr.earthdata.nasa.gov/search/granules.umm_json?collection_concept_id=...&sort_key=revision_date&page_size=1&page_num=offset+1`. If a bin returns no granule (rare CMR pagination race), the request is retried once at the adjacent offset (`offset - 1`, or `offset + 1` when `offset == 0`); on second failure a warning is logged and the bin is skipped. When `num_granules <= n_bins`, all granules are fetched directly rather than stratifying.
 
-The `stratified` flag propagates to the Parquet log so the final report can distinguish genuine temporal coverage from fallback sampling.
+Sorting by `revision_date` rather than observation time means codec heterogeneity introduced by reprocessing campaigns lands in different bins by construction: a 2010 swath reprocessed in 2025 carries the 2025 codec, and positional stratification captures it. CMR stamps `revision_date` on every granule at ingest, so this strategy works equally well for collections with or without a declared temporal extent.
 
 Each granule row also records the `access_mode` it was sampled under (`direct` or `external`). On a re-run with a different `--access`, `run_sample` deletes existing rows whose mode does not match and re-samples those collections so the URL scheme in the granules table always agrees with the requested mode. A warning is logged listing the affected collections so the operator knows existing rows in `output/results/*.parquet` still reference the old URLs.
 
@@ -527,10 +526,10 @@ CREATE TABLE granules (
   data_url              TEXT,
   https_url             TEXT,
   dmrpp_granule_url     TEXT,           -- https_url + ".dmrpp" when has_cloud_opendap
-  temporal_bin          INTEGER,
+  stratification_bin    INTEGER,
+  n_total_at_sample     BIGINT,         -- num_granules at sample time, for coverage analysis
   size_bytes            BIGINT,
   sampled_at            TIMESTAMP,
-  stratified            BOOLEAN,
   access_mode           TEXT NOT NULL,  -- 'direct' | 'external'
   umm_json              JSON,           -- full top-level CMR response: {meta, umm}
   PRIMARY KEY (collection_concept_id, granule_concept_id)
@@ -563,7 +562,6 @@ Notable columns (full list in `attempt._SCHEMA_FIELDS`):
 | `success` | BOOL | parse AND dataset succeeded |
 | `timed_out`, `timed_out_phase` | BOOL, STRING | `"parse"` \| `"dataset"` |
 | `duration_s` | DOUBLE | wall time including dispatch |
-| `stratified` | BOOL | propagated from sampling |
 | `fingerprint` | STRING | JSON; populated only on full success |
 | `attempted_at` | TIMESTAMP | UTC |
 
@@ -582,7 +580,7 @@ WHERE c.skip_reason IS NULL
   )
 ```
 
-On the first run, `read_parquet` raises (no files yet); a `try/except` falls back to "all pending granules." Results are ordered by `(daac, collection, temporal_bin)` so per-collection progress lines to stderr are meaningful and shards stay DAAC-local.
+On the first run, `read_parquet` raises (no files yet); a `try/except` falls back to "all pending granules." Results are ordered by `(daac, collection, stratification_bin)` so per-collection progress lines to stderr are meaningful and shards stay DAAC-local.
 
 ## Reporting
 
@@ -592,7 +590,6 @@ On the first run, `read_parquet` raises (no files yet); a `try/except` falls bac
 - Per-phase verdict tables (`all_pass` / `partial_pass` / `all_fail` / `not_attempted` / `skipped`). `skipped` is assigned at the collection level from `collections.skip_reason`; the other verdicts are derived from the Parquet log.
 - Per-phase failure taxonomy (see [Failure Taxonomy](taxonomy.md)) with both granule and distinct-collection counts.
 - Per-DAAC and per-format-family tables in the form "parsable / datasetable / cubable (% of the previous column)."
-- Stratification breakdown (stratified vs fallback vs unsampled).
 - Top-50 raw errors per phase for the `OTHER` bucket, seeding the next round of taxonomy refinement.
 - Full per-collection table at the end.
 
@@ -702,7 +699,7 @@ Every module has mocked tests for its public API. Notable suites:
 - `test_auth.py` — both modes mocked at `earthaccess`, `obstore.store.S3Store`, and `HTTPStore`. Does not exercise real S3 or real EDL. Also covers `StoreCache(cache_dir=...)` wrapping returned stores in `DiskCachingReadableStore`.
 - `test_attempt.py::test_run_attempt_resumes` — pre-populates a Parquet shard, verifies the resume check skips already-attempted granules.
 - `test_attempt.py` (cache + override paths) — second-run with `--cache --cache-dir` issues zero network calls to the underlying store; `override_applied` is recorded correctly when an override is matched.
-- `test_sample.py` — both the stratified-bins branch and the no-temporal-extent fallback.
+- `test_sample.py` — positional stratification across CMR `revision_date`, including offset computation, `_hits()` fallback when count is missing, and the ±1 retry on empty bins.
 - `test_cubability.py` — the seven-step feasibility check, with fixtures for each failing-step case.
 - `test_overrides.py` — round-trips a representative TOML; rejects typo concept IDs, hallucinated kwarg names, contradictory `skip_dataset` + `dataset = {...}`, unknown top-level keys, missing `notes`. `for_collection` returns empty defaults for unknown IDs.
 - `test_inspect.py` — tiny generated fixtures in `tests/fixtures/inspect/` (HDF5, Zarr v3, NetCDF3, GeoTIFF, DMR++); asserts the dumped tree contains expected keys and snapshots the fenced JSON blob portion.
@@ -757,7 +754,7 @@ CMR experts:
 1. Is `FileDistributionInformation.Format → FileArchiveInformation.Format → probe-one-granule` the right precedence, or are there collections where only a product-type field reliably identifies the format?
 2. Are there DAACs where `DataGranule.data_links(access="direct")` returns a non-S3 scheme (e.g. TEA-signed HTTPS treated as "direct"), and should we classify those differently?
 3. Is the EOSDIS provider snapshot in `providers.py` missing any active cloud-hosted DAAC? (Last audited Q1 2026.)
-4. Are there collections where temporal extent splitting is misleading — e.g. reprocessing campaigns that invalidate earlier bins? Should we prefer `reprocessed=true` filtering?
+4. Resolved: switched to `revision_date`-based positional stratification. Reprocessing campaigns that change codecs appear at production time, not observation time; sorting by `revision_date` places old-codec and new-codec granules in different bins by construction. CMR guarantees `revision_date` is set on every granule, so no collection requires a fallback path.
 
 VirtualiZarr experts:
 

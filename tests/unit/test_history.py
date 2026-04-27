@@ -12,7 +12,7 @@ from nasa_virtual_zarr_survey.__main__ import cli
 
 def _summary(date_: str, kind: str = "release", label: str | None = None) -> dict:
     return {
-        "schema_version": 6,
+        "schema_version": 7,
         "generated_at": "2026-04-26T00:00:00+00:00",
         "survey_tool_version": "0.1.0",
         "virtualizarr_version": "1.3.0",
@@ -107,7 +107,6 @@ def test_history_funnel_html_emitted(tmp_path: Path) -> None:
             "daac": "X",
             "format_family": "NetCDF4",
             "skip_reason": None,
-            "stratified": True,
             "parse_verdict": "all_pass",
             "dataset_verdict": "all_fail",
             "datatree_verdict": "all_fail",
@@ -121,7 +120,6 @@ def test_history_funnel_html_emitted(tmp_path: Path) -> None:
             "daac": "X",
             "format_family": "NetCDF4",
             "skip_reason": None,
-            "stratified": True,
             "parse_verdict": "all_pass",
             "dataset_verdict": "all_pass",
             "datatree_verdict": "all_pass",
@@ -175,7 +173,6 @@ def test_history_state_transitions(tmp_path: Path) -> None:
             "daac": "X",
             "format_family": "NetCDF4",
             "skip_reason": None,
-            "stratified": True,
             "parse_verdict": "all_pass",
             "dataset_verdict": dataset_v,
             "datatree_verdict": "not_attempted",

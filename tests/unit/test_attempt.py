@@ -29,7 +29,6 @@ def _make_attempt_result(**overrides) -> AttemptResult:
         daac="PODAAC",
         format_family="NetCDF4",
         parser="HDFParser",
-        stratified=True,
         attempted_at=datetime.now(timezone.utc),
         parse_success=True,
         dataset_success=True,
@@ -382,7 +381,7 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
     insert_collection(con, "C1", num_granules=2)
     insert_granule(con, "C1", "G1", data_url="s3://b/a.nc", size_bytes=100)
     insert_granule(
-        con, "C1", "G2", data_url="s3://b/b.nc", temporal_bin=1, size_bytes=100
+        con, "C1", "G2", data_url="s3://b/b.nc", stratification_bin=1, size_bytes=100
     )
     con.close()
 
@@ -397,7 +396,6 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
     cols["daac"].append("PODAAC")
     cols["format_family"].append("NetCDF4")
     cols["parser"].append("HDFParser")
-    cols["stratified"].append(True)
     cols["attempted_at"].append(datetime.now(timezone.utc))
     cols["parse_success"].append(True)
     cols["parse_error_type"].append(None)
@@ -466,7 +464,7 @@ def test_run_attempt_aborts_on_consecutive_forbidden(
             "C1",
             f"G{i}",
             data_url=f"s3://b/f{i}.nc",
-            temporal_bin=i,
+            stratification_bin=i,
             size_bytes=100,
         )
     con.close()
@@ -518,7 +516,7 @@ def test_run_attempt_does_not_abort_on_mixed_failures(
             "C1",
             f"G{i}",
             data_url=f"s3://b/f{i}.nc",
-            temporal_bin=i,
+            stratification_bin=i,
             size_bytes=100,
         )
     con.close()
@@ -668,7 +666,7 @@ def test_attempt_cli_locked_sample_runs(tmp_path: Path, monkeypatch) -> None:
     from nasa_virtual_zarr_survey.__main__ import cli
 
     sample = {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at": "2026-04-26T12:00:00Z",
         "sampling_mode": "top=1",
         "collections": [
@@ -687,9 +685,9 @@ def test_attempt_cli_locked_sample_runs(tmp_path: Path, monkeypatch) -> None:
                 "granule_concept_id": "G1-T",
                 "s3_url": "s3://b/k1",
                 "https_url": "https://h/k1",
-                "temporal_bin": 0,
+                "stratification_bin": 0,
+                "n_total_at_sample": 0,
                 "size_bytes": 100,
-                "stratified": True,
             }
         ],
     }
@@ -873,20 +871,18 @@ def test_pending_granules_filters_by_collection(tmp_path) -> None:
     )
     con.execute(
         "INSERT INTO granules (collection_concept_id, granule_concept_id, "
-        "data_url, temporal_bin, stratified, access_mode) VALUES "
-        "(?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)",
+        "data_url, stratification_bin, access_mode) VALUES "
+        "(?, ?, ?, ?, ?), (?, ?, ?, ?, ?)",
         [
             "C1-X",
             "G1",
             "s3://a/1",
             0,
-            True,
             "direct",
             "C2-Y",
             "G2",
             "s3://b/2",
             0,
-            True,
             "direct",
         ],
     )

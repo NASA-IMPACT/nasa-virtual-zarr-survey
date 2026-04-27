@@ -21,7 +21,6 @@ def _verdict(
         "daac": daac,
         "format_family": fmt,
         "skip_reason": None,
-        "stratified": True,
         "parse_verdict": pv,
         "dataset_verdict": dv,
         "datatree_verdict": tv,

@@ -94,7 +94,6 @@ def _write_attempt_shard_for_collection(
     cols["daac"].append("PODAAC")
     cols["format_family"].append("NetCDF4")
     cols["parser"].append("HDFParser")
-    cols["stratified"].append(True)
     cols["attempted_at"].append(datetime.now(timezone.utc))
     cols["parse_success"].append(success)
     cols["parse_error_type"].append(None if success else "OSError")

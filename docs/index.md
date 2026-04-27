@@ -3,7 +3,7 @@
 Surveys cloud-hosted NASA CMR collections for VirtualiZarr compatibility. The pipeline runs as five phases:
 
 1. **Discover** (Phase 1): enumerate CMR collections into DuckDB.
-2. **Sample** (Phase 2): pick N granules per collection, stratified across its temporal extent.
+2. **Sample** (Phase 2): pick N granules per collection, stratified across positional offsets in CMR's `revision_date` ordering.
 3. **Parsability** (Phase 3): the VirtualiZarr parser can produce a `ManifestStore` from a granule URL.
 4. **Datasetability / Datatreeability** (Phase 4a / 4b): the `ManifestStore` can be converted to an `xarray.Dataset` (4a) or `xarray.DataTree` (4b). 4b runs in parallel with 4a; it captures hierarchical files that fail 4a with `CONFLICTING_DIM_SIZES`.
 5. **Cubability** (Phase 5): the per-granule datasets can be combined into a coherent virtual store. Gated on Phase 4a `all_pass` (tree-only collections are not yet cubable).
@@ -52,7 +52,7 @@ Pick one or the other; the default (no scope flag) is reserved for a full survey
 
 ### Granule depth: `--n-bins`
 
-`--n-bins N` samples N granules per collection, stratified evenly across the collection's temporal extent. Default is 5. Use 2 for fast iteration; raise it to surface flakiness or long-tail per-granule heterogeneity (which shows up as `partial_pass` verdicts).
+`--n-bins N` samples N granules per collection, stratified evenly across positional offsets in CMR's `revision_date` ordering. Default is 5. Use 2 for fast iteration; raise it to surface flakiness or long-tail per-granule heterogeneity (which shows up as `partial_pass` verdicts).
 
 ### Access mode: `--access external` vs `--access direct`
 

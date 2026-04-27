@@ -279,7 +279,7 @@ def test_find_failures_by_collection(tmp_db_path: Path, tmp_results_dir: Path):
         "G1",
         data_url="https://ex/bad.nc",
         https_url="https://archive.example/bad.nc",
-        temporal_bin=1,
+        stratification_bin=1,
         sampled_at=now,
         access_mode="external",
     )
@@ -297,7 +297,6 @@ def test_find_failures_by_collection(tmp_db_path: Path, tmp_results_dir: Path):
         cols["daac"].append("PODAAC")
         cols["format_family"].append("NetCDF4")
         cols["parser"].append("HDFParser")
-        cols["stratified"].append(True)
         cols["attempted_at"].append(now)
         cols["parse_success"].append(pass_)
         cols["parse_error_type"].append(None if pass_ else "OSError")
@@ -367,7 +366,6 @@ def test_find_failures_by_granule(tmp_db_path: Path, tmp_results_dir: Path):
     cols["daac"].append("NSIDC")
     cols["format_family"].append("HDF5")
     cols["parser"].append("HDFParser")
-    cols["stratified"].append(True)
     cols["attempted_at"].append(now)
     cols["parse_success"].append(False)
     cols["parse_error_type"].append("NotImplementedError")
@@ -421,7 +419,7 @@ def test_find_failures_by_bucket(tmp_db_path: Path, tmp_results_dir: Path):
             "C3",
             f"G3-{i}",
             data_url=f"https://ex/file{i}.nc",
-            temporal_bin=i,
+            stratification_bin=i,
             sampled_at=now,
             access_mode="external",
         )
@@ -441,7 +439,6 @@ def test_find_failures_by_bucket(tmp_db_path: Path, tmp_results_dir: Path):
         cols["daac"].append("GES_DISC")
         cols["format_family"].append("NetCDF4")
         cols["parser"].append("HDFParser")
-        cols["stratified"].append(True)
         cols["attempted_at"].append(now)
         cols["parse_success"].append(False)
         cols["parse_error_type"].append(etype)
@@ -516,7 +513,6 @@ def test_find_failures_phase_filter(tmp_db_path: Path, tmp_results_dir: Path):
     cols["daac"].append("ORNL")
     cols["format_family"].append("NetCDF4")
     cols["parser"].append("HDFParser")
-    cols["stratified"].append(True)
     cols["attempted_at"].append(now)
     # Parse succeeds, dataset fails.
     cols["parse_success"].append(True)

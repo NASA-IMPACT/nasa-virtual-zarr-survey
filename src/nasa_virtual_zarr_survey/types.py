@@ -34,10 +34,10 @@ class GranuleInfo(TypedDict):
     data_url: str | None
     https_url: str | None
     dmrpp_granule_url: str | None
-    temporal_bin: int
+    stratification_bin: int
+    n_total_at_sample: int
     size_bytes: int | None
     sampled_at: datetime
-    stratified: bool
     access_mode: str
     umm_json: dict[str, Any]
 
@@ -51,7 +51,6 @@ class PendingGranule(TypedDict):
     daac: str | None
     provider: str | None
     format_family: str | None
-    stratified: bool | None
 
 
 class VerdictRow(TypedDict):
@@ -70,7 +69,6 @@ class VerdictRow(TypedDict):
     format_family: str | None
     skip_reason: str | None
     processing_level: str | None
-    stratified: bool | None
     parse_verdict: str
     dataset_verdict: str
     datatree_verdict: str

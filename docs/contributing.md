@@ -198,7 +198,7 @@ The `--list array` view shows the collections that would feed `sample` (the arra
 
 #### 1b. Sample granules per collection
 
-`sample` picks 5 granules per collection (the default), stratified across each collection's temporal extent so coverage isn't all from the same date.
+`sample` picks 5 granules per collection (the default), stratified across positional offsets in CMR's `revision_date` ordering, so coverage spans the collection's reprocessing history (which is where codec/format changes appear).
 
 ```bash
 uv run nasa-virtual-zarr-survey sample --access external

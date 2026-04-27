@@ -1,36 +1,25 @@
-"""Phase 2 (sample): for each collection, pick N granules stratified across temporal extent."""
+"""Phase 2 (sample): for each collection, pick N granules stratified across CMR's revision_date ordering."""
 
 from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import earthaccess
+import requests
+from earthaccess.results import DataGranule
 
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.opendap import dmrpp_url_for, verify_dmrpp_exists
 from nasa_virtual_zarr_survey.types import GranuleInfo, SampleCollection
 
-if TYPE_CHECKING:
-    from earthaccess.results import DataGranule
-
 
 _LOGGER = logging.getLogger(__name__)
 
-
-def temporal_bins(
-    start: datetime | None, end: datetime | None, n: int
-) -> list[tuple[datetime, datetime]] | None:
-    """Split [start, end] into `n` equal half-open bins. None if extent missing."""
-    if start is None or end is None or start >= end:
-        return None
-    span: timedelta = (end - start) / n
-    edges = [start + i * span for i in range(n + 1)]
-    edges[-1] = end
-    return list(zip(edges[:-1], edges[1:]))
+_CMR_GRANULES_URL = "https://cmr.earthdata.nasa.gov/search/granules.umm_json"
 
 
 def _extract_url(g: DataGranule, access: str = "direct") -> str | None:
@@ -146,6 +135,87 @@ def _resolve_dmrpp_url(
     return url
 
 
+def _hits(concept_id: str) -> int:
+    """Return the live granule count for `concept_id` from CMR.
+
+    One request with ``page_size=0``; the count comes from the
+    ``cmr-hits`` response header. Used as a lazy fallback when
+    ``collections.num_granules`` is missing.
+    """
+    params: dict[str, str | int] = {
+        "collection_concept_id": concept_id,
+        "page_size": 0,
+    }
+    response = requests.get(_CMR_GRANULES_URL, params=params, timeout=60)
+    response.raise_for_status()
+    return int(response.headers["cmr-hits"])
+
+
+def _is_cloud_hosted(umm: dict[str, Any]) -> bool:
+    """Mirror of ``earthaccess.search.DataGranules._is_cloud_hosted``.
+
+    Inlined so we can wrap raw CMR JSON in a ``DataGranule`` with the
+    correct flag without going through the ``earthaccess.search_data``
+    code path.
+    """
+    if "RelatedUrls" not in umm:
+        return False
+    for link in umm["RelatedUrls"]:
+        if (
+            "protected" in link.get("URL", "")
+            or link.get("Type") == "GET DATA VIA DIRECT ACCESS"
+        ):
+            return True
+    return False
+
+
+def _fetch_at_offset(concept_id: str, offset: int) -> DataGranule | None:
+    """Fetch the single granule at the given positional offset.
+
+    Sorts by ``revision_date`` ascending so offset 0 is the oldest revision.
+    Returns ``None`` if the response carries no items (race with deletion,
+    or pagination edge with concurrent ingests).
+    """
+    params: dict[str, str | int] = {
+        "collection_concept_id": concept_id,
+        "sort_key": "revision_date",
+        "page_size": 1,
+        "page_num": offset + 1,  # CMR pages are 1-indexed
+    }
+    response = requests.get(_CMR_GRANULES_URL, params=params, timeout=60)
+    response.raise_for_status()
+    items = response.json().get("items") or []
+    if not items:
+        return None
+    raw = items[0]
+    return DataGranule(raw, cloud_hosted=_is_cloud_hosted(raw["umm"]))
+
+
+def _fetch_with_retry(
+    concept_id: str, offset: int, *, bin_index: int
+) -> DataGranule | None:
+    """Fetch a granule at `offset`; on empty response, retry once at the adjacent offset.
+
+    Adjacent direction: ``offset - 1`` normally, or ``offset + 1`` when
+    ``offset == 0``. On second failure, log a warning and return ``None``;
+    caller drops the bin.
+    """
+    g = _fetch_at_offset(concept_id, offset)
+    if g is not None:
+        return g
+    retry_offset = offset + 1 if offset == 0 else offset - 1
+    g = _fetch_at_offset(concept_id, retry_offset)
+    if g is not None:
+        return g
+    _LOGGER.warning(
+        "collection %s bin %d (offset=%d) returned no granule after retry",
+        concept_id,
+        bin_index,
+        offset,
+    )
+    return None
+
+
 def sample_one_collection(
     coll: SampleCollection,
     n_bins: int = 5,
@@ -153,69 +223,56 @@ def sample_one_collection(
     access: str = "direct",
     verify_dmrpp: bool = False,
 ) -> list[GranuleInfo]:
-    """Return up to `n_bins` granule rows for a collection, stratified over temporal bins.
+    """Return up to `n_bins` granule rows for `coll`, stratified across CMR's
+    ``revision_date`` ordering.
 
-    If temporal extent is missing, fall back to `n_bins` evenly-spaced offsets.
-    When ``coll['has_cloud_opendap']`` is true, each row's ``dmrpp_granule_url``
-    is set to the ``.dmrpp`` sidecar alongside ``https_url``. With
-    ``verify_dmrpp=True`` the sidecar is HEAD-checked and nulled on 404 — this
-    costs one extra request per granule.
+    For collections with ``num_granules`` granules, fetches the granules at
+    offsets ``[i * num_granules // n_bins for i in range(n_bins)]`` against the
+    CMR ``granules.umm_json`` endpoint sorted by ``revision_date`` ascending.
+
+    When ``coll['num_granules']`` is ``None``, calls ``_hits`` once to fetch
+    the live count from CMR.
+
+    When the population is smaller than ``n_bins``, fetches every granule
+    (offsets ``range(num_granules)``).
+
+    On a CMR query that returns no granule for a bin (rare race condition with
+    granule deletion or concurrent ingest), retries once at the adjacent
+    offset; on second failure logs a warning and skips the bin.
     """
-    bins = temporal_bins(coll.get("time_start"), coll.get("time_end"), n=n_bins)
-    rows: list[GranuleInfo] = []
-    now = datetime.now(timezone.utc)
+    concept_id = coll["concept_id"]
+    n_total = coll.get("num_granules")
+    if n_total is None:
+        n_total = _hits(concept_id)
+    if n_total == 0:
+        return []
+    if n_total <= n_bins:
+        offsets = list(range(n_total))
+    else:
+        offsets = [i * n_total // n_bins for i in range(n_bins)]
+
     has_opendap = bool(coll.get("has_cloud_opendap"))
+    now = datetime.now(timezone.utc)
+    rows: list[GranuleInfo] = []
 
-    if bins is None:
-        # No temporal extent: take the first `n_bins` granules with synthetic bin indices.
-        results = earthaccess.search_data(
-            concept_id=coll["concept_id"],
-            count=n_bins,
-        )
-        for i, g in enumerate(results[:n_bins]):
-            data_url, https_url = _extract_urls(g, access)
-            rows.append(
-                GranuleInfo(
-                    collection_concept_id=coll["concept_id"],
-                    granule_concept_id=g["meta"]["concept-id"],
-                    data_url=data_url,
-                    https_url=https_url,
-                    dmrpp_granule_url=_resolve_dmrpp_url(
-                        https_url, has_opendap, verify_dmrpp
-                    ),
-                    temporal_bin=i,
-                    size_bytes=_extract_size(g),
-                    sampled_at=now,
-                    stratified=False,
-                    access_mode=access,
-                    umm_json=_granule_dict(g),
-                )
-            )
-        return rows
-
-    for i, (a, b) in enumerate(bins):
-        results = earthaccess.search_data(
-            concept_id=coll["concept_id"],
-            temporal=(a.isoformat(), b.isoformat()),
-            count=1,
-        )
-        if not results:
+    for bin_index, offset in enumerate(offsets):
+        g = _fetch_with_retry(concept_id, offset, bin_index=bin_index)
+        if g is None:
             continue
-        g = results[0]
         data_url, https_url = _extract_urls(g, access)
         rows.append(
             GranuleInfo(
-                collection_concept_id=coll["concept_id"],
+                collection_concept_id=concept_id,
                 granule_concept_id=g["meta"]["concept-id"],
                 data_url=data_url,
                 https_url=https_url,
                 dmrpp_granule_url=_resolve_dmrpp_url(
                     https_url, has_opendap, verify_dmrpp
                 ),
-                temporal_bin=i,
+                stratification_bin=bin_index,
+                n_total_at_sample=n_total,
                 size_bytes=_extract_size(g),
                 sampled_at=now,
-                stratified=True,
                 access_mode=access,
                 umm_json=_granule_dict(g),
             )
@@ -326,8 +383,8 @@ def run_sample(
             con.execute(
                 """INSERT OR IGNORE INTO granules
                    (collection_concept_id, granule_concept_id, data_url, https_url,
-                    dmrpp_granule_url, temporal_bin, size_bytes, sampled_at,
-                    stratified, access_mode, umm_json)
+                    dmrpp_granule_url, stratification_bin, n_total_at_sample, size_bytes,
+                    sampled_at, access_mode, umm_json)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     r["collection_concept_id"],
@@ -335,10 +392,10 @@ def run_sample(
                     r["data_url"],
                     r["https_url"],
                     r["dmrpp_granule_url"],
-                    r["temporal_bin"],
+                    r["stratification_bin"],
+                    r["n_total_at_sample"],
                     r["size_bytes"],
                     r["sampled_at"],
-                    r["stratified"],
                     r["access_mode"],
                     json.dumps(r["umm_json"]),
                 ],

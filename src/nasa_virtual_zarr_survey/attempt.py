@@ -56,7 +56,6 @@ class AttemptResult:
     daac: str | None = None
     format_family: str | None = None
     parser: str | None = None
-    stratified: bool | None = None
     attempted_at: datetime | None = None
 
     # Phase 3: Parsability
@@ -135,7 +134,6 @@ def attempt_one(
     collection_concept_id: str | None = None,
     granule_concept_id: str | None = None,
     daac: str | None = None,
-    stratified: bool | None = None,
     override: CollectionOverride | None = None,
 ) -> AttemptResult:
     """Try to open one granule through both phases. Always returns a result; never raises."""
@@ -146,7 +144,6 @@ def attempt_one(
         daac=daac,
         format_family=family.value,
         attempted_at=datetime.now(timezone.utc),
-        stratified=stratified,
         override_applied=not ov.is_empty(),
     )
 
@@ -294,7 +291,6 @@ _SCHEMA_FIELDS: dict[str, pa.DataType] = {
     "daac": pa.string(),
     "format_family": pa.string(),
     "parser": pa.string(),
-    "stratified": pa.bool_(),
     "attempted_at": pa.timestamp("us", tz="UTC"),
     "parse_success": pa.bool_(),
     "parse_error_type": pa.string(),
@@ -357,7 +353,6 @@ class ResultWriter:
             cols["daac"].append(r.daac)
             cols["format_family"].append(r.format_family)
             cols["parser"].append(r.parser)
-            cols["stratified"].append(r.stratified)
             cols["attempted_at"].append(r.attempted_at)
             cols["parse_success"].append(r.parse_success)
             cols["parse_error_type"].append(r.parse_error_type)
@@ -404,8 +399,7 @@ def _pending_granules(
                g.data_url,
                c.daac,
                c.provider,
-               c.format_family,
-               g.stratified
+               c.format_family
         FROM granules g
         JOIN collections c ON c.concept_id = g.collection_concept_id
         WHERE c.skip_reason IS NULL
@@ -422,7 +416,7 @@ def _pending_granules(
     if only_collection:
         q += " AND c.concept_id = ?"
         params.append(only_collection)
-    q += " ORDER BY c.daac, c.concept_id, g.temporal_bin"
+    q += " ORDER BY c.daac, c.concept_id, g.stratification_bin"
 
     try:
         rows = con.execute(q, params).fetchall()
@@ -430,7 +424,7 @@ def _pending_granules(
         # No Parquet files yet -- read_parquet fails; fall back to "all granules".
         fallback = """
             SELECT c.concept_id, g.granule_concept_id, g.data_url, c.daac, c.provider,
-                   c.format_family, g.stratified
+                   c.format_family
             FROM granules g JOIN collections c ON c.concept_id = g.collection_concept_id
             WHERE c.skip_reason IS NULL
         """
@@ -441,7 +435,7 @@ def _pending_granules(
         if only_collection:
             fallback += " AND c.concept_id = ?"
             params2.append(only_collection)
-        fallback += " ORDER BY c.daac, c.concept_id, g.temporal_bin"
+        fallback += " ORDER BY c.daac, c.concept_id, g.stratification_bin"
         rows = con.execute(fallback, params2).fetchall()
 
     return [
@@ -452,7 +446,6 @@ def _pending_granules(
             daac=r[3],
             provider=r[4],
             format_family=r[5],
-            stratified=r[6],
         )
         for r in rows
     ]
@@ -558,7 +551,6 @@ def run_attempt(
                 granule_concept_id=row["granule_concept_id"],
                 daac=row["daac"],
                 format_family=family_str,
-                stratified=row["stratified"],
                 parse_error_type="SampleInvalid",
                 parse_error_message="missing format family, data URL, or provider",
                 attempted_at=datetime.now(timezone.utc),
@@ -572,7 +564,6 @@ def run_attempt(
                     granule_concept_id=row["granule_concept_id"],
                     daac=row["daac"],
                     format_family=family_str,
-                    stratified=row["stratified"],
                     parse_error_type="AuthUnavailable",
                     parse_error_message=str(e),
                     attempted_at=datetime.now(timezone.utc),
@@ -586,7 +577,6 @@ def run_attempt(
                     collection_concept_id=row["collection_concept_id"],
                     granule_concept_id=row["granule_concept_id"],
                     daac=row["daac"],
-                    stratified=row["stratified"],
                     override=override_registry.for_collection(
                         row["collection_concept_id"]
                     ),

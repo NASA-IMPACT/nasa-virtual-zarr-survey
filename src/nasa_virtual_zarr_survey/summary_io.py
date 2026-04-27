@@ -15,7 +15,7 @@ from typing import cast
 from nasa_virtual_zarr_survey.cubability import CubabilityResult, CubabilityVerdict
 from nasa_virtual_zarr_survey.types import VerdictRow
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def dump_summary(

@@ -45,10 +45,10 @@ def test_init_schema_is_idempotent(tmp_db_path: Path):
                 "collection_concept_id",
                 "granule_concept_id",
                 "data_url",
-                "temporal_bin",
+                "stratification_bin",
+                "n_total_at_sample",
                 "size_bytes",
                 "sampled_at",
-                "stratified",
             ],
         ),
     ],
@@ -68,7 +68,7 @@ def test_granules_primary_key_prevents_duplicates(tmp_db_path: Path):
     # Second insert with the same PK should fail.
     with pytest.raises(duckdb.ConstraintException):
         insert_granule(
-            con, "C1", "G1", data_url="s3://y", temporal_bin=1, size_bytes=200
+            con, "C1", "G1", data_url="s3://y", stratification_bin=1, size_bytes=200
         )
 
 
@@ -122,10 +122,9 @@ def test_init_schema_raises_on_stale_db(tmp_db_path: Path):
             granule_concept_id    TEXT NOT NULL,
             data_url              TEXT,
             https_url             TEXT,
-            temporal_bin          INTEGER,
+            stratification_bin    INTEGER,
             size_bytes            BIGINT,
             sampled_at            TIMESTAMP,
-            stratified            BOOLEAN,
             access_mode           TEXT NOT NULL,
             PRIMARY KEY (collection_concept_id, granule_concept_id)
         )

@@ -23,7 +23,6 @@ _RESULT_SCHEMA = pa.schema(
         ("daac", pa.string()),
         ("format_family", pa.string()),
         ("parser", pa.string()),
-        ("stratified", pa.bool_()),
         ("attempted_at", pa.timestamp("us", tz="UTC")),
         ("parse_success", pa.bool_()),
         ("parse_error_type", pa.string()),
@@ -79,7 +78,6 @@ def _row(
         "daac": "PODAAC",
         "format_family": "NetCDF4",
         "parser": "HDFParser",
-        "stratified": True,
         "attempted_at": now,
         "parse_success": parse_success,
         "parse_error_type": parse_error_type,
@@ -217,8 +215,6 @@ def test_collection_verdicts_classifies_all_three(tmp_db_path, tmp_results_dir):
     assert by_id["C_NONE"]["dataset_verdict"] == "not_attempted"
     assert by_id["C_SKIP"]["parse_verdict"] == "skipped"
     assert by_id["C_SKIP"]["dataset_verdict"] == "skipped"
-    # stratified is None because no granule rows were inserted into the DB
-    assert by_id["C_ALL"]["stratified"] is None
 
 
 def test_parse_fail_means_dataset_not_attempted(tmp_db_path, tmp_results_dir):
@@ -457,7 +453,6 @@ def test_render_report_contains_counts(tmp_db_path, tmp_results_dir, tmp_path):
     assert "all_pass" in text
     assert "PODAAC" in text
     assert "NetCDF4" in text
-    assert "Stratification" in text
     assert "FEASIBLE" in text
     # Collections table enumerates concept IDs and includes datatree column
     assert "## Collections" in text
@@ -687,7 +682,7 @@ def _sha256_of(path: Path) -> str:
 
 def _locked_sample_payload() -> dict:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at": "2026-04-26T12:00:00Z",
         "sampling_mode": "top=1",
         "collections": [
@@ -706,9 +701,9 @@ def _locked_sample_payload() -> dict:
                 "granule_concept_id": "G1-T",
                 "s3_url": "s3://b/k1",
                 "https_url": "https://h/k1",
-                "temporal_bin": 0,
+                "stratification_bin": 0,
+                "n_total_at_sample": 100,
                 "size_bytes": 100,
-                "stratified": True,
             }
         ],
     }
@@ -770,7 +765,7 @@ def test_report_records_provenance_hashes(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(export_path.read_text())
-    assert payload["schema_version"] == 6
+    assert payload["schema_version"] == 7
     assert payload["snapshot_date"] == "2026-02-15"
     assert payload["snapshot_kind"] == "release"
     assert payload["locked_sample_sha256"] == _sha256_of(sample_path)

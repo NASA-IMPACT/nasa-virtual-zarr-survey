@@ -87,10 +87,10 @@ def insert_granule(
     *,
     data_url: str | None = "s3://b/file.nc",
     https_url: str | None = None,
-    temporal_bin: int = 0,
+    stratification_bin: int = 0,
+    n_total_at_sample: int = 0,
     size_bytes: int | None = None,
     sampled_at: datetime | None = None,
-    stratified: bool = True,
     access_mode: str = "direct",
 ) -> None:
     """Insert one row into the ``granules`` table with sensible defaults.
@@ -101,16 +101,16 @@ def insert_granule(
         con.execute(
             """INSERT INTO granules
                (collection_concept_id, granule_concept_id, data_url, https_url,
-                temporal_bin, size_bytes, sampled_at, stratified, access_mode)
-               VALUES (?, ?, ?, ?, ?, ?, now(), ?, ?)""",
+                stratification_bin, n_total_at_sample, size_bytes, sampled_at, access_mode)
+               VALUES (?, ?, ?, ?, ?, ?, ?, now(), ?)""",
             [
                 collection_concept_id,
                 granule_concept_id,
                 data_url,
                 https_url,
-                temporal_bin,
+                stratification_bin,
+                n_total_at_sample,
                 size_bytes,
-                stratified,
                 access_mode,
             ],
         )
@@ -118,17 +118,17 @@ def insert_granule(
         con.execute(
             """INSERT INTO granules
                (collection_concept_id, granule_concept_id, data_url, https_url,
-                temporal_bin, size_bytes, sampled_at, stratified, access_mode)
+                stratification_bin, n_total_at_sample, size_bytes, sampled_at, access_mode)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 collection_concept_id,
                 granule_concept_id,
                 data_url,
                 https_url,
-                temporal_bin,
+                stratification_bin,
+                n_total_at_sample,
                 size_bytes,
                 sampled_at,
-                stratified,
                 access_mode,
             ],
         )

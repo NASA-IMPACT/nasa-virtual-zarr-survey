@@ -572,7 +572,7 @@ def sample(
     access: str,
     verify_dmrpp: bool,
 ) -> None:
-    """Phase 2 (sample): pick N granules stratified across each collection's temporal extent."""
+    """Phase 2 (sample): pick N granules stratified across each collection's CMR revision_date ordering."""
     from nasa_virtual_zarr_survey.sample import run_sample
 
     run_sample(
