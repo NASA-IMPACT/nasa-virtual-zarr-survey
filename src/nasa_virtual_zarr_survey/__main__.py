@@ -35,6 +35,11 @@ warnings.filterwarnings(
     message=r"In a future version, xarray will not decode the variable .* into a timedelta64 dtype",
     category=FutureWarning,
 )
+warnings.filterwarnings(
+    "ignore",
+    message=r"The data type .* does not have a Zarr V3 specification",
+    category=FutureWarning,
+)
 
 DEFAULT_DB = Path("output/survey.duckdb")
 DEFAULT_RESULTS = Path("output/results")
