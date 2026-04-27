@@ -117,6 +117,19 @@ def _resolve_cache_params(
     return effective_cache_dir, _parse_size(cache_max_size)
 
 
+def _max_granule_size_option(f):
+    """``--max-granule-size`` flag shared across prefetch/attempt/snapshot."""
+    return click.option(
+        "--max-granule-size",
+        "max_granule_size",
+        type=str,
+        default=None,
+        help="Skip collections that have any sampled granule larger than this "
+        "(e.g., '5GB'). Granules with unknown size pass through. "
+        "Applied identically across prefetch, attempt, and snapshot.",
+    )(f)
+
+
 def _discover_summary(db_path: Path) -> str:
     from nasa_virtual_zarr_survey.db import connect, init_schema
 
@@ -626,6 +639,7 @@ def sample(
     "popularity_rank requirement — useful for retrying a single collection "
     "that previously failed.",
 )
+@_max_granule_size_option
 def prefetch(
     db_path: Path,
     cache_dir: Path | None,
@@ -633,6 +647,7 @@ def prefetch(
     access: str,
     verbose: bool,
     collection: str | None,
+    max_granule_size: str | None,
 ) -> None:
     """Phase 2.5 (prefetch): pre-warm the cache in popularity-rank order.
 
@@ -647,6 +662,7 @@ def prefetch(
 
     effective_cache_dir = cache_dir or DEFAULT_CACHE_DIR
     cache_max_bytes = _parse_size(cache_max_size)
+    max_granule_bytes = _parse_size(max_granule_size) if max_granule_size else None
     summary = run_prefetch(
         db_path,
         cache_dir=effective_cache_dir,
@@ -654,11 +670,15 @@ def prefetch(
         access=cast(AccessMode, access),
         verbose=verbose,
         collection=collection,
+        max_granule_bytes=max_granule_bytes,
     )
     bytes_gb = summary["bytes_added"] / 1024**3
     stopped = summary["stopped_at_rank"]
+    skipped_oversize = summary.get("collections_skipped_oversize", 0)
+    skip_str = f", {skipped_oversize} skipped (oversize)" if skipped_oversize else ""
     click.echo(
-        f"prefetch: considered {summary['collections_considered']} collection(s), "
+        f"prefetch: considered {summary['collections_considered']} collection(s)"
+        f"{skip_str}, "
         f"fetched {summary['granules_fetched']} granule(s) "
         f"({bytes_gb:.1f} GB added), "
         f"{summary['granules_failed']} failure(s)."
@@ -723,6 +743,7 @@ def prefetch(
     help="Load the override TOML but skip the startup signature check; "
     "runtime exceptions from incompatible kwargs are captured per attempt.",
 )
+@_max_granule_size_option
 def attempt(
     db_path: Path,
     locked_sample_path: Path | None,
@@ -738,6 +759,7 @@ def attempt(
     overrides_path: Path,
     no_overrides: bool,
     skip_override_validation: bool,
+    max_granule_size: str | None,
 ) -> None:
     """Phases 3 and 4 (attempt): parsability + datasetability per granule; write Parquet rows."""
     from nasa_virtual_zarr_survey.attempt import run_attempt
@@ -753,6 +775,7 @@ def attempt(
     effective_cache_dir, cache_max_bytes = _resolve_cache_params(
         use_cache, cache_dir, cache_max_size
     )
+    max_granule_bytes = _parse_size(max_granule_size) if max_granule_size else None
     n = run_attempt(
         session,
         results_dir,
@@ -766,6 +789,7 @@ def attempt(
         overrides_path=overrides_path,
         no_overrides=no_overrides,
         skip_override_validation=skip_override_validation,
+        max_granule_bytes=max_granule_bytes,
     )
     if locked_sample_path is None:
         click.echo(_attempt_summary(db_path, results_dir, n))
@@ -1138,6 +1162,7 @@ def pilot(
     default=Path("docs/results/history"),
 )
 @_cache_options(default_use_cache=True)
+@_max_granule_size_option
 def snapshot(
     snapshot_date: str | None,
     label: str | None,
@@ -1151,6 +1176,7 @@ def snapshot(
     use_cache: bool,
     cache_dir: Path | None,
     cache_max_size: str,
+    max_granule_size: str | None,
 ) -> None:
     """Run attempt + report and emit a `*.summary.json` digest.
 
@@ -1167,6 +1193,7 @@ def snapshot(
     effective_cache_dir, cache_max_bytes = _resolve_cache_params(
         use_cache, cache_dir, cache_max_size
     )
+    max_granule_bytes = _parse_size(max_granule_size) if max_granule_size else None
     try:
         out = run_snapshot(
             snapshot_date=snapshot_date,
@@ -1180,6 +1207,7 @@ def snapshot(
             history_dir=history_dir,
             cache_dir=effective_cache_dir,
             cache_max_bytes=cache_max_bytes,
+            max_granule_bytes=max_granule_bytes,
         )
     except SnapshotError as e:
         raise click.ClickException(str(e)) from e

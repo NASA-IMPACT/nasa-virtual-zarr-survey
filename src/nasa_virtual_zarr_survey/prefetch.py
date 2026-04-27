@@ -69,6 +69,7 @@ def run_prefetch(
     access: Literal["direct", "external"] = "direct",
     verbose: bool = False,
     collection: str | None = None,
+    max_granule_bytes: int | None = None,
 ) -> dict[str, int]:
     """Pre-warm the cache with sampled granules in popularity order.
 
@@ -87,7 +88,12 @@ def run_prefetch(
     ``concept_id`` and skips the popularity-rank requirement — useful for
     re-trying a single collection that previously failed.
 
-    Returns a summary dict: counts of collections considered/with-any-fetch,
+    When ``max_granule_bytes`` is set, any collection with a sampled granule
+    whose ``size_bytes`` exceeds it is skipped wholesale and recorded in
+    ``prefetch_log`` with ``action='skip'``. Granules with unknown size
+    (NULL) pass through.
+
+    Returns a summary dict: counts of collections considered/skipped/with-any-fetch,
     granules fetched/failed, bytes added, and the rank at which the run
     stopped (0 if it walked through every ranked collection).
 
@@ -157,6 +163,7 @@ def run_prefetch(
 
     summary: dict[str, int] = {
         "collections_considered": 0,
+        "collections_skipped_oversize": 0,
         "collections_with_fetches": 0,
         "granules_fetched": 0,
         "granules_failed": 0,
@@ -191,6 +198,32 @@ def run_prefetch(
         ).fetchall()
         if not granules:
             continue
+
+        if max_granule_bytes is not None:
+            oversized = [
+                (gid, size)
+                for gid, _url, size in granules
+                if size is not None and size > max_granule_bytes
+            ]
+            if oversized:
+                first_gid, first_size = oversized[0]
+                _log(
+                    con,
+                    cid,
+                    first_gid,
+                    "skip",
+                    "oversize",
+                    first_size,
+                    f">{max_granule_bytes} bytes",
+                )
+                summary["collections_skipped_oversize"] += 1
+                _emit(
+                    f"[{idx}/{total_collections}] rank={rank} {cid}: "
+                    f"skipped — {first_gid} is {first_size / 1024**3:.1f} GB "
+                    f"> {max_granule_bytes / 1024**3:.1f} GB limit"
+                )
+                outer_bar.update(1)
+                continue
 
         first_url = next((g[1] for g in granules if g[1]), None)
         if first_url is None:

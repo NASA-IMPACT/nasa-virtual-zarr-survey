@@ -258,6 +258,80 @@ def test_run_prefetch_per_granule_failure_does_not_abort_collection(
     assert by_g["G-c"][1] == "ok"
 
 
+def test_run_prefetch_max_granule_size_skips_oversize_collection(
+    tmp_db_path: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """A collection with any granule above the limit is skipped wholesale."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    _seed(
+        con,
+        [
+            # C-big has a 5 GB granule plus a 100 B one — whole collection gets skipped.
+            (
+                "C-big",
+                1,
+                [
+                    ("g-big", "s3://b/big.nc", 5 * 1024**3),
+                    ("g-tiny", "s3://b/tiny.nc", 100),
+                ],
+            ),
+            # C-small fits and should be cached.
+            ("C-small", 2, [("g-s", "s3://b/small.nc", 100)]),
+        ],
+    )
+    con.close()
+
+    _patch_get_store(
+        monkeypatch,
+        {
+            "s3://b": {
+                "big.nc": b"x" * 100,
+                "tiny.nc": b"y" * 100,
+                "small.nc": b"z" * 100,
+            }
+        },
+    )
+
+    summary = run_prefetch(
+        tmp_db_path,
+        cache_dir=tmp_path / "cache",
+        cache_max_bytes=10_000,
+        max_granule_bytes=1 * 1024**3,  # 1 GB
+    )
+
+    assert summary["collections_skipped_oversize"] == 1
+    assert summary["granules_fetched"] == 1  # only the C-small granule
+
+    con = connect(tmp_db_path)
+    skip_rows = con.execute(
+        "SELECT collection_concept_id, status, error FROM prefetch_log "
+        "WHERE action = 'skip'"
+    ).fetchall()
+    assert skip_rows == [("C-big", "oversize", ">1073741824 bytes")]
+
+
+def test_run_prefetch_max_granule_size_null_passes_through(
+    tmp_db_path: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """Granules with NULL size_bytes are not filtered by --max-granule-size."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    _seed(con, [("C-1", 1, [("g-?", "s3://b/x.nc", None)])])
+    con.close()
+
+    _patch_get_store(monkeypatch, {"s3://b": {"x.nc": b"x" * 100}})
+
+    summary = run_prefetch(
+        tmp_db_path,
+        cache_dir=tmp_path / "cache",
+        cache_max_bytes=10_000,
+        max_granule_bytes=10,  # tiny limit
+    )
+    assert summary["collections_skipped_oversize"] == 0
+    assert summary["granules_fetched"] == 1
+
+
 def test_run_prefetch_collection_filter_targets_one_collection(
     tmp_db_path: Path, tmp_path: Path, monkeypatch
 ) -> None:

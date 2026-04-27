@@ -101,6 +101,7 @@ def run_snapshot(
     skip_override_validation: bool = True,
     cache_dir: Path | None = None,
     cache_max_bytes: int = 50 * 1024**3,
+    max_granule_bytes: int | None = None,
 ) -> Path:
     """Run attempt + report and write the snapshot's summary digest.
 
@@ -181,6 +182,7 @@ def run_snapshot(
         skip_override_validation=skip_override_validation,
         cache_dir=cache_dir,
         cache_max_bytes=cache_max_bytes,
+        max_granule_bytes=max_granule_bytes,
     )
     run_report(
         session,

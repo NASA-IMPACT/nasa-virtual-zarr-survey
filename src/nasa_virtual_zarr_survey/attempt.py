@@ -390,9 +390,20 @@ def _pending_granules(
     results_dir: Path,
     only_daac: str | None,
     only_collection: str | None = None,
+    max_granule_bytes: int | None = None,
 ) -> list[PendingGranule]:
-    """Return granule rows for which no Parquet row exists yet."""
+    """Return granule rows for which no Parquet row exists yet.
+
+    When ``max_granule_bytes`` is set, collections with any sampled granule
+    whose ``size_bytes`` exceeds it are excluded entirely. Granules with
+    unknown size (NULL) pass through.
+    """
     results_glob = str(results_dir / "**" / "*.parquet")
+    oversize_clause = (
+        " AND g.collection_concept_id NOT IN ("
+        " SELECT DISTINCT collection_concept_id FROM granules"
+        " WHERE size_bytes > ?)"
+    )
     q = """
         SELECT c.concept_id AS collection_concept_id,
                g.granule_concept_id,
@@ -416,6 +427,9 @@ def _pending_granules(
     if only_collection:
         q += " AND c.concept_id = ?"
         params.append(only_collection)
+    if max_granule_bytes is not None:
+        q += oversize_clause
+        params.append(max_granule_bytes)
     q += " ORDER BY c.daac, c.concept_id, g.stratification_bin"
 
     try:
@@ -435,6 +449,9 @@ def _pending_granules(
         if only_collection:
             fallback += " AND c.concept_id = ?"
             params2.append(only_collection)
+        if max_granule_bytes is not None:
+            fallback += oversize_clause
+            params2.append(max_granule_bytes)
         fallback += " ORDER BY c.daac, c.concept_id, g.stratification_bin"
         rows = con.execute(fallback, params2).fetchall()
 
@@ -465,6 +482,7 @@ def run_attempt(
     overrides_path: Path | str = DEFAULT_OVERRIDES_PATH,
     no_overrides: bool = False,
     skip_override_validation: bool = False,
+    max_granule_bytes: int | None = None,
 ) -> int:
     """Attempt every pending granule. Returns count attempted in this call."""
     con = session.con
@@ -487,7 +505,24 @@ def run_attempt(
     if not no_overrides and not skip_override_validation:
         override_registry.validate(format_for=format_for)
 
-    pending = _pending_granules(con, results_dir, only_daac, only_collection)
+    pending = _pending_granules(
+        con, results_dir, only_daac, only_collection, max_granule_bytes
+    )
+    if max_granule_bytes is not None:
+        # Surface the filter so the operator knows why some collections are absent.
+        skipped = con.execute(
+            "SELECT COUNT(DISTINCT collection_concept_id) FROM granules "
+            "WHERE size_bytes > ?",
+            [max_granule_bytes],
+        ).fetchone()
+        n_skip = (skipped[0] if skipped else 0) or 0
+        if n_skip:
+            print(
+                f"attempt: skipping {n_skip} collection(s) with sampled granules "
+                f"> {max_granule_bytes / 1024**3:.1f} GB",
+                file=sys.stderr,
+                flush=True,
+            )
     writer = ResultWriter(results_dir, shard_size=shard_size)
     cache = StoreCache(
         access=access,

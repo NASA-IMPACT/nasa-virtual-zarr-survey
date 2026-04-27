@@ -893,3 +893,75 @@ def test_pending_granules_filters_by_collection(tmp_path) -> None:
         only_collection="C1-X",
     )
     assert [r["collection_concept_id"] for r in rows] == ["C1-X"]
+
+
+def test_pending_granules_filters_by_max_granule_bytes(tmp_path) -> None:
+    """Collections with any granule above the limit are excluded entirely."""
+    from nasa_virtual_zarr_survey.attempt import _pending_granules
+
+    con = connect(str(tmp_path / "db.duckdb"))
+    init_schema(con)
+    con.execute(
+        "INSERT INTO collections (concept_id, daac, provider, format_family, "
+        "skip_reason) VALUES "
+        "(?, ?, ?, ?, NULL), (?, ?, ?, ?, NULL)",
+        ["C-big", "X", "P", "NetCDF4", "C-small", "Y", "P", "NetCDF4"],
+    )
+    con.execute(
+        "INSERT INTO granules (collection_concept_id, granule_concept_id, "
+        "data_url, stratification_bin, size_bytes, access_mode) VALUES "
+        "(?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)",
+        [
+            # C-big has one huge granule plus a small one — whole collection out.
+            "C-big",
+            "g-huge",
+            "s3://b/h.nc",
+            0,
+            5 * 1024**3,
+            "direct",
+            "C-big",
+            "g-tiny",
+            "s3://b/t.nc",
+            1,
+            100,
+            "direct",
+            "C-small",
+            "g-s",
+            "s3://b/s.nc",
+            0,
+            100,
+            "direct",
+        ],
+    )
+    rows = _pending_granules(
+        con,
+        results_dir=tmp_path / "results",
+        only_daac=None,
+        max_granule_bytes=1 * 1024**3,
+    )
+    assert sorted({r["collection_concept_id"] for r in rows}) == ["C-small"]
+
+
+def test_pending_granules_max_granule_bytes_null_passes_through(tmp_path) -> None:
+    from nasa_virtual_zarr_survey.attempt import _pending_granules
+
+    con = connect(str(tmp_path / "db.duckdb"))
+    init_schema(con)
+    con.execute(
+        "INSERT INTO collections (concept_id, daac, provider, format_family, "
+        "skip_reason) VALUES (?, ?, ?, ?, NULL)",
+        ["C-1", "X", "P", "NetCDF4"],
+    )
+    con.execute(
+        "INSERT INTO granules (collection_concept_id, granule_concept_id, "
+        "data_url, stratification_bin, size_bytes, access_mode) VALUES "
+        "(?, ?, ?, ?, NULL, ?)",
+        ["C-1", "g-?", "s3://b/x.nc", 0, "direct"],
+    )
+    rows = _pending_granules(
+        con,
+        results_dir=tmp_path / "results",
+        only_daac=None,
+        max_granule_bytes=10,
+    )
+    assert [r["granule_concept_id"] for r in rows] == ["g-?"]
