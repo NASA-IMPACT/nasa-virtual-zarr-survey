@@ -26,6 +26,11 @@ if TYPE_CHECKING:
 # `figures` is imported lazily inside run_report so the base install (without
 # the `docs` dependency group) can still import the report module.
 
+# Shared default for `cube_results.get(..., _NOT_ATTEMPTED)` lookups: if a
+# collection isn't in the cube_results map (producer/consumer drift), treat it
+# as if cubability was not attempted rather than crashing the report.
+_NOT_ATTEMPTED = CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)
+
 
 @dataclass(frozen=True)
 class RunMetadata:
@@ -450,9 +455,7 @@ def _render_collections_table(
         verdicts,
         key=lambda r: (r["daac"] or "", r["format_family"] or "", r["concept_id"]),
     ):
-        cube = cube_results.get(
-            v["concept_id"], CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)
-        ).verdict.value
+        cube = cube_results.get(v["concept_id"], _NOT_ATTEMPTED).verdict.value
         bucket = v.get("top_bucket", "")
         lines.append(
             f"| {v['concept_id']} | {v['daac'] or ''} | "
@@ -488,15 +491,14 @@ def _render_three_phase_table(
             v
             for v in parsable_vs
             if v["dataset_verdict"] == "all_pass"
-            and cube_results.get(
-                v["concept_id"], CubabilityResult(CubabilityVerdict.NOT_ATTEMPTED)
-            ).verdict
+            and cube_results.get(v["concept_id"], _NOT_ATTEMPTED).verdict
             != CubabilityVerdict.EXCLUDED_BY_POLICY
         ]
         cubable = sum(
             1
             for v in cube_eligible
-            if cube_results[v["concept_id"]].verdict == CubabilityVerdict.FEASIBLE
+            if cube_results.get(v["concept_id"], _NOT_ATTEMPTED).verdict
+            == CubabilityVerdict.FEASIBLE
         )
         lines.append(
             f"| {group} | {_pct(parsable, total)} | {_pct(datasetable, parsable)} | "

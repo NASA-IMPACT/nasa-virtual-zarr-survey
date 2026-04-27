@@ -593,6 +593,31 @@ def test_three_phase_daac_table_format(tmp_db_path, tmp_results_dir, tmp_path):
     assert "PODAAC" in text
 
 
+def test_three_phase_table_handles_missing_concept_id_in_cube_results():
+    """A dataset-passing row whose concept_id is absent from cube_results
+    must not crash _render_three_phase_table; it should be counted as
+    cube-eligible-but-not-feasible (NOT_ATTEMPTED)."""
+    from nasa_virtual_zarr_survey.report import _render_three_phase_table
+    from nasa_virtual_zarr_survey.types import VerdictRow
+
+    row: VerdictRow = {
+        "concept_id": "C_MISSING",
+        "daac": "PODAAC",
+        "format_family": "NETCDF4",
+        "skip_reason": None,
+        "processing_level": "L3",
+        "parse_verdict": "all_pass",
+        "dataset_verdict": "all_pass",
+        "datatree_verdict": "all_pass",
+        "top_bucket": "",
+    }
+
+    lines = _render_three_phase_table([row], {}, "By DAAC", "daac")
+    text = "\n".join(lines)
+    # 1 eligible row, 0 feasible -> "0/1 (0%)" in the Cubable column
+    assert "| PODAAC | 1/1 (100%) | 1/1 (100%) | 1/1 (100%) | 0/1 (0%) |" in text
+
+
 def test_l2_collection_gets_excluded_by_policy_cubability(tmp_db_path, tmp_results_dir):
     """An L2 collection that passes dataset all_pass is marked EXCLUDED_BY_POLICY,
     not run through the cubability check, since L2 swath products are not
