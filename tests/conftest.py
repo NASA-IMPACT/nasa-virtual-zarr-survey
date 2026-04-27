@@ -51,6 +51,8 @@ def insert_collection(
     time_end: datetime | None = None,
     processing_level: str | None = "L3",
     skip_reason: str | None = None,
+    popularity_rank: int | None = None,
+    usage_score: int | None = None,
 ) -> None:
     """Insert one row into the ``collections`` table with sensible defaults.
 
@@ -61,8 +63,9 @@ def insert_collection(
         """INSERT INTO collections
            (concept_id, short_name, version, daac, provider, format_family,
             format_declared, num_granules, time_start, time_end,
-            processing_level, skip_reason, discovered_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())""",
+            processing_level, skip_reason, popularity_rank, usage_score,
+            discovered_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())""",
         [
             concept_id,
             short_name,
@@ -76,6 +79,8 @@ def insert_collection(
             time_end,
             processing_level,
             skip_reason,
+            popularity_rank,
+            usage_score,
         ],
     )
 

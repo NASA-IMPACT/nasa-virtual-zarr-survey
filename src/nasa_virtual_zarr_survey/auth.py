@@ -119,6 +119,11 @@ class StoreCache:
                 self.cache_dir, max_bytes=self.cache_max_bytes
             )
 
+    @property
+    def tracker(self) -> CacheSizeTracker | None:
+        """The shared ``CacheSizeTracker`` when caching is enabled, else None."""
+        return self._tracker
+
     def _ensure_login(self) -> None:
         if not self._logged_in:
             earthaccess.login(strategy="netrc")

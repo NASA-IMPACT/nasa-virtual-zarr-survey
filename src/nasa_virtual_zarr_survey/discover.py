@@ -101,24 +101,35 @@ def collection_row_from_umm(coll: dict[str, Any]) -> CollectionRow:
         processing_level=processing_level,
         skip_reason=skip_reason,
         has_cloud_opendap=has_opendap,
+        popularity_rank=None,
+        usage_score=None,
         discovered_at=datetime.now(timezone.utc),
         umm_json=coll,
     )
 
 
-def persist_collections(con, rows: Iterable[dict[str, Any]]) -> None:
+def persist_collections(
+    con,
+    rows: Iterable[dict[str, Any]],
+    *,
+    score_map: dict[str, tuple[int, int | None]] | None = None,
+) -> None:
     """Upsert collection rows into DuckDB.
 
     Accepts either raw UMM-JSON dicts (which will be transformed via
     ``collection_row_from_umm``) or already-built ``CollectionRow`` dicts.
+
+    When ``score_map`` is provided (top-N discovery modes), each row's
+    ``popularity_rank`` and ``usage_score`` come from the map, overriding
+    whatever the row carried.
     """
     init_schema(con)
     stmt = """
         INSERT OR REPLACE INTO collections
         (concept_id, short_name, version, daac, provider, format_family, format_declared,
          num_granules, time_start, time_end, processing_level, skip_reason,
-         has_cloud_opendap, discovered_at, umm_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         has_cloud_opendap, popularity_rank, usage_score, discovered_at, umm_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     for coll in rows:
         row: CollectionRow = (
@@ -126,6 +137,10 @@ def persist_collections(con, rows: Iterable[dict[str, Any]]) -> None:
             if "meta" in coll
             else cast(CollectionRow, coll)
         )
+        rank = row.get("popularity_rank")
+        score = row.get("usage_score")
+        if score_map is not None and row["concept_id"] in score_map:
+            rank, score = score_map[row["concept_id"]]
         con.execute(
             stmt,
             [
@@ -142,6 +157,8 @@ def persist_collections(con, rows: Iterable[dict[str, Any]]) -> None:
                 row["processing_level"],
                 row["skip_reason"],
                 row["has_cloud_opendap"],
+                rank,
+                score,
                 row["discovered_at"],
                 json.dumps(row["umm_json"]),
             ],
@@ -239,12 +256,12 @@ def run_discover(
     """
     con = connect(db_path)
     init_schema(con)
-    dicts, _score_map = fetch_collection_dicts(
+    dicts, score_map = fetch_collection_dicts(
         limit=limit,
         top_per_provider=top_per_provider,
         top_total=top_total,
     )
-    persist_collections(con, dicts)
+    persist_collections(con, dicts, score_map=score_map)
     mode = sampling_mode_string(limit, top_per_provider, top_total)
     con.execute(
         "INSERT OR REPLACE INTO run_meta (key, value, updated_at) VALUES (?, ?, ?)",

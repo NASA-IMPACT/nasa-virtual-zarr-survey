@@ -194,6 +194,35 @@ def test_persist_collections_upserts(tmp_db_path: Path):
     assert n == 2
 
 
+def test_persist_collections_writes_score_map_rank(tmp_db_path: Path):
+    con = connect(tmp_db_path)
+    init_schema(con)
+    umm_rows = [
+        _build_umm("C1-PODAAC", file_dist_format="NetCDF-4"),
+        _build_umm("C2-PODAAC", file_dist_format="NetCDF-4"),
+    ]
+    score_map = {
+        "C1-PODAAC": (1, 999),
+        "C2-PODAAC": (2, 500),
+    }
+    persist_collections(con, umm_rows, score_map=score_map)
+    rows = con.execute(
+        "SELECT concept_id, popularity_rank, usage_score "
+        "FROM collections ORDER BY popularity_rank"
+    ).fetchall()
+    assert rows == [("C1-PODAAC", 1, 999), ("C2-PODAAC", 2, 500)]
+
+
+def test_persist_collections_without_score_map_leaves_rank_null(tmp_db_path: Path):
+    con = connect(tmp_db_path)
+    init_schema(con)
+    persist_collections(con, [_build_umm("C-X", file_dist_format="NetCDF-4")])
+    rank = con.execute(
+        "SELECT popularity_rank FROM collections WHERE concept_id = 'C-X'"
+    ).fetchone()[0]
+    assert rank is None
+
+
 def test_run_discover_uses_earthaccess(tmp_db_path: Path, monkeypatch):
     fake_results = [
         _build_umm("C1-PODAAC", file_dist_format="NetCDF-4"),

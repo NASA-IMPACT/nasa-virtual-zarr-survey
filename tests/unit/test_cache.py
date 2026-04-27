@@ -90,6 +90,65 @@ def test_local_path_for_https_prefix(tmp_path: Path) -> None:
     assert p.parent == tmp_path / "https" / "daac.example.com"
 
 
+def test_fetch_and_cache_tolerates_head_failure(tmp_path: Path) -> None:
+    """A HEAD that throws (e.g., LAADS without Content-Length) must not abort the GET."""
+
+    class _HeadFailing:
+        def __init__(self, inner) -> None:  # type: ignore[no-untyped-def]
+            self._inner = inner
+
+        def head(self, path):  # type: ignore[no-untyped-def]
+            raise RuntimeError("Content-Length Header missing from response")
+
+        def get(self, path, **kw):  # type: ignore[no-untyped-def]
+            return self._inner.get(path, **kw)
+
+        def get_range(self, path, **kw):  # type: ignore[no-untyped-def]
+            return self._inner.get_range(path, **kw)
+
+        def get_ranges(self, path, **kw):  # type: ignore[no-untyped-def]
+            return self._inner.get_ranges(path, **kw)
+
+        async def head_async(self, path):  # type: ignore[no-untyped-def]
+            raise RuntimeError("Content-Length Header missing from response")
+
+        async def get_async(self, path, **kw):  # type: ignore[no-untyped-def]
+            return await self._inner.get_async(path, **kw)
+
+        async def get_range_async(self, path, **kw):  # type: ignore[no-untyped-def]
+            return await self._inner.get_range_async(path, **kw)
+
+        async def get_ranges_async(self, path, **kw):  # type: ignore[no-untyped-def]
+            return await self._inner.get_ranges_async(path, **kw)
+
+    inner = MemoryStore()
+    inner.put("foo.bin", b"hello")
+    tracker = CacheSizeTracker(tmp_path, max_bytes=10_000)
+    cached = DiskCachingReadableStore(
+        _HeadFailing(inner), prefix="s3://b", tracker=tracker
+    )
+    result = cached.get("foo.bin")
+    assert bytes(result.buffer()) == b"hello"
+    # File was cached even though HEAD threw.
+    assert cached.is_cached("foo.bin")
+    assert tracker.current_size == 5
+
+
+def test_is_cached_and_cached_path(tmp_path: Path) -> None:
+    underlying_inner = MemoryStore()
+    underlying_inner.put("foo.bin", b"hello")
+    tracker = CacheSizeTracker(tmp_path, max_bytes=10_000)
+    cached = DiskCachingReadableStore(
+        underlying_inner, prefix="s3://b", tracker=tracker
+    )
+    assert cached.is_cached("foo.bin") is False
+    assert cached.cached_path("foo.bin") is None
+    cached.get("foo.bin")
+    assert cached.is_cached("foo.bin") is True
+    p = cached.cached_path("foo.bin")
+    assert p is not None and p.read_bytes() == b"hello"
+
+
 # --- Task A4: head() delegates to underlying store ---
 
 

@@ -22,6 +22,8 @@ class CollectionRow(TypedDict):
     processing_level: str | None
     skip_reason: str | None
     has_cloud_opendap: bool
+    popularity_rank: int | None
+    usage_score: int | None
     discovered_at: datetime
     umm_json: dict[str, Any]
 

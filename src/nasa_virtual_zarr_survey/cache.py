@@ -11,10 +11,10 @@ import hashlib
 import logging
 import os
 import threading
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol, cast
 from urllib.parse import urlparse
 
 from obstore.store import LocalStore
@@ -25,6 +25,27 @@ if TYPE_CHECKING:
     from collections.abc import Buffer
 
     from obspec import GetOptions, GetResult, GetResultAsync, ObjectMeta
+
+
+_DEFAULT_STREAM_CHUNK = 8 * 1024 * 1024  # 8 MiB
+
+
+class _Streamable(Protocol):
+    """Subset of obstore's ``GetResult`` that exposes chunked iteration.
+
+    The obspec ``GetResult`` protocol doesn't declare ``stream``, but obstore's
+    concrete result does — we cast to this Protocol so the type checker knows
+    what we're calling without depending on obstore's class identity (which
+    lives in a Rust extension and isn't importable).
+    """
+
+    def stream(self, min_chunk_size: int = ...) -> Iterator[Any]: ...
+
+
+class _StreamableAsync(Protocol):
+    """Async counterpart of ``_Streamable``."""
+
+    def stream(self, min_chunk_size: int = ...) -> AsyncIterator[Any]: ...
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -127,6 +148,15 @@ class DiskCachingReadableStore(ReadableStore):
         local = self._local_path(path)
         return str(local.relative_to(self._cache_dir))
 
+    def is_cached(self, path: str) -> bool:
+        """Return True iff `path` has a complete object on disk."""
+        return self._local_path(path).exists()
+
+    def cached_path(self, path: str) -> Path | None:
+        """Local file for `path` if cached, else ``None``."""
+        local = self._local_path(path)
+        return local if local.exists() else None
+
     def head(self, path: str) -> "ObjectMeta":
         return self._store.head(path)
 
@@ -172,34 +202,75 @@ class DiskCachingReadableStore(ReadableStore):
             self._local_rel(path), starts=starts, ends=ends, lengths=lengths
         )
 
-    def _fetch_and_cache(
-        self, path: str, *, options: "GetOptions | None" = None
-    ) -> "GetResult":
-        # Pre-flight: head to learn size for cap check.
-        meta = self._store.head(path)
-        size = int(meta["size"])
-        if self._tracker.would_exceed(size):
-            self._warn_cap_exceeded()
-            return self._store.get(path, options=options)
+    def _stream_to_local(
+        self,
+        path: str,
+        on_chunk: Callable[[int], object] | None = None,
+    ) -> int | None:
+        """Stream `path` from the underlying store into the local cache.
 
-        # Fetch full object.
-        result = self._store.get(path)
-        data = bytes(result.buffer())
+        Returns the number of bytes written, or ``None`` when the cache write
+        was refused (cap pre-flight blew, or a write error fell through). On
+        success the local file is in place atomically and the tracker is
+        updated. ``on_chunk(n)`` fires per chunk during the write.
+        """
+        # Pre-flight HEAD for the cap check. Some HTTPS endpoints (e.g., LAADS)
+        # reject HEAD or omit Content-Length; fall through to GET in that case
+        # rather than failing the whole fetch.
+        try:
+            meta = self._store.head(path)
+            size = int(meta["size"])
+            if self._tracker.would_exceed(size):
+                self._warn_cap_exceeded()
+                return None
+        except Exception as e:
+            _LOGGER.debug("HEAD for %s failed (%s); proceeding to GET", path, e)
 
-        # Write atomically: tmp + replace.
+        result = cast(_Streamable, self._store.get(path))
         local = self._local_path(path)
         local.parent.mkdir(parents=True, exist_ok=True)
         tmp = local.with_suffix(local.suffix + ".tmp")
+        total = 0
         try:
-            tmp.write_bytes(data)
+            with tmp.open("wb") as f:
+                for chunk in result.stream(min_chunk_size=_DEFAULT_STREAM_CHUNK):
+                    b = bytes(chunk)
+                    f.write(b)
+                    total += len(b)
+                    if on_chunk is not None:
+                        on_chunk(len(b))
             os.replace(tmp, local)
         except OSError:
-            # Best-effort cleanup of tmp; fall through to direct fetch.
             tmp.unlink(missing_ok=True)
-            return self._store.get(path, options=options)
+            return None
+        self._tracker.add(total)
+        return total
 
-        self._tracker.add(len(data))
+    def _fetch_and_cache(
+        self, path: str, *, options: "GetOptions | None" = None
+    ) -> "GetResult":
+        written = self._stream_to_local(path)
+        if written is None:
+            # Cap blew or local write failed; fall through to a direct fetch.
+            return self._store.get(path, options=options)
         return self._local.get(self._local_rel(path), options=options)
+
+    def prefetch_to_cache(
+        self,
+        path: str,
+        *,
+        on_chunk: Callable[[int], object] | None = None,
+    ) -> bool:
+        """Warm the cache for `path`. Returns True if the local file is in place.
+
+        ``on_chunk(n)`` fires per chunk during the streaming write so callers
+        can drive a progress bar without consuming the bytes themselves. When
+        the file is already cached this is a no-op (no callback fired).
+        """
+        if self._local_path(path).exists():
+            return True
+        written = self._stream_to_local(path, on_chunk=on_chunk)
+        return written is not None
 
     def _warn_cap_exceeded(self) -> None:
         global _CAP_WARNING_EMITTED
@@ -251,27 +322,45 @@ class DiskCachingReadableStore(ReadableStore):
             self._local_rel(path), starts=starts, ends=ends, lengths=lengths
         )
 
-    async def _fetch_and_cache_async(
-        self, path: str, *, options: "GetOptions | None" = None
-    ) -> "GetResultAsync":
-        meta = await self._store.head_async(path)
-        size = int(meta["size"])
-        if self._tracker.would_exceed(size):
-            self._warn_cap_exceeded()
-            return await self._store.get_async(path, options=options)
+    async def _stream_to_local_async(
+        self,
+        path: str,
+        on_chunk: Callable[[int], object] | None = None,
+    ) -> int | None:
+        """Async counterpart of `_stream_to_local`. See that docstring."""
+        try:
+            meta = await self._store.head_async(path)
+            size = int(meta["size"])
+            if self._tracker.would_exceed(size):
+                self._warn_cap_exceeded()
+                return None
+        except Exception as e:
+            _LOGGER.debug("HEAD for %s failed (%s); proceeding to GET", path, e)
 
-        result = await self._store.get_async(path)
-        data = bytes(await result.buffer_async())
-
+        result = cast(_StreamableAsync, await self._store.get_async(path))
         local = self._local_path(path)
         local.parent.mkdir(parents=True, exist_ok=True)
         tmp = local.with_suffix(local.suffix + ".tmp")
+        total = 0
         try:
-            tmp.write_bytes(data)
+            with tmp.open("wb") as f:
+                async for chunk in result.stream(min_chunk_size=_DEFAULT_STREAM_CHUNK):
+                    b = bytes(chunk)
+                    f.write(b)
+                    total += len(b)
+                    if on_chunk is not None:
+                        on_chunk(len(b))
             os.replace(tmp, local)
         except OSError:
             tmp.unlink(missing_ok=True)
-            return await self._store.get_async(path, options=options)
+            return None
+        self._tracker.add(total)
+        return total
 
-        self._tracker.add(len(data))
+    async def _fetch_and_cache_async(
+        self, path: str, *, options: "GetOptions | None" = None
+    ) -> "GetResultAsync":
+        written = await self._stream_to_local_async(path)
+        if written is None:
+            return await self._store.get_async(path, options=options)
         return await self._local.get_async(self._local_rel(path), options=options)

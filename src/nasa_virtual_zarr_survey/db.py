@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS collections (
     processing_level   TEXT,
     skip_reason        TEXT,
     has_cloud_opendap  BOOLEAN,
+    popularity_rank    INTEGER,
+    usage_score        INTEGER,
     discovered_at      TIMESTAMP,
     umm_json           JSON
 );
@@ -40,14 +42,32 @@ CREATE TABLE IF NOT EXISTS granules (
     PRIMARY KEY (collection_concept_id, granule_concept_id)
 );
 
+CREATE TABLE IF NOT EXISTS prefetch_log (
+    collection_concept_id TEXT NOT NULL,
+    granule_concept_id    TEXT NOT NULL,
+    action                TEXT NOT NULL,
+    status                TEXT NOT NULL,
+    size_bytes            BIGINT,
+    error                 TEXT,
+    ts                    TIMESTAMP NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS run_meta (
     key        TEXT PRIMARY KEY,
     value      TEXT,
     updated_at TIMESTAMP
 );
+"""
 
+# Indexes are created after the column check below so that a stale database
+# (missing a newly-required column) raises an actionable RuntimeError rather
+# than a low-level BinderException from an index referencing the missing column.
+_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_collections_daac ON collections(daac);
+CREATE INDEX IF NOT EXISTS idx_collections_popularity ON collections(popularity_rank);
 CREATE INDEX IF NOT EXISTS idx_granules_collection ON granules(collection_concept_id);
+CREATE INDEX IF NOT EXISTS idx_prefetch_log_collection
+    ON prefetch_log(collection_concept_id);
 """
 
 
@@ -61,13 +81,19 @@ def connect(path: Path | str) -> duckdb.DuckDBPyConnection:
 # silently keeps its old columns; checking these explicitly turns a confusing
 # DuckDB binder error at INSERT time into an actionable message at startup.
 _REQUIRED_COLUMNS: dict[str, set[str]] = {
-    "collections": {"umm_json", "has_cloud_opendap"},
+    "collections": {
+        "umm_json",
+        "has_cloud_opendap",
+        "popularity_rank",
+        "usage_score",
+    },
     "granules": {
         "umm_json",
         "dmrpp_granule_url",
         "stratification_bin",
         "n_total_at_sample",
     },
+    "prefetch_log": {"action", "status", "ts"},
 }
 
 
@@ -88,3 +114,4 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
                 "This database predates a schema change. Delete "
                 "output/survey.duckdb (and output/results/ if present) and re-run."
             )
+    con.execute(_INDEX_SQL)

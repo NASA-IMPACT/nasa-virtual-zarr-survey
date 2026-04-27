@@ -520,7 +520,7 @@ def discover(
         db_path.parent.mkdir(parents=True, exist_ok=True)
         con = connect(db_path)
         init_schema(con)
-        persist_collections(con, dicts)
+        persist_collections(con, dicts, score_map=score_map)
         con.execute(
             "INSERT OR REPLACE INTO run_meta (key, value, updated_at) VALUES (?, ?, ?)",
             [
@@ -583,6 +583,80 @@ def sample(
         verify_dmrpp=verify_dmrpp,
     )
     click.echo(_sample_summary(db_path))
+
+
+@cli.command()
+@click.option("--db", "db_path", type=click.Path(path_type=Path), default=DEFAULT_DB)
+@click.option(
+    "--cache-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    envvar="NASA_VZ_SURVEY_CACHE_DIR",
+    help=f"Cache directory (default: {DEFAULT_CACHE_DIR}).",
+)
+@click.option(
+    "--cache-max-size",
+    "cache_max_size",
+    type=str,
+    default="100GB",
+    help="Soft cap on cache size; checked at collection boundaries, so the "
+    "collection that crosses the cap finishes writing before the run stops.",
+)
+@click.option(
+    "--access",
+    type=click.Choice(["direct", "external"]),
+    default="direct",
+    help="CMR granule access mode. 'direct' uses S3 URLs (requires us-west-2 "
+    "compute). 'external' uses HTTPS URLs with EDL bearer token. Must match "
+    "the URLs already in the granules table.",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="Print a per-granule ok/hit/fail line in addition to the per-collection "
+    "summary that's always emitted to stderr.",
+)
+def prefetch(
+    db_path: Path,
+    cache_dir: Path | None,
+    cache_max_size: str,
+    access: str,
+    verbose: bool,
+) -> None:
+    """Phase 2.5 (prefetch): pre-warm the cache in popularity-rank order.
+
+    Walks ``collections`` in ascending ``popularity_rank`` (set by
+    ``discover --top``/``--top-per-provider``) and fetches every sampled
+    granule into the on-disk cache. The cap is enforced at collection
+    boundaries: a collection that crosses ``--cache-max-size`` finishes
+    writing all its granules and then the run stops. Cached files are never
+    deleted. Per-granule failures are logged but don't abort the collection.
+    """
+    from nasa_virtual_zarr_survey.prefetch import run_prefetch
+
+    effective_cache_dir = cache_dir or DEFAULT_CACHE_DIR
+    cache_max_bytes = _parse_size(cache_max_size)
+    summary = run_prefetch(
+        db_path,
+        cache_dir=effective_cache_dir,
+        cache_max_bytes=cache_max_bytes,
+        access=cast(AccessMode, access),
+        verbose=verbose,
+    )
+    bytes_gb = summary["bytes_added"] / 1024**3
+    stopped = summary["stopped_at_rank"]
+    click.echo(
+        f"prefetch: considered {summary['collections_considered']} collection(s), "
+        f"fetched {summary['granules_fetched']} granule(s) "
+        f"({bytes_gb:.1f} GB added), "
+        f"{summary['granules_failed']} failure(s)."
+    )
+    if stopped:
+        click.echo(f"  stopped at popularity rank {stopped} (cap reached).")
+    else:
+        click.echo("  walked through every ranked collection (cap not reached).")
 
 
 @cli.command()
