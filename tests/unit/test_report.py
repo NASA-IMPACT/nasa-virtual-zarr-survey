@@ -13,7 +13,7 @@ from nasa_virtual_zarr_survey.__main__ import cli
 from nasa_virtual_zarr_survey.cubability import fingerprint_to_json
 from nasa_virtual_zarr_survey.db import connect, init_schema
 from nasa_virtual_zarr_survey.report import collection_verdicts, run_report
-from tests.conftest import insert_collection
+from tests.conftest import insert_collection, insert_granule
 
 # New schema matching attempt._SCHEMA
 _RESULT_SCHEMA = pa.schema(
@@ -883,3 +883,197 @@ def test_report_uv_lock_and_preview_manifest_mutually_exclusive(tmp_path: Path) 
     )
     assert result.exit_code != 0
     assert "mutually exclusive" in result.output
+
+
+def _touch_cache_entry(cache_dir: Path, url: str) -> Path:
+    """Create the on-disk file ``DiskCachingReadableStore`` would write for *url*."""
+    from nasa_virtual_zarr_survey.cache import cache_layout_path
+
+    p = cache_layout_path(cache_dir, url)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(b"")
+    return p
+
+
+def _seed_cache_only_fixtures(tmp_db_path: Path, tmp_results_dir: Path) -> None:
+    """Two collections, two granules each, all parse+dataset success."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    insert_collection(con, "C_HIT", num_granules=2)
+    insert_collection(con, "C_MISS", num_granules=2)
+    insert_granule(con, "C_HIT", "G_HIT_A", data_url="s3://b/hit-a.nc")
+    insert_granule(con, "C_HIT", "G_HIT_B", data_url="s3://b/hit-b.nc")
+    insert_granule(con, "C_MISS", "G_MISS_A", data_url="s3://b/miss-a.nc")
+    insert_granule(con, "C_MISS", "G_MISS_B", data_url="s3://b/miss-b.nc")
+    con.close()
+
+    now = datetime.now(timezone.utc)
+    rows = [
+        _row("C_HIT", "G_HIT_A", parse_success=True, dataset_success=True, now=now),
+        _row("C_HIT", "G_HIT_B", parse_success=True, dataset_success=True, now=now),
+        _row("C_MISS", "G_MISS_A", parse_success=True, dataset_success=True, now=now),
+        _row("C_MISS", "G_MISS_B", parse_success=True, dataset_success=True, now=now),
+    ]
+    _write_results(tmp_results_dir / "DAAC=PODAAC" / "part-0000.parquet", rows)
+
+
+def test_run_report_cache_only_filters_to_cached_granules(
+    tmp_db_path, tmp_results_dir, tmp_path
+):
+    """When only one collection's granules are cached, only it appears in verdicts."""
+    _seed_cache_only_fixtures(tmp_db_path, tmp_results_dir)
+    cache_dir = tmp_path / "cache"
+    _touch_cache_entry(cache_dir, "s3://b/hit-a.nc")
+    _touch_cache_entry(cache_dir, "s3://b/hit-b.nc")
+
+    out_path = tmp_path / "report.md"
+    run_report(
+        tmp_db_path,
+        results_dir=tmp_results_dir,
+        out_path=out_path,
+        cache_dir=cache_dir,
+        cache_only=True,
+    )
+    verdicts = {
+        v["concept_id"]: v for v in collection_verdicts(tmp_db_path, tmp_results_dir)
+    }
+    # Reading without the cache filter table on a fresh con shows full results.
+    assert verdicts["C_HIT"]["dataset_verdict"] == "all_pass"
+    assert verdicts["C_MISS"]["dataset_verdict"] == "all_pass"
+
+    # The rendered report reflects the filtered view: C_MISS is dropped
+    # entirely (no cached granules), and overview totals reflect that.
+    text = out_path.read_text()
+    assert not any(line.startswith("| C_MISS |") for line in text.splitlines())
+    hit_line = next(line for line in text.splitlines() if line.startswith("| C_HIT |"))
+    assert "all_pass" in hit_line
+    assert "Total collections: **1**" in text
+
+
+def test_run_report_cache_only_with_no_cached_granules(
+    tmp_db_path, tmp_results_dir, tmp_path
+):
+    """No cached files -> overview totals report zero collections; table is empty."""
+    _seed_cache_only_fixtures(tmp_db_path, tmp_results_dir)
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    out_path = tmp_path / "report.md"
+    run_report(
+        tmp_db_path,
+        results_dir=tmp_results_dir,
+        out_path=out_path,
+        cache_dir=cache_dir,
+        cache_only=True,
+    )
+    text = out_path.read_text()
+    assert "Total collections: **0**" in text
+    for cid in ("C_HIT", "C_MISS"):
+        assert not any(line.startswith(f"| {cid} |") for line in text.splitlines())
+
+
+def test_run_report_cache_only_all_cached_matches_unfiltered(
+    tmp_db_path, tmp_results_dir, tmp_path
+):
+    """When every granule is cached, --cache-only output equals the unfiltered run."""
+    _seed_cache_only_fixtures(tmp_db_path, tmp_results_dir)
+    cache_dir = tmp_path / "cache"
+    for url in (
+        "s3://b/hit-a.nc",
+        "s3://b/hit-b.nc",
+        "s3://b/miss-a.nc",
+        "s3://b/miss-b.nc",
+    ):
+        _touch_cache_entry(cache_dir, url)
+
+    filtered = tmp_path / "filtered.md"
+    plain = tmp_path / "plain.md"
+    run_report(
+        tmp_db_path,
+        results_dir=tmp_results_dir,
+        out_path=filtered,
+        cache_dir=cache_dir,
+        cache_only=True,
+    )
+    run_report(tmp_db_path, results_dir=tmp_results_dir, out_path=plain)
+
+    # The 'Generated' line carries a timestamp; strip it before comparing.
+    def _strip_generated(s: str) -> str:
+        return "\n".join(
+            line for line in s.splitlines() if not line.startswith("- **Generated:")
+        )
+
+    assert _strip_generated(filtered.read_text()) == _strip_generated(plain.read_text())
+
+
+def test_run_report_cache_only_requires_cache_dir(
+    tmp_db_path, tmp_results_dir, tmp_path
+):
+    import pytest
+
+    with pytest.raises(ValueError, match="cache_only=True requires cache_dir"):
+        run_report(
+            tmp_db_path,
+            results_dir=tmp_results_dir,
+            out_path=tmp_path / "report.md",
+            cache_only=True,
+        )
+
+
+def test_run_report_cache_only_rejects_from_data(tmp_path):
+    import pytest
+
+    digest = tmp_path / "summary.json"
+    digest.write_text("{}")  # contents irrelevant; validation runs first
+    with pytest.raises(ValueError, match="cache_only and from_data are mutually"):
+        run_report(
+            None,
+            results_dir=tmp_path / "results",
+            out_path=tmp_path / "report.md",
+            from_data=digest,
+            cache_dir=tmp_path / "cache",
+            cache_only=True,
+        )
+
+
+def test_report_cli_cache_only_mutex_with_from_data(tmp_path):
+    digest = tmp_path / "summary.json"
+    digest.write_text("{}")
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "report",
+            "--from-data",
+            str(digest),
+            "--cache-only",
+            "--out",
+            str(tmp_path / "report.md"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output
+
+
+def test_report_cli_cache_only_requires_cache(tmp_path):
+    sample_path = tmp_path / "locked.json"
+    sample_path.write_text(json.dumps(_locked_sample_payload()))
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "report",
+            "--locked-sample",
+            str(sample_path),
+            "--results",
+            str(results_dir),
+            "--no-cache",
+            "--cache-only",
+            "--out",
+            str(tmp_path / "report.md"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--cache-only requires --cache" in result.output

@@ -951,6 +951,8 @@ def lock_sample_cmd(db_path: Path, out_path: Path) -> None:
     help="Skip the markdown + figures output. Useful when only the "
     "--export JSON digest is wanted.",
 )
+@_cache_options(default_use_cache=True)
+@_cache_only_option
 def report(
     db_path: Path,
     locked_sample_path: Path | None,
@@ -963,6 +965,10 @@ def report(
     uv_lock_path: Path | None,
     preview_manifest_path: Path | None,
     no_render: bool,
+    use_cache: bool,
+    cache_dir: Path | None,
+    cache_max_size: str,
+    cache_only: bool,
 ) -> None:
     """Phase 5 + render: generate the report from survey state OR a committed JSON digest."""
     from nasa_virtual_zarr_survey.db_session import SurveySession
@@ -975,6 +981,14 @@ def report(
     if uv_lock_path is not None and preview_manifest_path is not None:
         raise click.UsageError(
             "--uv-lock and --preview-manifest are mutually exclusive"
+        )
+    if cache_only and from_data is not None:
+        raise click.UsageError("--cache-only and --from-data are mutually exclusive")
+
+    effective_cache_dir, _ = _resolve_cache_params(use_cache, cache_dir, cache_max_size)
+    if cache_only and effective_cache_dir is None:
+        raise click.UsageError(
+            "--cache-only requires --cache (the cache directory must be known)."
         )
 
     session: SurveySession | None
@@ -998,6 +1012,8 @@ def report(
         uv_lock_path=uv_lock_path,
         preview_manifest_path=preview_manifest_path,
         no_render=no_render,
+        cache_dir=effective_cache_dir,
+        cache_only=cache_only,
     )
     if export_to:
         click.echo(f"Wrote digest to {export_to}")

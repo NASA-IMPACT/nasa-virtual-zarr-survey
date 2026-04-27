@@ -73,8 +73,56 @@ def _collect_run_metadata(
     )
 
 
-def _attach_results(con: duckdb.DuckDBPyConnection, results_dir: Path) -> bool:
-    """Register a view `results` over all Parquet shards. Returns True if any exist."""
+def _register_cached_granules(con: duckdb.DuckDBPyConnection, cache_dir: Path) -> str:
+    """Build a temp DuckDB table of granule IDs whose URL is on disk in *cache_dir*.
+
+    Reads ``(granule_concept_id, data_url)`` from the ``granules`` table, keeps
+    rows where ``cache_layout_path(cache_dir, data_url)`` exists, and exposes
+    them as ``_cached_granules``. Returns the table name. Logs the keep ratio
+    to stderr to mirror the ``attempt --cache-only`` log line.
+    """
+    import sys
+    from nasa_virtual_zarr_survey.cache import cache_layout_path
+
+    rows = con.execute(
+        "SELECT granule_concept_id, data_url FROM granules WHERE data_url IS NOT NULL"
+    ).fetchall()
+    total = len(rows)
+    kept_ids: list[str] = []
+    for gid, url in rows:
+        try:
+            if cache_layout_path(cache_dir, url).exists():
+                kept_ids.append(gid)
+        except ValueError:
+            # URL not parseable as scheme://host/path — treat as not cached.
+            continue
+    con.execute(
+        "CREATE OR REPLACE TEMP TABLE _cached_granules (granule_concept_id TEXT)"
+    )
+    if kept_ids:
+        con.executemany(
+            "INSERT INTO _cached_granules VALUES (?)",
+            [(gid,) for gid in kept_ids],
+        )
+    print(
+        f"report: --cache-only kept {len(kept_ids)} of {total} granule(s) "
+        f"found in {cache_dir}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return "_cached_granules"
+
+
+def _attach_results(
+    con: duckdb.DuckDBPyConnection,
+    results_dir: Path,
+    cache_filter_table: str | None = None,
+) -> bool:
+    """Register a view `results` over all Parquet shards. Returns True if any exist.
+
+    When ``cache_filter_table`` is set, the view is restricted to granules whose
+    ``granule_concept_id`` appears in that table (used by ``--cache-only``).
+    """
     shards = list(results_dir.glob("**/*.parquet"))
     if not shards:
         con.execute(
@@ -82,10 +130,13 @@ def _attach_results(con: duckdb.DuckDBPyConnection, results_dir: Path) -> bool:
         )
         return False
     glob = str(results_dir / "**" / "*.parquet")
-    con.execute(
-        f"CREATE OR REPLACE VIEW results AS "
-        f"SELECT * FROM read_parquet('{glob}', union_by_name=true, hive_partitioning=true)"
-    )
+    base = f"SELECT * FROM read_parquet('{glob}', union_by_name=true, hive_partitioning=true)"
+    if cache_filter_table:
+        base += (
+            f" WHERE granule_concept_id IN "
+            f"(SELECT granule_concept_id FROM {cache_filter_table})"
+        )
+    con.execute(f"CREATE OR REPLACE VIEW results AS {base}")
     return True
 
 
@@ -158,12 +209,15 @@ def _top_buckets_from_db(con: duckdb.DuckDBPyConnection) -> dict[str, str]:
 
 
 def collection_verdicts(
-    session_or_db: "SurveySession | Path | str", results_dir: Path | str
+    session_or_db: "SurveySession | Path | str",
+    results_dir: Path | str,
+    cache_filter_table: str | None = None,
 ) -> list[VerdictRow]:
     """Return one verdict row per collection in the DB.
 
     Accepts either a SurveySession (preferred) or a DuckDB path (legacy
-    callers + tests).
+    callers + tests). ``cache_filter_table`` is forwarded to
+    :func:`_attach_results` so callers can scope verdicts to a cached subset.
     """
     from nasa_virtual_zarr_survey.db_session import SurveySession
 
@@ -172,18 +226,31 @@ def collection_verdicts(
     else:
         con = connect(session_or_db)
         init_schema(con)
-    _attach_results(con, Path(results_dir))
+    _attach_results(con, Path(results_dir), cache_filter_table=cache_filter_table)
 
     parse_phase = _phase_verdicts(con, "parse")
     dataset_phase = _phase_verdicts(con, "dataset")
     datatree_phase = _phase_verdicts(con, "datatree")
     top_buckets = _top_buckets_from_db(con)
 
-    q = """
-        SELECT c.concept_id, c.daac, c.format_family, c.skip_reason,
-               c.processing_level
-        FROM collections c
-    """
+    if cache_filter_table:
+        q = f"""
+            SELECT c.concept_id, c.daac, c.format_family, c.skip_reason,
+                   c.processing_level
+            FROM collections c
+            WHERE c.concept_id IN (
+                SELECT DISTINCT g.collection_concept_id FROM granules g
+                WHERE g.granule_concept_id IN (
+                    SELECT granule_concept_id FROM {cache_filter_table}
+                )
+            )
+        """
+    else:
+        q = """
+            SELECT c.concept_id, c.daac, c.format_family, c.skip_reason,
+                   c.processing_level
+            FROM collections c
+        """
     rows = con.execute(q).fetchall()
     out: list[VerdictRow] = []
     for concept_id, daac, family, skip, processing_level in rows:
@@ -811,6 +878,8 @@ def run_report(
     uv_lock_path: Path | str | None = None,
     preview_manifest_path: Path | str | None = None,
     no_render: bool = False,
+    cache_dir: Path | str | None = None,
+    cache_only: bool = False,
 ) -> None:
     """Read DuckDB state plus Parquet results, compute verdicts, and write the report.
 
@@ -852,6 +921,13 @@ def run_report(
         description / git_overrides are read from the manifest.
     no_render:
         Skip writing the Markdown + figures output.
+    cache_dir:
+        Cache directory mirroring ``DiskCachingReadableStore`` layout. Required
+        when ``cache_only`` is set.
+    cache_only:
+        When True, scope the rendered report (and any ``export_to`` digest) to
+        results whose granule URL is on disk under ``cache_dir``. Mutually
+        exclusive with ``from_data`` (the digest carries no per-granule URL).
     """
     from nasa_virtual_zarr_survey import figures as _figures
     from nasa_virtual_zarr_survey.db_session import SurveySession
@@ -862,6 +938,10 @@ def run_report(
         raise ValueError(
             "uv_lock_path and preview_manifest_path are mutually exclusive"
         )
+    if cache_only and from_data is not None:
+        raise ValueError("cache_only and from_data are mutually exclusive")
+    if cache_only and cache_dir is None:
+        raise ValueError("cache_only=True requires cache_dir to be set")
 
     out_path = Path(out_path)
     if not no_render:
@@ -911,11 +991,22 @@ def run_report(
             raise ValueError("session is required when from_data is not set")
         if isinstance(session, SurveySession):
             con = session.con
+            effective_session: SurveySession | Path | str = session
         else:
             con = connect(session)
             init_schema(con)
-        _attach_results(con, Path(results_dir))
-        verdicts = collection_verdicts(session, results_dir)
+            # Wrap the path-based session so the same con is reused by
+            # collection_verdicts below; otherwise a temp cache-filter table
+            # registered here wouldn't be visible to a fresh connection.
+            effective_session = SurveySession(con)
+        cache_filter_table: str | None = None
+        if cache_only:
+            assert cache_dir is not None  # enforced by the guard above
+            cache_filter_table = _register_cached_granules(con, Path(cache_dir))
+        _attach_results(con, Path(results_dir), cache_filter_table=cache_filter_table)
+        verdicts = collection_verdicts(
+            effective_session, results_dir, cache_filter_table=cache_filter_table
+        )
         parse_tax = _taxonomy_counts(con, "parse")
         dataset_tax = _taxonomy_counts(con, "dataset")
         datatree_tax = _taxonomy_counts(con, "datatree")
