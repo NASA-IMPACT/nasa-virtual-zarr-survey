@@ -151,7 +151,7 @@ def test_summary_helpers_run_back_to_back(tmp_db_path: Path, tmp_results_dir: Pa
     closing it. Calling them in sequence in a single process (e.g., a
     long-lived test runner) eventually collided on the .duckdb write lock.
     """
-    from nasa_virtual_zarr_survey.__main__ import (
+    from nasa_virtual_zarr_survey.cli._summaries import (
         _attempt_summary,
         _discover_summary,
         _sample_summary,

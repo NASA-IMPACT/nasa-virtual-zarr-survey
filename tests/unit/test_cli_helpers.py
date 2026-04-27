@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from nasa_virtual_zarr_survey.__main__ import _parse_size
+from nasa_virtual_zarr_survey.cli._options import _parse_size
 
 
 @pytest.mark.parametrize(

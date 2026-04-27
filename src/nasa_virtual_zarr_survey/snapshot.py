@@ -19,18 +19,44 @@ from __future__ import annotations
 
 import shutil
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from nasa_virtual_zarr_survey.attempt import run_attempt
 from nasa_virtual_zarr_survey.db_session import SurveySession
-from nasa_virtual_zarr_survey.report import run_report
 
 AccessMode = Literal["direct", "external"]
 
 
 class SnapshotError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class SnapshotInputs:
+    """Snapshot-related inputs grouped for ``run_report``.
+
+    These eight fields only matter together — every one of them is consumed
+    by the ``export_to`` path in :func:`run_report`. Bundling them keeps the
+    ``run_report`` signature focused on its other axes (session vs from_data,
+    cache, render).
+
+    ``snapshot_kind`` may be ``"release"`` or ``"preview"``; when set to
+    ``None`` and ``snapshot_date`` is provided, ``run_report`` defaults it to
+    ``"release"``. When ``preview_manifest_path`` is provided the manifest's
+    fields override ``snapshot_kind``, ``label``, ``description``,
+    ``git_overrides``, and ``snapshot_date``.
+    """
+
+    snapshot_date: str | None = None
+    snapshot_kind: Literal["release", "preview"] | None = None
+    label: str | None = None
+    description: str | None = None
+    git_overrides: dict[str, dict[str, str]] | None = None
+    locked_sample_path: Path | None = None
+    uv_lock_path: Path | None = None
+    preview_manifest_path: Path | None = None
 
 
 def read_pyproject_exclude_newer(
@@ -128,7 +154,7 @@ def run_snapshot(
         m = load_manifest(preview_manifest_path)
         slug = f"{m.snapshot_date}-{m.label}"
         effective_date: str | None = m.snapshot_date
-        snapshot_kind: str | None = "preview"
+        snapshot_kind: Literal["release", "preview"] | None = "preview"
         effective_label: str | None = m.label
         effective_description: str | None = m.description or None
         effective_overrides: dict[str, dict[str, str]] | None = m.git_overrides
@@ -186,17 +212,23 @@ def run_snapshot(
         max_granule_bytes=max_granule_bytes,
         cache_only=cache_only,
     )
+    # Imported lazily so report._orchestrate can import SnapshotInputs from
+    # this module without a circular import at module load time.
+    from nasa_virtual_zarr_survey.report import run_report
+
     run_report(
         session,
         results_dir,
         export_to=history_summary,
-        snapshot_date=effective_date,
-        snapshot_kind=snapshot_kind,
-        label=effective_label,
-        description=effective_description,
-        git_overrides=effective_overrides,
-        locked_sample_path=locked_sample_path,
-        uv_lock_path=history_lock,
+        snapshot=SnapshotInputs(
+            snapshot_date=effective_date,
+            snapshot_kind=snapshot_kind,
+            label=effective_label,
+            description=effective_description,
+            git_overrides=effective_overrides,
+            locked_sample_path=locked_sample_path,
+            uv_lock_path=history_lock,
+        ),
         no_render=True,
     )
     return history_summary

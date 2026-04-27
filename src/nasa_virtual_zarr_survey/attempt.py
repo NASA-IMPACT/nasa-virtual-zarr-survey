@@ -127,6 +127,72 @@ def _truncate(s: str, limit: int) -> str:
     return s if len(s) <= limit else s[:limit] + "...[truncated]"
 
 
+@dataclass(frozen=True)
+class GranuleInfo:
+    """Survey-side identifying fields for one granule.
+
+    Used as the input bundle for :class:`SingleGranuleAttempt`. ``provider``
+    is needed when the caller wants the attempt to construct its own store
+    via a :class:`StoreCache`; pass-through callers that already have a store
+    can leave it ``None``.
+    """
+
+    url: str
+    family: FormatFamily
+    collection_concept_id: str | None = None
+    granule_concept_id: str | None = None
+    daac: str | None = None
+    provider: str | None = None
+
+
+@dataclass(frozen=True)
+class SingleGranuleAttempt:
+    """One single-granule attempt: the shared core for survey, probe, repro.
+
+    ``run()`` delegates to :func:`attempt_one`. Either ``store`` or ``cache``
+    must be set: ``store`` skips store construction (the caller built one),
+    ``cache`` uses :class:`StoreCache` to fetch credentials and (optionally)
+    cache bytes on disk.
+
+    The dataclass shape exists so the survey, the ``probe`` diagnostic, and
+    ``repro`` reproduction scripts can hand the same input bundle to the
+    same code path. When ``attempt.py`` changes (e.g., the timeout discipline,
+    fingerprint extraction, override application), all three follow.
+    """
+
+    granule: "GranuleInfo"
+    override: "CollectionOverride | None" = None
+    timeout_s: float = 60
+    store: Any = None
+    cache: "StoreCache | None" = None
+
+    def run(self) -> "AttemptResult":
+        store = self.store
+        if store is None:
+            if self.cache is None:
+                raise ValueError(
+                    "SingleGranuleAttempt: either `store` or `cache` must be set"
+                )
+            if not self.granule.provider:
+                raise ValueError(
+                    "SingleGranuleAttempt: granule.provider is required to "
+                    "construct a store via cache"
+                )
+            store = self.cache.get_store(
+                provider=self.granule.provider, url=self.granule.url
+            )
+        return attempt_one(
+            url=self.granule.url,
+            family=self.granule.family,
+            store=store,
+            timeout_s=int(self.timeout_s),
+            collection_concept_id=self.granule.collection_concept_id,
+            granule_concept_id=self.granule.granule_concept_id,
+            daac=self.granule.daac,
+            override=self.override,
+        )
+
+
 def attempt_one(
     *,
     url: str,
@@ -610,8 +676,12 @@ def run_attempt(
         )
 
     def _attempt_row(row: PendingGranule) -> AttemptResult:
-        """Build an AttemptResult for one pending granule (sample-invalid,
-        auth-unavailable, or a real attempt_one run)."""
+        """Build an AttemptResult for one pending granule via SingleGranuleAttempt.
+
+        Returns a synthetic SampleInvalid / AuthUnavailable row for cases that
+        can't reach the shared core (no format family or URL, or a credential
+        fetch failure).
+        """
         family_str = row["format_family"]
         family = FormatFamily(family_str) if family_str else None
         if family is None or not row["data_url"] or not row["provider"]:
@@ -625,7 +695,19 @@ def run_attempt(
                 attempted_at=datetime.now(timezone.utc),
             )
         try:
-            store = cache.get_store(provider=row["provider"], url=row["data_url"])
+            return SingleGranuleAttempt(
+                granule=GranuleInfo(
+                    url=row["data_url"],
+                    family=family,
+                    collection_concept_id=row["collection_concept_id"],
+                    granule_concept_id=row["granule_concept_id"],
+                    daac=row["daac"],
+                    provider=row["provider"],
+                ),
+                override=override_registry.for_collection(row["collection_concept_id"]),
+                timeout_s=timeout_s,
+                cache=cache,
+            ).run()
         except AuthUnavailable as e:
             return AttemptResult(
                 collection_concept_id=row["collection_concept_id"],
@@ -636,16 +718,6 @@ def run_attempt(
                 parse_error_message=str(e),
                 attempted_at=datetime.now(timezone.utc),
             )
-        return attempt_one(
-            url=row["data_url"],
-            family=family,
-            store=store,
-            timeout_s=timeout_s,
-            collection_concept_id=row["collection_concept_id"],
-            granule_concept_id=row["granule_concept_id"],
-            daac=row["daac"],
-            override=override_registry.for_collection(row["collection_concept_id"]),
-        )
 
     n = 0
     try:

@@ -48,20 +48,20 @@ def test_generate_script_https_parse_phase():
     script = generate_script(row)
     assert "HTTPStore.from_url" in script
     assert "https://data.example.nasa.gov" in script
-    assert "HDFParser" in script
     assert "C1-PODAAC" in script
     assert "G1-PODAAC" in script
     assert "Bucket: CANT_OPEN_FILE" in script
-    # Parse-phase reproducer should NOT call to_virtual_dataset
-    assert "to_virtual_dataset" not in script
-    # It should call the parser directly
-    assert "parser(url=url, registry=registry)" in script
+    # Reproducer calls the survey's shared core, not the parser directly,
+    # so the script stays in lock-step with attempt.py.
+    assert "from nasa_virtual_zarr_survey.attempt import attempt_one" in script
+    assert "attempt_one(" in script
+    assert "FormatFamily('NetCDF4')" in script or 'FormatFamily("NetCDF4")' in script
 
 
 def test_generate_script_https_dataset_phase():
     row = _row(phase="dataset", error_type="ValueError", bucket="DECODE_ERROR")
     script = generate_script(row)
-    assert "to_virtual_dataset" in script
+    assert "attempt_one(" in script
     assert "Bucket: DECODE_ERROR" in script
 
 
@@ -82,8 +82,10 @@ def test_generate_script_fits():
         bucket="OTHER",
     )
     script = generate_script(row)
-    assert "from virtualizarr.parsers.fits import FITSParser" in script
-    assert "FITSParser()" in script
+    # Family is baked into the FormatFamily literal; attempt.dispatch_parser
+    # picks the FITSParser at runtime.
+    assert "FormatFamily('FITS')" in script or 'FormatFamily("FITS")' in script
+    assert "attempt_one(" in script
 
 
 def test_generate_script_virtual_tiff():
@@ -94,8 +96,8 @@ def test_generate_script_virtual_tiff():
         bucket="OTHER",
     )
     script = generate_script(row)
-    assert "from virtual_tiff import VirtualTIFF" in script
-    assert "VirtualTIFF()" in script
+    assert "FormatFamily('GeoTIFF')" in script or 'FormatFamily("GeoTIFF")' in script
+    assert "attempt_one(" in script
 
 
 def test_generate_script_no_parser_available():
@@ -110,8 +112,8 @@ def test_generate_script_no_parser_available():
     assert (
         "No parser is registered" in script or "no registered parser" in script.lower()
     )
-    # Doesn't try to run a bogus parser
-    assert "parser(url=url" not in script
+    # Doesn't try to call attempt_one for a family without dispatch.
+    assert "attempt_one(" not in script
 
 
 def test_generate_script_no_parser_error_type():
@@ -127,15 +129,16 @@ def test_generate_script_no_parser_error_type():
     assert (
         "No parser is registered" in script or "no registered parser" in script.lower()
     )
-    assert "parser(url=url" not in script
+    assert "attempt_one(" not in script
 
 
-def test_generate_script_unknown_parser_emits_stub():
-    row = _row(parser="ExoticParser", bucket="OTHER")
+def test_generate_script_unknown_format_family_emits_stub():
+    """A row whose format_family doesn't map to FormatFamily is documented,
+    not run — no fabricated FormatFamily literal."""
+    row = _row(format_family="WeirdFormat", bucket="OTHER")
     script = generate_script(row)
-    # Should emit a TODO stub, not crash
-    assert "ExoticParser" in script
-    assert "TODO" in script or "Unknown parser" in script
+    assert "TODO" in script or "doesn't map" in script
+    assert "attempt_one(" not in script
 
 
 def test_generate_script_includes_traceback():
@@ -145,21 +148,17 @@ def test_generate_script_includes_traceback():
     assert "Traceback" in script
 
 
-def test_generate_script_all_parsers():
-    """All known parsers generate valid scripts."""
-    parsers = [
-        "HDFParser",
-        "NetCDF3Parser",
-        "FITSParser",
-        "DMRPPParser",
-        "ZarrParser",
-        "VirtualTIFF",
-    ]
-    for parser_name in parsers:
-        row = _row(parser=parser_name)
+def test_generate_script_all_format_families():
+    """Every survey-supported FormatFamily generates a runnable script."""
+    families = ["NetCDF4", "HDF5", "NetCDF3", "FITS", "DMRPP", "Zarr", "GeoTIFF"]
+    for family in families:
+        row = _row(format_family=family)
         script = generate_script(row)
-        assert parser_name in script, f"{parser_name} missing from generated script"
-        assert "parser(url=url, registry=registry)" in script
+        assert (
+            f"FormatFamily('{family}')" in script
+            or f'FormatFamily("{family}")' in script
+        ), f"{family} missing from generated script"
+        assert "attempt_one(" in script
 
 
 def test_generate_script_s3_credentials_block():
@@ -219,7 +218,7 @@ def test_generated_script_accepts_cache_flags() -> None:
         granule_concept_id="G456-DAAC",
         daac="DAAC",
         provider="POCLOUD",
-        format_family="NETCDF4",
+        format_family="NetCDF4",
         parser="HDFParser",
         data_url="s3://bucket/path/file.nc",
         https_url=None,
@@ -574,14 +573,18 @@ def test_generated_script_includes_override_kwargs() -> None:
     src = generate_script(row, override=override)
     assert "group='science'" in src
     assert "loadable_variables=[]" in src
-    assert "to_virtual_dataset" in src
+    # Override flows into attempt_one via the CollectionOverride literal.
+    assert "CollectionOverride(" in src
+    assert "override=override" in src
 
 
 def test_generated_script_without_override_omits_kwargs() -> None:
     row = _row(phase="dataset")
     src = generate_script(row)
-    # The dataset call still appears, just with empty parens.
-    assert "to_virtual_dataset()" in src
+    # No-override scripts don't construct a CollectionOverride literal —
+    # they pass override=None to attempt_one.
+    assert "override=None" in src
+    assert "CollectionOverride(\n" not in src
 
 
 def test_generated_script_has_cache_argparse_only() -> None:

@@ -3,6 +3,12 @@
 Given a collection or granule concept ID (or a failure-bucket filter), queries
 the survey results, picks matching failures, and emits a minimal Python script
 that reproduces the error outside the survey harness.
+
+The emitted script imports :func:`attempt_one` from the survey package and
+calls it directly, so the reproduction executes the *same* code path as the
+survey: same parser dispatch, same timeout discipline, same override
+application. When :mod:`attempt` changes, repro scripts follow without
+manual edits.
 """
 
 from __future__ import annotations
@@ -13,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from nasa_virtual_zarr_survey.formats import FormatFamily
 from nasa_virtual_zarr_survey.overrides import CollectionOverride
 from nasa_virtual_zarr_survey.script_template import (
     _registry_key,
@@ -39,38 +46,6 @@ class FailureRow:
     bucket: str  # from taxonomy.classify
 
 
-# ---------------------------------------------------------------------------
-# Parser dispatch table
-# ---------------------------------------------------------------------------
-
-_PARSER_TABLE: dict[str, tuple[str, str]] = {
-    "HDFParser": (
-        "from virtualizarr.parsers.hdf import HDFParser",
-        "HDFParser()",
-    ),
-    "NetCDF3Parser": (
-        "from virtualizarr.parsers.netcdf3 import NetCDF3Parser",
-        "NetCDF3Parser()",
-    ),
-    "FITSParser": (
-        "from virtualizarr.parsers.fits import FITSParser",
-        "FITSParser()",
-    ),
-    "DMRPPParser": (
-        "from virtualizarr.parsers.dmrpp import DMRPPParser",
-        "DMRPPParser()",
-    ),
-    "ZarrParser": (
-        "from virtualizarr.parsers.zarr import ZarrParser",
-        "ZarrParser()",
-    ),
-    "VirtualTIFF": (
-        "from virtual_tiff import VirtualTIFF",
-        "VirtualTIFF()",
-    ),
-}
-
-
 def _render_kwargs(kw: Mapping[str, Any]) -> str:
     """Render a kwargs dict as the inside of a function call: 'a=1, b="x"'."""
     if not kw:
@@ -79,13 +54,7 @@ def _render_kwargs(kw: Mapping[str, Any]) -> str:
 
 
 def _format_url_lines(row: FailureRow) -> str:
-    """Return the URL block (one or two lines) shown in a repro docstring.
-
-    Always includes the survey's ``data_url``. When an HTTPS download URL was
-    captured at sample time and differs from ``data_url`` (e.g. the survey ran
-    under ``--access direct``), include it as a second line so a reader can
-    fetch the granule with curl/wget.
-    """
+    """Return the URL block (one or two lines) shown in a repro docstring."""
     lines = [f"URL: {row.data_url}"]
     if row.https_url and row.https_url != row.data_url:
         lines.append(
@@ -96,27 +65,44 @@ def _format_url_lines(row: FailureRow) -> str:
 
 _DUAL_USE_BLURB = (
     "This script is also a working starting point for non-debugging "
-    "virtualization workflows: edit the parser/dataset kwargs (or strip "
-    "the failure-context docstring) and treat it as a runnable seed. "
+    "virtualization workflows: edit the override kwargs (or strip the "
+    "failure-context docstring) and treat it as a runnable seed. "
     "For structural inspection, run "
     "``nasa-virtual-zarr-survey probe <granule-or-collection-id>``."
 )
 
 
-def generate_script(  # noqa: C901  (acceptable complexity)
+# Format families with no parser dispatch in attempt.dispatch_parser. Treated
+# as a "no parser available" reproducer (a documentation stub) — running
+# attempt_one would itself record NoParserAvailable, so we surface that fact
+# at gen time instead of at runtime.
+_NO_DISPATCH_FAMILIES = {"HDF4"}
+
+
+def generate_script(
     row: FailureRow,
     override: CollectionOverride | None = None,
 ) -> str:
-    """Render a self-contained Python script that reproduces *row*'s failure."""
+    """Render a self-contained Python script that reproduces *row*'s failure.
+
+    The script imports ``attempt_one`` from the survey package and calls it
+    with the same inputs the survey used. This guarantees the reproducer
+    executes the same code path — parser dispatch, timeout, override
+    application, fingerprint extraction — as the survey itself.
+    """
     url = row.data_url
     is_s3 = url.startswith("s3://")
     url_lines = _format_url_lines(row)
+    script_name = f"repro_{row.granule_concept_id}.py"
 
     # ------------------------------------------------------------------
-    # No-parser case: just document the failure.
+    # No-parser case: the format family has no dispatch. Document only.
     # ------------------------------------------------------------------
-    if row.parser is None or row.error_type == "NoParserAvailable":
-        script_name = f"repro_{row.granule_concept_id}.py"
+    if (
+        row.parser is None
+        or row.error_type == "NoParserAvailable"
+        or (row.format_family in _NO_DISPATCH_FAMILIES)
+    ):
         tb_section = (
             f"\nTraceback from survey run:\n{textwrap.indent(row.error_traceback, '    ')}\n"
             if row.error_traceback
@@ -149,11 +135,17 @@ def generate_script(  # noqa: C901  (acceptable complexity)
         )
 
     # ------------------------------------------------------------------
-    # Known-parser case: look up import + construction.
+    # Resolve format family. attempt_one needs a FormatFamily, not a parser
+    # class name. If the row's format_family doesn't round-trip, fall back
+    # to the documentation stub.
     # ------------------------------------------------------------------
-    if row.parser not in _PARSER_TABLE:
-        # Unknown parser: emit a TODO stub.
-        script_name = f"repro_{row.granule_concept_id}.py"
+    try:
+        family = (
+            FormatFamily(row.format_family) if row.format_family is not None else None
+        )
+    except ValueError:
+        family = None
+    if family is None:
         return (
             f'"""Reproducer for {row.collection_concept_id} / {row.granule_concept_id}.\n'
             f"\n"
@@ -166,24 +158,20 @@ def generate_script(  # noqa: C901  (acceptable complexity)
             f"Original error observed in survey run:\n"
             f"    {row.error_type}: {row.error_message}\n"
             f'"""\n'
-            f"# TODO: unknown parser {row.parser!r} - fill in the correct import and\n"
-            f"# construction below.\n"
+            f"# TODO: format family {row.format_family!r} doesn't map to a known\n"
+            f"# FormatFamily enum value. Cannot generate a reproducer automatically.\n"
             f"raise NotImplementedError(\n"
-            f'    "Unknown parser {row.parser!r}. Cannot generate a reproducer automatically."\n'
+            f'    "Unknown format family {row.format_family!r}. "\n'
+            f'    "Cannot generate a reproducer automatically."\n'
             f")\n"
         )
 
-    parser_import, parser_construction = _PARSER_TABLE[row.parser]
     registry_key = _registry_key(url)
-    script_name = f"repro_{row.granule_concept_id}.py"
 
     ov = override or CollectionOverride()
     parser_kwargs_str = _render_kwargs(ov.parser_kwargs)
-    if parser_kwargs_str:
-        parser_construction = parser_construction.replace(
-            "()", f"({parser_kwargs_str})"
-        )
     dataset_kwargs_str = _render_kwargs(ov.dataset_kwargs)
+    datatree_kwargs_str = _render_kwargs(ov.datatree_kwargs)
 
     # ------------------------------------------------------------------
     # Docstring
@@ -220,9 +208,6 @@ def generate_script(  # noqa: C901  (acceptable complexity)
         f'"""\n'
     )
 
-    # ------------------------------------------------------------------
-    # Store construction + cache wiring (shared with probe via script_template)
-    # ------------------------------------------------------------------
     store_block = render_login_and_store(
         url=url, provider=row.provider, registry_key=registry_key
     )
@@ -234,21 +219,34 @@ def generate_script(  # noqa: C901  (acceptable complexity)
         else "from obstore.store import HTTPStore"
     )
 
-    # ------------------------------------------------------------------
-    # Main body (attempt phase)
-    # ------------------------------------------------------------------
-    if row.phase == "parse":
-        call_lines = (
-            "    manifest_store = parser(url=url, registry=registry)\n"
-            '    print("Parse succeeded. Manifest store:", manifest_store)\n'
-        )
+    # Build a CollectionOverride literal only when the override is non-empty
+    # — keeps no-override scripts free of unused machinery.
+    has_override = bool(
+        parser_kwargs_str or dataset_kwargs_str or datatree_kwargs_str or ov.notes
+    )
+    override_lines: list[str] = []
+    if has_override:
+        override_lines.append("    override = CollectionOverride(")
+        if parser_kwargs_str:
+            override_lines.append(f"        parser_kwargs=dict({parser_kwargs_str}),")
+        if dataset_kwargs_str:
+            override_lines.append(f"        dataset_kwargs=dict({dataset_kwargs_str}),")
+        if datatree_kwargs_str:
+            override_lines.append(
+                f"        datatree_kwargs=dict({datatree_kwargs_str}),"
+            )
+        if ov.skip_dataset:
+            override_lines.append("        skip_dataset=True,")
+        if ov.skip_datatree:
+            override_lines.append("        skip_datatree=True,")
+        if ov.notes:
+            override_lines.append(f"        notes={ov.notes!r},")
+        override_lines.append("    )")
+        override_block = "\n".join(override_lines) + "\n"
+        override_arg = "override=override"
     else:
-        call_lines = (
-            "    manifest_store = parser(url=url, registry=registry)\n"
-            f"    ds = manifest_store.to_virtual_dataset({dataset_kwargs_str})\n"
-            '    print("Dataset construction succeeded:")\n'
-            "    print(ds)\n"
-        )
+        override_block = ""
+        override_arg = "override=None"
 
     body = (
         f"def main() -> None:\n"
@@ -259,10 +257,35 @@ def generate_script(  # noqa: C901  (acceptable complexity)
         f"{cache_block}"
         f"\n"
         f"    url = {url!r}\n"
-        f"    registry = ObjectStoreRegistry({{{registry_key!r}: store}})\n"
+        f"    family = FormatFamily({family.value!r})\n"
         f"\n"
-        f"    parser = {parser_construction}\n"
-        f"{call_lines}"
+        f"{override_block}"
+        f"    result = attempt_one(\n"
+        f"        url=url,\n"
+        f"        family=family,\n"
+        f"        store=store,\n"
+        f"        collection_concept_id={row.collection_concept_id!r},\n"
+        f"        granule_concept_id={row.granule_concept_id!r},\n"
+        f"        daac={row.daac!r},\n"
+        f"        {override_arg},\n"
+        f"    )\n"
+        f"\n"
+        f"    if result.success:\n"
+        f'        print("Survey path passed for this granule:")\n'
+        f"        print(result)\n"
+        f"        return\n"
+        f"\n"
+        f'    print("Survey path failed for this granule:")\n'
+        f"    if not result.parse_success:\n"
+        f'        print(f"  parse: {{result.parse_error_type}}: '
+        f'{{result.parse_error_message}}")\n'
+        f"    if result.dataset_success is False:\n"
+        f'        print(f"  dataset: {{result.dataset_error_type}}: '
+        f'{{result.dataset_error_message}}")\n'
+        f"    if result.datatree_success is False:\n"
+        f'        print(f"  datatree: {{result.datatree_error_type}}: '
+        f'{{result.datatree_error_message}}")\n'
+        f"    raise SystemExit(1)\n"
         f"\n"
         f'if __name__ == "__main__":\n'
         f"    main()\n"
@@ -274,8 +297,12 @@ def generate_script(  # noqa: C901  (acceptable complexity)
         + "\n"
         + "import earthaccess\n"
         + f"{store_import}\n"
-        + "from obspec_utils.registry import ObjectStoreRegistry\n"
-        + f"{parser_import}\n"
+        + "from obspec_utils.registry import ObjectStoreRegistry  # noqa: F401\n"
+        + "\n"
+        + "from nasa_virtual_zarr_survey.attempt import attempt_one\n"
+        + "from nasa_virtual_zarr_survey.formats import FormatFamily\n"
+        + "from nasa_virtual_zarr_survey.overrides import CollectionOverride"
+        + ("  # noqa: F401\n" if not has_override else "\n")
         + "\n"
         + "\n"
         + body
@@ -296,7 +323,7 @@ def find_failures(
     """Query results.parquet for failures matching the filters.
 
     Joins the Parquet results with the DuckDB collections/granules tables to
-    recover ``data_url`` and ``provider``.  Applies the taxonomy classifier to
+    recover ``data_url`` and ``provider``. Applies the taxonomy classifier to
     each row and filters by *bucket* and/or *phase* as requested.
 
     Returns up to *limit* ``FailureRow`` objects.
@@ -310,20 +337,15 @@ def find_failures(
 
     glob = str(results_dir / "**" / "*.parquet")
 
-    # Short-circuit if there are no Parquet shards yet.
     if not list(results_dir.glob("**/*.parquet")):
         return []
 
-    # We need a fresh in-memory connection that can also attach the on-disk DB.
     con = duckdb.connect(":memory:")
 
-    # Attach the survey DB so we can join with collections/granules.
-    # If the DB file does not exist yet, use NULLs for provider/data_url.
     has_db = db_path.exists()
     if has_db:
         con.execute(f"ATTACH '{db_path}' AS survey (READ_ONLY)")
 
-    # Concept ID filters.
     conditions: list[str] = []
     params: list[str] = []
     if collection_concept_id is not None:
@@ -406,11 +428,9 @@ def find_failures(
             dataset_error_traceback,
         ) = row
 
-        # Skip rows with no URL (can't reproduce without one).
         if not data_url:
             continue
 
-        # Determine failing phase.
         if not parse_success and parse_error_type:
             row_phase: Literal["parse", "dataset"] = "parse"
             error_type = parse_error_type or ""
@@ -422,17 +442,13 @@ def find_failures(
             error_message = dataset_error_message or ""
             error_traceback = dataset_error_traceback
         else:
-            # Both phases passed or no clear failure - skip.
             continue
 
-        # Phase filter.
         if phase is not None and row_phase != phase:
             continue
 
-        # Taxonomy bucket.
         row_bucket = classify(error_type, error_message).value
 
-        # Bucket filter.
         if bucket is not None and row_bucket != bucket:
             continue
 
