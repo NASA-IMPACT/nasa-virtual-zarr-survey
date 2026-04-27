@@ -618,12 +618,21 @@ def sample(
     help="Print a per-granule ok/hit/fail line in addition to the per-collection "
     "summary that's always emitted to stderr.",
 )
+@click.option(
+    "--collection",
+    type=str,
+    default=None,
+    help="Restrict to one CMR collection concept ID. Bypasses the "
+    "popularity_rank requirement — useful for retrying a single collection "
+    "that previously failed.",
+)
 def prefetch(
     db_path: Path,
     cache_dir: Path | None,
     cache_max_size: str,
     access: str,
     verbose: bool,
+    collection: str | None,
 ) -> None:
     """Phase 2.5 (prefetch): pre-warm the cache in popularity-rank order.
 
@@ -644,6 +653,7 @@ def prefetch(
         cache_max_bytes=cache_max_bytes,
         access=cast(AccessMode, access),
         verbose=verbose,
+        collection=collection,
     )
     bytes_gb = summary["bytes_added"] / 1024**3
     stopped = summary["stopped_at_rank"]

@@ -258,6 +258,63 @@ def test_run_prefetch_per_granule_failure_does_not_abort_collection(
     assert by_g["G-c"][1] == "ok"
 
 
+def test_run_prefetch_collection_filter_targets_one_collection(
+    tmp_db_path: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """`collection=...` restricts to one concept_id and bypasses the rank check."""
+    con = connect(tmp_db_path)
+    init_schema(con)
+    # Two collections; only one of them has a popularity_rank.
+    insert_collection(con, "C-ranked", popularity_rank=1, usage_score=999)
+    insert_collection(con, "C-other")  # no rank
+    insert_granule(con, "C-ranked", "g-r", data_url="s3://b/r.nc", size_bytes=50)
+    insert_granule(con, "C-other", "g-o", data_url="s3://b/o.nc", size_bytes=50)
+    con.close()
+
+    _patch_get_store(
+        monkeypatch,
+        {"s3://b": {"r.nc": b"r" * 50, "o.nc": b"o" * 50}},
+    )
+
+    summary = run_prefetch(
+        tmp_db_path,
+        cache_dir=tmp_path / "cache",
+        cache_max_bytes=10_000,
+        collection="C-other",
+    )
+    # Only C-other was considered; C-ranked was untouched.
+    assert summary["granules_fetched"] == 1
+    assert summary["bytes_added"] == 50
+
+    con = connect(tmp_db_path)
+    fetched = {
+        r[0]
+        for r in con.execute(
+            "SELECT DISTINCT collection_concept_id FROM prefetch_log"
+        ).fetchall()
+    }
+    assert fetched == {"C-other"}
+
+
+def test_run_prefetch_collection_filter_unknown_id_raises(
+    tmp_db_path: Path, tmp_path: Path, monkeypatch
+) -> None:
+    con = connect(tmp_db_path)
+    init_schema(con)
+    insert_collection(con, "C-1", popularity_rank=1)
+    insert_granule(con, "C-1", "g-1", data_url="s3://b/x.nc", size_bytes=10)
+    con.close()
+    _patch_get_store(monkeypatch, {"s3://b": {"x.nc": b"x" * 10}})
+
+    with pytest.raises(RuntimeError, match="matched no row"):
+        run_prefetch(
+            tmp_db_path,
+            cache_dir=tmp_path / "cache",
+            cache_max_bytes=1000,
+            collection="C-does-not-exist",
+        )
+
+
 def test_run_prefetch_requires_popularity_rank(
     tmp_db_path: Path, tmp_path: Path, monkeypatch
 ) -> None:

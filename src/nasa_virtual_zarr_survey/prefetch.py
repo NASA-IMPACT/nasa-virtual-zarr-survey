@@ -68,7 +68,7 @@ def run_prefetch(
     cache_max_bytes: int,
     access: Literal["direct", "external"] = "direct",
     verbose: bool = False,
-    only_collection: str | None = None,
+    collection: str | None = None,
 ) -> dict[str, int]:
     """Pre-warm the cache with sampled granules in popularity order.
 
@@ -83,7 +83,7 @@ def run_prefetch(
     Pass ``verbose=True`` to also print per-granule ``ok``/``hit``/``fail``
     lines.
 
-    When ``only_collection`` is set, prefetch targets just that
+    When ``collection`` is set, prefetch targets just that
     ``concept_id`` and skips the popularity-rank requirement — useful for
     re-trying a single collection that previously failed.
 
@@ -98,7 +98,7 @@ def run_prefetch(
     con = connect(db_path)
     init_schema(con)
 
-    if only_collection is None:
+    if collection is None:
         rank_count = (
             con.execute(
                 "SELECT count(*) FROM collections WHERE popularity_rank IS NOT NULL"
@@ -121,18 +121,38 @@ def run_prefetch(
     if tracker is None:
         raise RuntimeError("prefetch requires a cache_dir (caching is mandatory).")
 
-    rows = con.execute(
-        """
-        SELECT c.concept_id, c.provider, c.popularity_rank
-        FROM collections c
-        WHERE c.popularity_rank IS NOT NULL
-          AND (c.skip_reason IS NULL OR c.skip_reason = 'format_unknown')
-          AND EXISTS (
-              SELECT 1 FROM granules g WHERE g.collection_concept_id = c.concept_id
-          )
-        ORDER BY c.popularity_rank ASC
-        """
-    ).fetchall()
+    if collection is not None:
+        rows = con.execute(
+            """
+            SELECT c.concept_id, c.provider, c.popularity_rank
+            FROM collections c
+            WHERE c.concept_id = ?
+              AND EXISTS (
+                  SELECT 1 FROM granules g
+                  WHERE g.collection_concept_id = c.concept_id
+              )
+            """,
+            [collection],
+        ).fetchall()
+        if not rows:
+            raise RuntimeError(
+                f"--collection {collection!r} matched no row with sampled "
+                "granules. Check the concept_id and that `sample` has run."
+            )
+    else:
+        rows = con.execute(
+            """
+            SELECT c.concept_id, c.provider, c.popularity_rank
+            FROM collections c
+            WHERE c.popularity_rank IS NOT NULL
+              AND (c.skip_reason IS NULL OR c.skip_reason = 'format_unknown')
+              AND EXISTS (
+                  SELECT 1 FROM granules g
+                  WHERE g.collection_concept_id = c.concept_id
+              )
+            ORDER BY c.popularity_rank ASC
+            """
+        ).fetchall()
     total_collections = len(rows)
 
     summary: dict[str, int] = {
@@ -226,7 +246,7 @@ def run_prefetch(
                 summary["granules_failed"] += 1
                 fail += 1
                 if verbose:
-                    _emit(f"  fail  {gid}: {repr(e)[:120]}")
+                    _emit(f"  fail  {gid}: {repr(e)[:160]}")
                 continue
             inner_bar.close()
 
