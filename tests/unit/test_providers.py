@@ -1,4 +1,4 @@
-from nasa_virtual_zarr_survey.providers import EOSDIS_PROVIDERS, get_eosdis_providers
+from vzc.cmr._providers import EOSDIS_PROVIDERS, get_eosdis_providers
 
 
 def test_eosdis_providers_is_nonempty():

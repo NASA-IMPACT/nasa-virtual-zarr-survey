@@ -2,42 +2,50 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-import duckdb
 import pytest
+
+from vzc.state._io import (
+    CollectionRow,
+    GranuleRow,
+    SurveyState,
+    save_state,
+    upsert_collections,
+    upsert_granules,
+)
 
 
 @pytest.fixture
-def tmp_db_path(tmp_path: Path) -> Path:
-    """A temporary DuckDB file path."""
-    return tmp_path / "survey.duckdb"
+def tmp_state_path(tmp_path: Path) -> Path:
+    """A temporary ``state.json`` path under ``tmp_path``'s canonical layout.
+
+    Returns ``tmp_path/output/state.json`` so tests that ``chdir(tmp_path)``
+    and let the CLI use its hardcoded default path resolve to the same file.
+    """
+    out = tmp_path / "output"
+    out.mkdir(exist_ok=True)
+    return out / "state.json"
 
 
 @pytest.fixture
 def tmp_results_dir(tmp_path: Path) -> Path:
-    """A temporary results directory for partitioned Parquet writes."""
-    d = tmp_path / "results"
+    """Temporary results directory under ``tmp_path``'s canonical layout."""
+    out = tmp_path / "output"
+    out.mkdir(exist_ok=True)
+    d = out / "results"
     d.mkdir()
     return d
 
 
 # ---------------------------------------------------------------------------
-# Column-explicit insert helpers
-#
-# Tests across the suite previously wrote inline positional ``INSERT INTO
-# collections VALUES (...)`` statements with 13+ columns of NULL filler. Every
-# schema bump forced a sweep through ~30 of them. Using column-explicit INSERTs
-# behind keyword-only helpers means: (a) each call site is one readable line,
-# and (b) future schema additions are zero-touch in tests because unspecified
-# columns just default to NULL.
+# Helpers to build SurveyState fixtures
 # ---------------------------------------------------------------------------
 
 
-def insert_collection(
-    con: duckdb.DuckDBPyConnection,
+def make_collection(
     concept_id: str,
     *,
     short_name: str = "s",
@@ -47,103 +55,106 @@ def insert_collection(
     format_family: str | None = "NetCDF4",
     format_declared: str | None = "NetCDF-4",
     num_granules: int = 1,
-    time_start: datetime | None = None,
-    time_end: datetime | None = None,
+    time_start: datetime | str | None = None,
+    time_end: datetime | str | None = None,
     processing_level: str | None = "L3",
     skip_reason: str | None = None,
+    has_cloud_opendap: bool = False,
     popularity_rank: int | None = None,
     usage_score: int | None = None,
-) -> None:
-    """Insert one row into the ``collections`` table with sensible defaults.
+    umm_json: dict[str, Any] | None = None,
+) -> CollectionRow:
+    """Build a :class:`CollectionRow` with sensible defaults.
 
-    Provider defaults to the same value as ``daac``, matching the most common
-    test fixture shape. ``discovered_at`` is always ``now()``.
+    ``provider`` defaults to ``daac``. ``discovered_at`` is always now-UTC.
     """
-    con.execute(
-        """INSERT INTO collections
-           (concept_id, short_name, version, daac, provider, format_family,
-            format_declared, num_granules, time_start, time_end,
-            processing_level, skip_reason, popularity_rank, usage_score,
-            discovered_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())""",
-        [
-            concept_id,
-            short_name,
-            version,
-            daac,
-            provider if provider is not None else daac,
-            format_family,
-            format_declared,
-            num_granules,
-            time_start,
-            time_end,
-            processing_level,
-            skip_reason,
-            popularity_rank,
-            usage_score,
-        ],
+
+    def _iso(v: datetime | str | None) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, datetime):
+            return v.isoformat()
+        return v
+
+    return CollectionRow(
+        concept_id=concept_id,
+        short_name=short_name,
+        version=version,
+        daac=daac,
+        provider=provider if provider is not None else daac,
+        format_family=format_family,
+        format_declared=format_declared,
+        num_granules=num_granules,
+        time_start=_iso(time_start),
+        time_end=_iso(time_end),
+        processing_level=processing_level,
+        skip_reason=skip_reason,
+        has_cloud_opendap=has_cloud_opendap,
+        popularity_rank=popularity_rank,
+        usage_score=usage_score,
+        discovered_at=datetime.now(timezone.utc).isoformat(),
+        umm_json=umm_json,
     )
 
 
-def insert_granule(
-    con: duckdb.DuckDBPyConnection,
+def make_granule(
     collection_concept_id: str,
     granule_concept_id: str,
     *,
-    data_url: str | None = "s3://b/file.nc",
+    s3_url: str | None = "s3://b/file.nc",
     https_url: str | None = None,
+    dmrpp_granule_url: str | None = None,
     stratification_bin: int = 0,
     n_total_at_sample: int = 0,
     size_bytes: int | None = None,
-    sampled_at: datetime | None = None,
-    access_mode: str = "direct",
-) -> None:
-    """Insert one row into the ``granules`` table with sensible defaults.
-
-    ``sampled_at`` defaults to ``now()`` when ``None``.
-    """
-    if sampled_at is None:
-        con.execute(
-            """INSERT INTO granules
-               (collection_concept_id, granule_concept_id, data_url, https_url,
-                stratification_bin, n_total_at_sample, size_bytes, sampled_at, access_mode)
-               VALUES (?, ?, ?, ?, ?, ?, ?, now(), ?)""",
-            [
-                collection_concept_id,
-                granule_concept_id,
-                data_url,
-                https_url,
-                stratification_bin,
-                n_total_at_sample,
-                size_bytes,
-                access_mode,
-            ],
-        )
+    sampled_at: datetime | str | None = None,
+    umm_json: dict[str, Any] | None = None,
+) -> GranuleRow:
+    """Build a :class:`GranuleRow` with sensible defaults."""
+    if isinstance(sampled_at, datetime):
+        sampled = sampled_at.isoformat()
+    elif isinstance(sampled_at, str):
+        sampled = sampled_at
     else:
-        con.execute(
-            """INSERT INTO granules
-               (collection_concept_id, granule_concept_id, data_url, https_url,
-                stratification_bin, n_total_at_sample, size_bytes, sampled_at, access_mode)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            [
-                collection_concept_id,
-                granule_concept_id,
-                data_url,
-                https_url,
-                stratification_bin,
-                n_total_at_sample,
-                size_bytes,
-                sampled_at,
-                access_mode,
-            ],
-        )
+        sampled = datetime.now(timezone.utc).isoformat()
+    return GranuleRow(
+        collection_concept_id=collection_concept_id,
+        granule_concept_id=granule_concept_id,
+        s3_url=s3_url,
+        https_url=https_url,
+        dmrpp_granule_url=dmrpp_granule_url,
+        stratification_bin=stratification_bin,
+        n_total_at_sample=n_total_at_sample,
+        size_bytes=size_bytes,
+        sampled_at=sampled,
+        umm_json=umm_json,
+    )
+
+
+def make_state(
+    collections: list[CollectionRow] | None = None,
+    granules: list[GranuleRow] | None = None,
+    run_meta: dict[str, str] | None = None,
+) -> SurveyState:
+    """Build a SurveyState fixture from row lists."""
+    state = SurveyState()
+    if collections:
+        upsert_collections(state, collections)
+    if granules:
+        upsert_granules(state, granules)
+    if run_meta:
+        state.run_meta.update(run_meta)
+    return state
+
+
+def write_state(state: SurveyState, path: Path) -> Path:
+    """Persist a SurveyState to ``path`` (as state.json)."""
+    save_state(state, path)
+    return path
 
 
 # ---------------------------------------------------------------------------
 # FakeGranule factory
-#
-# Replaces the half-dozen ad-hoc ``class G:`` definitions that earthaccess
-# DataGranule was being mocked with across test_sample.py.
 # ---------------------------------------------------------------------------
 
 
@@ -193,7 +204,7 @@ def make_fake_granule(
       ``None`` for the default ``[s3://b/<concept_id>.nc]``.
     - ``with_render_dict`` exposes the full ``{meta, umm}`` as a ``render_dict``
       attribute so ``sample._granule_dict`` takes the canonical path. Set this
-      whenever the test needs to round-trip ``umm_json`` through the DB.
+      whenever the test needs to round-trip ``umm_json`` through state.
     """
     full_dict: dict[str, Any] = {
         "meta": {"concept-id": concept_id},

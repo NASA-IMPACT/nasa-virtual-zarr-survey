@@ -1,4 +1,4 @@
-"""Unit tests for nasa_virtual_zarr_survey.probe."""
+"""Unit tests for vzc.pipeline._probe."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from typing import Any
 import click
 import pytest
 
-from nasa_virtual_zarr_survey.formats import FormatFamily
-from nasa_virtual_zarr_survey.probe import (
+from vzc.core.formats import FormatFamily
+from vzc.pipeline._probe import (
     ProbeTarget,
     generate_script,
     resolve_target,
@@ -83,21 +83,23 @@ class _StrictMock:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_target_granule_db_hit(tmp_db_path: Path, monkeypatch) -> None:
-    from nasa_virtual_zarr_survey.db import connect, init_schema
-    from tests.conftest import insert_collection, insert_granule
+def test_resolve_target_granule_db_hit(tmp_state_path: Path, monkeypatch) -> None:
+    from vzc.state._io import save_state
+    from tests.conftest import make_collection, make_granule, make_state
 
-    con = connect(tmp_db_path)
-    init_schema(con)
-    insert_collection(con, "C-DB", short_name="n")
-    insert_granule(
-        con,
-        "C-DB",
-        "G-DB",
-        data_url="s3://bucket/path/file.nc",
-        sampled_at=datetime.now(timezone.utc),
+    state = make_state(
+        collections=[make_collection("C-DB", short_name="n")],
+        granules=[
+            make_granule(
+                "C-DB",
+                "G-DB",
+                s3_url="s3://bucket/path/file.nc",
+                https_url="https://bucket/path/file.nc",
+                sampled_at=datetime.now(timezone.utc),
+            )
+        ],
     )
-    con.close()
+    save_state(state, tmp_state_path)
 
     # Strict: any earthaccess call fails.
     import earthaccess
@@ -105,7 +107,7 @@ def test_resolve_target_granule_db_hit(tmp_db_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(earthaccess, "search_data", _StrictMock("search_data"))
     monkeypatch.setattr(earthaccess, "search_datasets", _StrictMock("search_datasets"))
 
-    target = resolve_target(tmp_db_path, "G-DB", "direct")
+    target = resolve_target(tmp_state_path, "G-DB", "direct")
     assert target.kind == "granule"
     assert target.granule_concept_id == "G-DB"
     assert target.collection_concept_id == "C-DB"
@@ -115,14 +117,12 @@ def test_resolve_target_granule_db_hit(tmp_db_path: Path, monkeypatch) -> None:
     assert target.source == "db"
 
 
-def test_resolve_target_granule_db_miss(tmp_db_path: Path, monkeypatch) -> None:
-    """Granule absent from DB → one search_data call, no search_datasets."""
-    from nasa_virtual_zarr_survey.db import connect, init_schema
+def test_resolve_target_granule_db_miss(tmp_state_path: Path, monkeypatch) -> None:
+    """Granule absent from state → one search_data call, no search_datasets."""
+    from vzc.state._io import save_state
+    from tests.conftest import make_state
 
-    # Empty DB (just the schema).
-    con = connect(tmp_db_path)
-    init_schema(con)
-    con.close()
+    save_state(make_state(), tmp_state_path)
 
     import earthaccess
 
@@ -142,7 +142,7 @@ def test_resolve_target_granule_db_miss(tmp_db_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(earthaccess, "search_data", fake_search_data)
     monkeypatch.setattr(earthaccess, "search_datasets", _StrictMock("search_datasets"))
 
-    target = resolve_target(tmp_db_path, "G-CMR", "direct")
+    target = resolve_target(tmp_state_path, "G-CMR", "direct")
     assert target.source == "cmr"
     assert target.data_url == "s3://gesdisc/x/y.h5"
     assert target.provider == "GES_DISC"
@@ -150,12 +150,11 @@ def test_resolve_target_granule_db_miss(tmp_db_path: Path, monkeypatch) -> None:
     assert calls["search_data"] == 1
 
 
-def test_resolve_target_granule_cmr_no_links(tmp_db_path: Path, monkeypatch) -> None:
-    from nasa_virtual_zarr_survey.db import connect, init_schema
+def test_resolve_target_granule_cmr_no_links(tmp_state_path: Path, monkeypatch) -> None:
+    from vzc.state._io import save_state
+    from tests.conftest import make_state
 
-    con = connect(tmp_db_path)
-    init_schema(con)
-    con.close()
+    save_state(make_state(), tmp_state_path)
 
     import earthaccess
 
@@ -172,19 +171,18 @@ def test_resolve_target_granule_cmr_no_links(tmp_db_path: Path, monkeypatch) -> 
     monkeypatch.setattr(earthaccess, "search_datasets", _StrictMock("search_datasets"))
 
     with pytest.raises(click.UsageError) as exc:
-        resolve_target(tmp_db_path, "G-CMR", "direct")
+        resolve_target(tmp_state_path, "G-CMR", "direct")
     assert "no direct data link" in str(exc.value)
     assert "--access external" in str(exc.value)
 
 
 def test_resolve_target_granule_not_found_anywhere(
-    tmp_db_path: Path, monkeypatch
+    tmp_state_path: Path, monkeypatch
 ) -> None:
-    from nasa_virtual_zarr_survey.db import connect, init_schema
+    from vzc.state._io import save_state
+    from tests.conftest import make_state
 
-    con = connect(tmp_db_path)
-    init_schema(con)
-    con.close()
+    save_state(make_state(), tmp_state_path)
 
     import earthaccess
 
@@ -192,8 +190,8 @@ def test_resolve_target_granule_not_found_anywhere(
     monkeypatch.setattr(earthaccess, "search_datasets", _StrictMock("search_datasets"))
 
     with pytest.raises(click.UsageError) as exc:
-        resolve_target(tmp_db_path, "G-MISSING", "direct")
-    assert "not found in survey DB or CMR" in str(exc.value)
+        resolve_target(tmp_state_path, "G-MISSING", "direct")
+    assert "not found in survey state or CMR" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------
@@ -202,48 +200,51 @@ def test_resolve_target_granule_not_found_anywhere(
 
 
 def test_resolve_target_collection_db_with_granules(
-    tmp_db_path: Path, monkeypatch
+    tmp_state_path: Path, monkeypatch
 ) -> None:
-    """DB has both collection row and a sampled granule → zero CMR calls."""
-    from nasa_virtual_zarr_survey.db import connect, init_schema
-    from tests.conftest import insert_collection, insert_granule
+    """State has both collection row and a sampled granule → zero CMR calls."""
+    from vzc.state._io import save_state
+    from tests.conftest import make_collection, make_granule, make_state
 
-    con = connect(tmp_db_path)
-    init_schema(con)
-    insert_collection(
-        con,
-        "C-FULL",
-        short_name="n",
-        daac="NSIDC",
-        format_family="HDF5",
-        format_declared="HDF5",
-        processing_level="L2",
-    )
     now = datetime.now(timezone.utc)
-    insert_granule(
-        con,
-        "C-FULL",
-        "G-FULL-1",
-        data_url="s3://b/file1.h5",
-        stratification_bin=1,
-        sampled_at=now,
+    state = make_state(
+        collections=[
+            make_collection(
+                "C-FULL",
+                short_name="n",
+                daac="NSIDC",
+                format_family="HDF5",
+                format_declared="HDF5",
+                processing_level="L2",
+            )
+        ],
+        granules=[
+            make_granule(
+                "C-FULL",
+                "G-FULL-1",
+                s3_url="s3://b/file1.h5",
+                https_url="https://b/file1.h5",
+                stratification_bin=1,
+                sampled_at=now,
+            ),
+            make_granule(
+                "C-FULL",
+                "G-FULL-0",
+                s3_url="s3://b/file0.h5",
+                https_url="https://b/file0.h5",
+                stratification_bin=0,
+                sampled_at=now,
+            ),
+        ],
     )
-    insert_granule(
-        con,
-        "C-FULL",
-        "G-FULL-0",
-        data_url="s3://b/file0.h5",
-        stratification_bin=0,
-        sampled_at=now,
-    )
-    con.close()
+    save_state(state, tmp_state_path)
 
     import earthaccess
 
     monkeypatch.setattr(earthaccess, "search_data", _StrictMock("search_data"))
     monkeypatch.setattr(earthaccess, "search_datasets", _StrictMock("search_datasets"))
 
-    target = resolve_target(tmp_db_path, "C-FULL", "direct")
+    target = resolve_target(tmp_state_path, "C-FULL", "direct")
     assert target.source == "db"
     assert target.kind == "collection"
     # Lowest stratification_bin first.
@@ -253,25 +254,26 @@ def test_resolve_target_collection_db_with_granules(
 
 
 def test_resolve_target_collection_db_no_granules(
-    tmp_db_path: Path, monkeypatch
+    tmp_state_path: Path, monkeypatch
 ) -> None:
-    """DB has the collection but no granules → one search_data call only."""
-    from nasa_virtual_zarr_survey.db import connect, init_schema
-    from tests.conftest import insert_collection
+    """State has the collection but no granules → one search_data call only."""
+    from vzc.state._io import save_state
+    from tests.conftest import make_collection, make_state
 
-    con = connect(tmp_db_path)
-    init_schema(con)
-    insert_collection(
-        con,
-        "C-SKIPPED",
-        short_name="n",
-        daac="ASF",
-        format_family=None,
-        format_declared="mystery format",
-        processing_level="L1",
-        skip_reason="format_unknown",
+    state = make_state(
+        collections=[
+            make_collection(
+                "C-SKIPPED",
+                short_name="n",
+                daac="ASF",
+                format_family=None,
+                format_declared="mystery format",
+                processing_level="L1",
+                skip_reason="format_unknown",
+            )
+        ]
     )
-    con.close()
+    save_state(state, tmp_state_path)
 
     import earthaccess
 
@@ -291,7 +293,7 @@ def test_resolve_target_collection_db_no_granules(
     monkeypatch.setattr(earthaccess, "search_data", fake_search_data)
     monkeypatch.setattr(earthaccess, "search_datasets", _StrictMock("search_datasets"))
 
-    target = resolve_target(tmp_db_path, "C-SKIPPED", "direct")
+    target = resolve_target(tmp_state_path, "C-SKIPPED", "direct")
     assert target.source == "cmr"
     assert target.granule_concept_id == "G-CMR"
     assert target.data_url == "s3://asf/foo.nc"
@@ -300,13 +302,12 @@ def test_resolve_target_collection_db_no_granules(
     assert calls["search_data"] == 1
 
 
-def test_resolve_target_collection_no_db_row(tmp_db_path: Path, monkeypatch) -> None:
-    """No DB row → search_datasets + search_data (two CMR calls)."""
-    from nasa_virtual_zarr_survey.db import connect, init_schema
+def test_resolve_target_collection_no_db_row(tmp_state_path: Path, monkeypatch) -> None:
+    """No state row → search_datasets + search_data (two CMR calls)."""
+    from vzc.state._io import save_state
+    from tests.conftest import make_state
 
-    con = connect(tmp_db_path)
-    init_schema(con)
-    con.close()
+    save_state(make_state(), tmp_state_path)
 
     import earthaccess
 
@@ -330,7 +331,7 @@ def test_resolve_target_collection_no_db_row(tmp_db_path: Path, monkeypatch) -> 
     monkeypatch.setattr(earthaccess, "search_data", fake_search_data)
     monkeypatch.setattr(earthaccess, "search_datasets", fake_search_datasets)
 
-    target = resolve_target(tmp_db_path, "C-NEW", "direct")
+    target = resolve_target(tmp_state_path, "C-NEW", "direct")
     assert target.source == "cmr"
     assert calls["search_datasets"] == 1
     assert calls["search_data"] == 1

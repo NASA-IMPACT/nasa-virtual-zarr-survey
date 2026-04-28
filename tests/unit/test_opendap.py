@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
-from nasa_virtual_zarr_survey import opendap
+from vzc.cmr import _opendap as opendap
 
 
 @pytest.fixture(autouse=True)

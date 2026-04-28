@@ -1,10 +1,10 @@
 # Based on https://github.com/developmentseed/obspec/blob/main/mkdocs.yml
-site_name: nasa-virtual-zarr-survey
-repo_name: nasa-virtual-zarr-survey
-repo_url: https://github.com/NASA-IMPACT/nasa-virtual-zarr-survey
-site_description: Survey cloud-hosted NASA CMR collections for VirtualiZarr compatibility.
+site_name: virtual-zarr-coverage
+repo_name: virtual-zarr-coverage
+repo_url: https://github.com/NASA-IMPACT/virtual-zarr-coverage
+site_description: Track VirtualiZarr coverage of cloud-hosted NASA CMR collections.
 site_author: Max Jones
-site_url: https://nasa-impact.github.io/nasa-virtual-zarr-survey/
+site_url: https://nasa-impact.github.io/virtual-zarr-coverage/
 docs_dir: docs
 
 extra:
@@ -24,22 +24,15 @@ nav:
   - API Reference:
       - api/discover.md
       - api/sample.md
+      - api/prefetch.md
       - api/attempt.md
-      - api/report.md
-      - api/cubability.md
-      - api/taxonomy.md
-      - api/repro.md
-      - api/probe.md
-      - api/inspect.md
-      - api/snapshot.md
-      - api/history.md
-      - api/db_session.md
-      - api/lock_sample.md
-      - api/preview_manifest.md
-      - api/feature_introductions.md
+      - api/render.md
+      - api/investigate.md
+      - api/run.md
+      - api/overrides.md
   - "contributing.md"
 watch:
-  - src/nasa_virtual_zarr_survey
+  - src/vzc
   - docs
 
 theme:
@@ -90,7 +83,7 @@ plugins:
       enable_inventory: true
       handlers:
         python:
-          paths: [src/nasa_virtual_zarr_survey]
+          paths: [src/vzc]
           options:
             docstring_section_style: list
             docstring_style: google

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from nasa_virtual_zarr_survey.cli._options import _parse_size
+from vzc.cli._options import _parse_size
 
 
 @pytest.mark.parametrize(
@@ -34,7 +34,7 @@ def test_defaults_cache_cap_consistent() -> None:
     bytes constant, a click default string, and a separate StoreCache
     fallback — and the three got out of sync.
     """
-    from nasa_virtual_zarr_survey._defaults import (
+    from vzc._config import (
         DEFAULT_CACHE_MAX_BYTES,
         DEFAULT_CACHE_MAX_SIZE,
     )
@@ -42,19 +42,13 @@ def test_defaults_cache_cap_consistent() -> None:
     assert _parse_size(DEFAULT_CACHE_MAX_SIZE) == DEFAULT_CACHE_MAX_BYTES
 
 
-def test_attempt_and_prefetch_share_cache_cap_default() -> None:
-    """attempt and prefetch must resolve to the same --cache-max-size default."""
-    from nasa_virtual_zarr_survey.__main__ import cli
-    from nasa_virtual_zarr_survey._defaults import DEFAULT_CACHE_MAX_SIZE
+def test_prefetch_cache_cap_default_matches_constant() -> None:
+    """prefetch (the only writer) defaults its --cache-max-size to the
+    canonical constant. attempt/report/snapshot no longer carry the flag
+    after cache simplification."""
+    from vzc.__main__ import cli
+    from vzc._config import DEFAULT_CACHE_MAX_SIZE
 
-    def _cache_max_size_default(command_name: str) -> str:
-        cmd = cli.commands[command_name]
-        for param in cmd.params:
-            if param.name == "cache_max_size":
-                return param.default
-        raise AssertionError(f"{command_name} has no --cache-max-size option")
-
-    assert _cache_max_size_default("attempt") == DEFAULT_CACHE_MAX_SIZE
-    assert _cache_max_size_default("prefetch") == DEFAULT_CACHE_MAX_SIZE
-    assert _cache_max_size_default("report") == DEFAULT_CACHE_MAX_SIZE
-    assert _cache_max_size_default("snapshot") == DEFAULT_CACHE_MAX_SIZE
+    cmd = cli.commands["prefetch"]
+    default = next(p.default for p in cmd.params if p.name == "cache_max_size")
+    assert default == DEFAULT_CACHE_MAX_SIZE

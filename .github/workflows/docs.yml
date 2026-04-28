@@ -30,9 +30,7 @@ jobs:
       - name: Regenerate report from committed digest
         if: hashFiles('docs/results/summary.json') != ''
         run: |
-          uv run --group docs nasa-virtual-zarr-survey report \
-            --from-data docs/results/summary.json \
-            --out docs/results/index.md
+          uv run --group docs vzc render --from-data docs/results/summary.json
 
       - name: Deploy docs
         run: uv run --group docs mkdocs gh-deploy --force --strict

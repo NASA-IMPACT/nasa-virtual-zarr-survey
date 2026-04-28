@@ -1,6 +1,6 @@
 import pytest
 
-from nasa_virtual_zarr_survey.taxonomy import Bucket, classify
+from vzc.core.taxonomy import Bucket, classify
 
 
 @pytest.mark.parametrize(

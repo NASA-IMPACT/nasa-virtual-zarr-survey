@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
-from nasa_virtual_zarr_survey.popularity import (
+from vzc.cmr._popularity import (
     all_top_collection_ids,
     fetch_usage_metrics,
     top_collection_ids,
@@ -22,7 +22,7 @@ def _setup(monkeypatch, *, metrics, by_provider):
         return r
 
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.popularity.requests.get",
+        "vzc.cmr._popularity.requests.get",
         MagicMock(
             return_value=_resp(
                 [
@@ -48,7 +48,7 @@ def _setup(monkeypatch, *, metrics, by_provider):
             }
         )
 
-    monkeypatch.setattr("nasa_virtual_zarr_survey.popularity.requests.post", fake_post)
+    monkeypatch.setattr("vzc.cmr._popularity.requests.post", fake_post)
 
 
 def test_top_collection_ids_joins_metrics(monkeypatch):
@@ -82,16 +82,14 @@ def test_fetch_usage_metrics_handles_missing_version_and_network_failure(monkeyp
     r = MagicMock()
     r.raise_for_status = MagicMock()
     r.json.return_value = [{"short-name": "X", "access-count": 9}]
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.popularity.requests.get", MagicMock(return_value=r)
-    )
+    monkeypatch.setattr("vzc.cmr._popularity.requests.get", MagicMock(return_value=r))
     fetch_usage_metrics.cache_clear()
     assert fetch_usage_metrics() == {("X", "N/A"): 9}
 
     # Network failure → empty map (degraded, not failed).
     fetch_usage_metrics.cache_clear()
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.popularity.requests.get",
+        "vzc.cmr._popularity.requests.get",
         MagicMock(side_effect=requests.ConnectionError("offline")),
     )
     assert fetch_usage_metrics() == {}

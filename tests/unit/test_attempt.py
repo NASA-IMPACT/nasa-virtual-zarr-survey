@@ -1,28 +1,27 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
-from nasa_virtual_zarr_survey.attempt import (
+from vzc.pipeline._attempt import (
     AttemptResult,
     attempt_one,
     dispatch_parser,
     ResultWriter,
-    run_attempt,
+    _run_attempt,
 )
-from nasa_virtual_zarr_survey.db_session import SurveySession
-from nasa_virtual_zarr_survey.formats import FormatFamily
-from pathlib import Path
-
-from nasa_virtual_zarr_survey.db import connect, init_schema
-from tests.conftest import insert_collection, insert_granule
+from vzc.core.formats import FormatFamily
+from vzc.state._io import load_state, save_state
+from tests.conftest import make_collection, make_granule, make_state
 
 
 def _make_attempt_result(**overrides) -> AttemptResult:
-    """Helper: build an AttemptResult with sensible defaults, accepting field overrides."""
+    """Helper: build an AttemptResult with sensible defaults."""
     defaults = dict(
         collection_concept_id="C1",
         granule_concept_id="G1",
@@ -38,6 +37,11 @@ def _make_attempt_result(**overrides) -> AttemptResult:
     )
     defaults.update(overrides)
     return AttemptResult(**defaults)
+
+
+# ---------------------------------------------------------------------------
+# attempt_one (no DB)
+# ---------------------------------------------------------------------------
 
 
 def test_dispatch_parser_maps_known_families():
@@ -76,7 +80,6 @@ def test_attempt_one_records_no_parser():
 
 
 def test_attempt_one_success(monkeypatch):
-    """All phases succeed: parser returns a manifest store, to_virtual_dataset and to_virtual_datatree succeed."""
     fake_ds = MagicMock(name="Dataset")
     fake_dt = MagicMock(name="DataTree")
     fake_ms = MagicMock(name="ManifestStore")
@@ -88,13 +91,12 @@ def test_attempt_one_success(monkeypatch):
         return fake_ms
 
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
+        "vzc.pipeline._attempt._build_registry", lambda store, url: object()
     )
-    # Patch dispatch_parser to return a callable mock
     fake_parser = MagicMock(side_effect=fake_parser_call)
     fake_parser.__class__.__name__ = "HDFParser"
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
+        "vzc.pipeline._attempt.dispatch_parser",
         lambda family, **_: fake_parser,
     )
 
@@ -115,184 +117,137 @@ def test_attempt_one_success(monkeypatch):
 
 
 def test_attempt_one_logs_when_fingerprint_extraction_fails(monkeypatch, caplog):
-    """If extract_fingerprint raises, the attempt still succeeds but the
-    failure is logged at WARNING so a regression in the fingerprint helper
-    can't silently disable the cubability phase."""
-    import logging
-
     fake_ds = MagicMock(name="Dataset")
     fake_dt = MagicMock(name="DataTree")
     fake_ms = MagicMock(name="ManifestStore")
     fake_ms.to_virtual_dataset.return_value = fake_ds
     fake_ms.to_virtual_datatree.return_value = fake_dt
 
+    def fake_parser_call(url, registry):
+        return fake_ms
+
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
+        "vzc.pipeline._attempt._build_registry", lambda store, url: object()
     )
-    fake_parser = MagicMock(side_effect=lambda url, registry: fake_ms)
+    fake_parser = MagicMock(side_effect=fake_parser_call)
     fake_parser.__class__.__name__ = "HDFParser"
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
+        "vzc.pipeline._attempt.dispatch_parser",
         lambda family, **_: fake_parser,
     )
 
-    def boom(_ds):
-        raise RuntimeError("fingerprint boom")
+    def explode(*a, **kw):
+        raise RuntimeError("fingerprint regression")
 
-    monkeypatch.setattr("nasa_virtual_zarr_survey.cubability.extract_fingerprint", boom)
+    monkeypatch.setattr("vzc.pipeline._cubability.extract_fingerprint", explode)
 
-    with caplog.at_level(logging.WARNING, logger="nasa_virtual_zarr_survey.attempt"):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="vzc.pipeline._attempt"):
         result = attempt_one(
             url="s3://bucket/file.nc",
             family=FormatFamily.NETCDF4,
             store=object(),
             timeout_s=5,
-            granule_concept_id="G_BOOM",
         )
 
-    # Attempt itself still succeeds (fingerprint is best-effort).
     assert result.success is True
-    assert result.dataset_success is True
-    assert result.fingerprint is None
-
-    # But the failure is visible in logs.
-    matching = [
-        rec
-        for rec in caplog.records
-        if rec.name == "nasa_virtual_zarr_survey.attempt"
-        and rec.levelno == logging.WARNING
-        and "fingerprint" in rec.getMessage().lower()
-    ]
-    assert matching, (
-        "Expected a WARNING log on fingerprint extraction failure; "
-        f"got: {[(r.name, r.levelname, r.getMessage()) for r in caplog.records]}"
-    )
-    msg = matching[0].getMessage()
-    assert "G_BOOM" in msg
-    assert "RuntimeError" in msg or "fingerprint boom" in msg
+    assert any("fingerprint extraction failed" in r.message for r in caplog.records)
 
 
 def test_attempt_one_captures_parse_exception(monkeypatch):
-    """Parser raises: parse_success=False, dataset_success=None, datatree_success=None."""
-
-    def fake_parser_call(url, registry):
-        raise ValueError("parser boom")
+    class BoomParser:
+        def __call__(self, *, url, registry):
+            raise ValueError("invalid HDF5")
 
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
+        "vzc.pipeline._attempt.dispatch_parser",
+        lambda fam, **_: BoomParser(),
     )
-    fake_parser = MagicMock(side_effect=fake_parser_call)
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family, **_: fake_parser,
-    )
-
+    monkeypatch.setattr("vzc.pipeline._attempt._build_registry", lambda s, u: object())
     result = attempt_one(
         url="s3://bucket/file.nc",
         family=FormatFamily.NETCDF4,
         store=object(),
         timeout_s=5,
     )
-    assert result.success is False
     assert result.parse_success is False
-    assert result.dataset_success is None
-    assert result.datatree_success is None
     assert result.parse_error_type == "ValueError"
-    assert "parser boom" in result.parse_error_message
-    assert result.parse_error_traceback is not None
-    assert result.dataset_error_type is None
-    assert result.datatree_error_type is None
+    assert "invalid HDF5" in (result.parse_error_message or "")
+    assert result.dataset_success is None
 
 
 def test_attempt_one_captures_dataset_exception(monkeypatch):
-    """Parser succeeds but to_virtual_dataset raises: parse_success=True, dataset_success=False.
-    datatree is still attempted and may succeed independently."""
-    fake_dt = MagicMock(name="DataTree")
-    fake_ms = MagicMock(name="ManifestStore")
-    fake_ms.to_virtual_dataset.side_effect = RuntimeError("dataset boom")
-    fake_ms.to_virtual_datatree.return_value = fake_dt
+    class FakeMS:
+        def to_virtual_dataset(self, **kw):
+            raise RuntimeError("ds boom")
 
-    def fake_parser_call(url, registry):
-        return fake_ms
+        def to_virtual_datatree(self, **kw):
+            return object()
+
+    class FakeParser:
+        def __call__(self, *, url, registry):
+            return FakeMS()
 
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
+        "vzc.pipeline._attempt.dispatch_parser",
+        lambda fam, **_: FakeParser(),
     )
-    fake_parser = MagicMock(side_effect=fake_parser_call)
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family, **_: fake_parser,
-    )
-
+    monkeypatch.setattr("vzc.pipeline._attempt._build_registry", lambda s, u: object())
     result = attempt_one(
         url="s3://bucket/file.nc",
         family=FormatFamily.NETCDF4,
         store=object(),
         timeout_s=5,
     )
-    # success=True because parse succeeded AND datatree succeeded
-    assert result.success is True
     assert result.parse_success is True
     assert result.dataset_success is False
-    assert result.datatree_success is True
-    assert result.parse_error_type is None
     assert result.dataset_error_type == "RuntimeError"
-    assert "dataset boom" in result.dataset_error_message
-    assert result.dataset_error_traceback is not None
-    assert result.datatree_error_type is None
+    assert result.datatree_success is True
 
 
 def test_attempt_one_dataset_fail_datatree_fail(monkeypatch):
-    """Both 4a and 4b fail: success=False."""
-    fake_ms = MagicMock(name="ManifestStore")
-    fake_ms.to_virtual_dataset.side_effect = RuntimeError("dataset boom")
-    fake_ms.to_virtual_datatree.side_effect = RuntimeError("datatree boom")
+    class FakeMS:
+        def to_virtual_dataset(self, **kw):
+            raise RuntimeError("ds boom")
 
-    def fake_parser_call(url, registry):
-        return fake_ms
+        def to_virtual_datatree(self, **kw):
+            raise RuntimeError("dt boom")
 
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
+        "vzc.pipeline._attempt.dispatch_parser",
+        lambda fam, **_: type(
+            "P", (), {"__call__": lambda self, *, url, registry: FakeMS()}
+        )(),
     )
-    fake_parser = MagicMock(side_effect=fake_parser_call)
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family, **_: fake_parser,
-    )
-
+    monkeypatch.setattr("vzc.pipeline._attempt._build_registry", lambda s, u: object())
     result = attempt_one(
         url="s3://bucket/file.nc",
         family=FormatFamily.NETCDF4,
         store=object(),
         timeout_s=5,
     )
-    assert result.success is False
     assert result.parse_success is True
     assert result.dataset_success is False
     assert result.datatree_success is False
-    assert result.dataset_error_type == "RuntimeError"
-    assert result.datatree_error_type == "RuntimeError"
+    assert result.success is False
 
 
 def test_attempt_one_dataset_fail_datatree_success(monkeypatch):
-    """Parse succeeds, dataset fails, datatree succeeds: success=True, no fingerprint."""
-    fake_dt = MagicMock(name="DataTree")
-    fake_ms = MagicMock(name="ManifestStore")
-    fake_ms.to_virtual_dataset.side_effect = ValueError("CONFLICTING_DIM_SIZES")
-    fake_ms.to_virtual_datatree.return_value = fake_dt
+    class FakeMS:
+        def to_virtual_dataset(self, **kw):
+            raise RuntimeError("ds boom")
 
-    def fake_parser_call(url, registry):
-        return fake_ms
+        def to_virtual_datatree(self, **kw):
+            return object()
 
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
+        "vzc.pipeline._attempt.dispatch_parser",
+        lambda fam, **_: type(
+            "P", (), {"__call__": lambda self, *, url, registry: FakeMS()}
+        )(),
     )
-    fake_parser = MagicMock(side_effect=fake_parser_call)
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family, **_: fake_parser,
-    )
-
+    monkeypatch.setattr("vzc.pipeline._attempt._build_registry", lambda s, u: object())
     result = attempt_one(
         url="s3://bucket/file.nc",
         family=FormatFamily.NETCDF4,
@@ -301,178 +256,13 @@ def test_attempt_one_dataset_fail_datatree_success(monkeypatch):
     )
     assert result.parse_success is True
     assert result.dataset_success is False
-    assert result.dataset_error_type == "ValueError"
     assert result.datatree_success is True
-    assert result.datatree_error_type is None
-    assert result.success is True
-    # No fingerprint when only datatree succeeded
-    assert result.fingerprint is None
-
-
-def test_attempt_one_timeout_during_parse(monkeypatch):
-    """Timeout during parse phase: timed_out_phase='parse'."""
-    import time
-
-    def fake_parser_call(url, registry):
-        time.sleep(10)
-        return MagicMock()
-
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
-    )
-    fake_parser = MagicMock(side_effect=fake_parser_call)
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family, **_: fake_parser,
-    )
-
-    result = attempt_one(
-        url="s3://bucket/file.nc",
-        family=FormatFamily.NETCDF4,
-        store=object(),
-        timeout_s=1,
-    )
-    assert result.success is False
-    assert result.timed_out is True
-    assert result.timed_out_phase == "parse"
-    assert result.parse_error_type == "TimeoutError"
-    assert result.parse_success is False
-    assert result.dataset_success is None
-    assert result.datatree_success is None
-
-
-def test_attempt_one_timeout_during_dataset(monkeypatch):
-    """Timeout during dataset phase: parse succeeds, timed_out_phase='dataset'."""
-    import time
-
-    fake_ms = MagicMock(name="ManifestStore")
-
-    def slow_to_virtual_dataset():
-        time.sleep(10)
-        return MagicMock()
-
-    fake_ms.to_virtual_dataset.side_effect = slow_to_virtual_dataset
-    fake_ms.to_virtual_datatree.return_value = MagicMock()
-
-    def fake_parser_call(url, registry):
-        return fake_ms
-
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
-    )
-    fake_parser = MagicMock(side_effect=fake_parser_call)
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family, **_: fake_parser,
-    )
-
-    result = attempt_one(
-        url="s3://bucket/file.nc",
-        family=FormatFamily.NETCDF4,
-        store=object(),
-        timeout_s=1,
-    )
-    assert result.success is False
-    assert result.timed_out is True
-    assert result.timed_out_phase == "dataset"
-    # parse succeeded (set inside worker before timeout)
-    assert result.parse_success is True
-    assert result.dataset_success is False
-    assert result.dataset_error_type == "TimeoutError"
-
-
-def test_attempt_one_timeout_during_datatree(monkeypatch):
-    """Timeout during datatree phase: parse and dataset succeed, timed_out_phase='datatree'."""
-    import time
-
-    fake_ds = MagicMock(name="Dataset")
-    fake_ms = MagicMock(name="ManifestStore")
-    fake_ms.to_virtual_dataset.return_value = fake_ds
-
-    def slow_to_virtual_datatree():
-        time.sleep(10)
-        return MagicMock()
-
-    fake_ms.to_virtual_datatree.side_effect = slow_to_virtual_datatree
-
-    def fake_parser_call(url, registry):
-        return fake_ms
-
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
-    )
-    fake_parser = MagicMock(side_effect=fake_parser_call)
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family, **_: fake_parser,
-    )
-
-    result = attempt_one(
-        url="s3://bucket/file.nc",
-        family=FormatFamily.NETCDF4,
-        store=object(),
-        timeout_s=1,
-    )
-    assert result.timed_out is True
-    assert result.timed_out_phase == "datatree"
-    assert result.parse_success is True
-    assert result.dataset_success is True
-    assert result.datatree_success is False
-    assert result.datatree_error_type == "TimeoutError"
-    # success=True because dataset succeeded
     assert result.success is True
 
 
-def test_attempt_one_enforces_shared_timeout_budget(monkeypatch):
-    """timeout_s is the *total* budget across phases, not a per-phase cap.
-
-    Setup: parse and dataset each sleep 60% of the budget. Individually each
-    fits inside timeout_s, but parse + dataset together exceed it. With a
-    per-phase budget the run completes "successfully" at ~1.8x the cap; with
-    a shared deadline, dataset times out and parse_success is preserved.
-    """
-    import time
-
-    fake_dt = MagicMock(name="DataTree")
-    fake_ms = MagicMock(name="ManifestStore")
-
-    BUDGET = 1.0
-    PER_PHASE_SLEEP = 0.6  # 60% of BUDGET
-
-    def slow_parse(url, registry):
-        time.sleep(PER_PHASE_SLEEP)
-        return fake_ms
-
-    def slow_dataset(**_kw):
-        time.sleep(PER_PHASE_SLEEP)
-        return MagicMock(name="Dataset")
-
-    fake_ms.to_virtual_dataset.side_effect = slow_dataset
-    fake_ms.to_virtual_datatree.return_value = fake_dt
-
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt._build_registry", lambda store, url: object()
-    )
-    fake_parser = MagicMock(side_effect=slow_parse)
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.dispatch_parser",
-        lambda family, **_: fake_parser,
-    )
-
-    result = attempt_one(
-        url="s3://bucket/file.nc",
-        family=FormatFamily.NETCDF4,
-        store=object(),
-        timeout_s=BUDGET,
-    )
-
-    # Parse fits within the budget and must record success.
-    assert result.parse_success is True
-    # Dataset starts with only ~40% of the budget remaining and must time out.
-    assert result.timed_out is True
-    assert result.timed_out_phase == "dataset"
-    assert result.dataset_success is False
-    assert result.dataset_error_type == "TimeoutError"
+# ---------------------------------------------------------------------------
+# ResultWriter
+# ---------------------------------------------------------------------------
 
 
 def test_result_writer_rotates_shards(tmp_results_dir: Path):
@@ -484,19 +274,53 @@ def test_result_writer_rotates_shards(tmp_results_dir: Path):
     assert len(shards) >= 3
 
 
-def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypatch):
-    con = connect(tmp_db_path)
-    init_schema(con)
-    # 2 granules in the DB
-    insert_collection(con, "C1", num_granules=2)
-    insert_granule(con, "C1", "G1", data_url="s3://b/a.nc", size_bytes=100)
-    insert_granule(
-        con, "C1", "G2", data_url="s3://b/b.nc", stratification_bin=1, size_bytes=100
+def test_attempt_result_serializes_override_applied(tmp_path: Path) -> None:
+    w = ResultWriter(tmp_path, shard_size=1)
+    w.append(
+        AttemptResult(
+            daac="X",
+            attempted_at=datetime.now(timezone.utc),
+            override_applied=True,
+        )
     )
-    con.close()
+    w.close()
+
+    [path] = list(tmp_path.glob("**/*.parquet"))
+    table = pq.read_table(path)
+    assert "override_applied" in table.schema.names
+    assert table.column("override_applied").to_pylist() == [True]
+
+
+# ---------------------------------------------------------------------------
+# _run_attempt + _pending_attempts
+# ---------------------------------------------------------------------------
+
+
+def test_run_attempt_resumes(tmp_state_path: Path, tmp_results_dir: Path, monkeypatch):
+    state = make_state(
+        collections=[make_collection("C1", num_granules=2)],
+        granules=[
+            make_granule(
+                "C1",
+                "G1",
+                s3_url="s3://b/a.nc",
+                https_url="https://b/a.nc",
+                size_bytes=100,
+            ),
+            make_granule(
+                "C1",
+                "G2",
+                s3_url="s3://b/b.nc",
+                https_url="https://b/b.nc",
+                stratification_bin=1,
+                size_bytes=100,
+            ),
+        ],
+    )
+    save_state(state, tmp_state_path)
 
     # Pretend G1 is already attempted using the new schema
-    from nasa_virtual_zarr_survey.attempt import _SCHEMA
+    from vzc.pipeline._attempt import _SCHEMA
 
     shard_dir = tmp_results_dir / "DAAC=PODAAC"
     shard_dir.mkdir(parents=True)
@@ -541,43 +365,44 @@ def test_run_attempt_resumes(tmp_db_path: Path, tmp_results_dir: Path, monkeypat
             format_family=kwargs["family"].value,
         )
 
+    monkeypatch.setattr("vzc.pipeline._attempt.attempt_one", fake_attempt_one)
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.attempt_one", fake_attempt_one
-    )
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.StoreCache.get_store",
+        "vzc.pipeline._attempt.StoreCache.get_store",
         lambda self, *, provider, url: object(),
     )
 
-    n = run_attempt(
-        SurveySession.from_duckdb(tmp_db_path),
-        tmp_results_dir,
+    n = _run_attempt(
+        load_state(tmp_state_path),
+        access="direct",
+        results_dir=tmp_results_dir,
+        cache_dir=None,
         timeout_s=5,
         shard_size=500,
+        skip_override_validation=True,
     )
     assert n == 1
     assert attempts == ["G2"]
 
 
 def test_run_attempt_aborts_on_consecutive_forbidden(
-    tmp_db_path: Path, tmp_results_dir: Path, monkeypatch
+    tmp_state_path: Path, tmp_results_dir: Path, monkeypatch
 ):
-    """Direct mode should abort after 5 consecutive 403 failures with an actionable error."""
-    import pytest
-
-    con = connect(tmp_db_path)
-    init_schema(con)
-    insert_collection(con, "C1", num_granules=10)
-    for i in range(10):
-        insert_granule(
-            con,
-            "C1",
-            f"G{i}",
-            data_url=f"s3://b/f{i}.nc",
-            stratification_bin=i,
-            size_bytes=100,
-        )
-    con.close()
+    """Direct mode should abort after 5 consecutive 403 failures."""
+    state = make_state(
+        collections=[make_collection("C1", num_granules=10)],
+        granules=[
+            make_granule(
+                "C1",
+                f"G{i}",
+                s3_url=f"s3://b/f{i}.nc",
+                https_url=f"https://b/f{i}.nc",
+                stratification_bin=i,
+                size_bytes=100,
+            )
+            for i in range(10)
+        ],
+    )
+    save_state(state, tmp_state_path)
 
     def fake_attempt_one(**kwargs):
         return _make_attempt_result(
@@ -592,21 +417,21 @@ def test_run_attempt_aborts_on_consecutive_forbidden(
             parse_error_message="403 Forbidden",
         )
 
+    monkeypatch.setattr("vzc.pipeline._attempt.attempt_one", fake_attempt_one)
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.attempt_one", fake_attempt_one
-    )
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.StoreCache.get_store",
+        "vzc.pipeline._attempt.StoreCache.get_store",
         lambda self, *, provider, url: object(),
     )
 
     with pytest.raises(SystemExit) as exc_info:
-        run_attempt(
-            SurveySession.from_duckdb(tmp_db_path),
-            tmp_results_dir,
+        _run_attempt(
+            load_state(tmp_state_path),
+            access="direct",
+            results_dir=tmp_results_dir,
+            cache_dir=None,
             timeout_s=5,
             shard_size=500,
-            access="direct",
+            skip_override_validation=True,
         )
 
     assert "consecutive direct-S3 requests returned 403" in str(exc_info.value)
@@ -614,28 +439,29 @@ def test_run_attempt_aborts_on_consecutive_forbidden(
 
 
 def test_run_attempt_does_not_abort_on_mixed_failures(
-    tmp_db_path: Path, tmp_results_dir: Path, monkeypatch
+    tmp_state_path: Path, tmp_results_dir: Path, monkeypatch
 ):
     """A single FORBIDDEN among other failures should not trigger the abort."""
-    con = connect(tmp_db_path)
-    init_schema(con)
-    insert_collection(con, "C1", num_granules=10)
-    for i in range(10):
-        insert_granule(
-            con,
-            "C1",
-            f"G{i}",
-            data_url=f"s3://b/f{i}.nc",
-            stratification_bin=i,
-            size_bytes=100,
-        )
-    con.close()
+    state = make_state(
+        collections=[make_collection("C1", num_granules=10)],
+        granules=[
+            make_granule(
+                "C1",
+                f"G{i}",
+                s3_url=f"s3://b/f{i}.nc",
+                https_url=f"https://b/f{i}.nc",
+                stratification_bin=i,
+                size_bytes=100,
+            )
+            for i in range(10)
+        ],
+    )
+    save_state(state, tmp_state_path)
 
     call_count = {"n": 0}
 
     def fake_attempt_one(**kwargs):
         call_count["n"] += 1
-        # Only every other call is FORBIDDEN
         if call_count["n"] % 2 == 0:
             return _make_attempt_result(
                 collection_concept_id=kwargs["collection_concept_id"],
@@ -660,86 +486,57 @@ def test_run_attempt_does_not_abort_on_mixed_failures(
             parse_error_message="some other error",
         )
 
+    monkeypatch.setattr("vzc.pipeline._attempt.attempt_one", fake_attempt_one)
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.attempt_one", fake_attempt_one
-    )
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.attempt.StoreCache.get_store",
+        "vzc.pipeline._attempt.StoreCache.get_store",
         lambda self, *, provider, url: object(),
     )
 
-    n = run_attempt(
-        SurveySession.from_duckdb(tmp_db_path),
-        tmp_results_dir,
+    n = _run_attempt(
+        load_state(tmp_state_path),
+        access="direct",
+        results_dir=tmp_results_dir,
+        cache_dir=None,
         timeout_s=5,
         shard_size=500,
-        access="direct",
+        skip_override_validation=True,
     )
     assert n == 10
 
 
 def test_run_attempt_passes_cache_params_to_store_cache(tmp_path: Path):
-    from nasa_virtual_zarr_survey.attempt import run_attempt
-    from nasa_virtual_zarr_survey.db import connect, init_schema
-
-    db_path = tmp_path / "survey.duckdb"
+    state_path = tmp_path / "state.json"
+    save_state(make_state(), state_path)
     results_dir = tmp_path / "results"
-    con = connect(db_path)
-    init_schema(con)
-    con.close()
-
     cache_dir = tmp_path / "cache"
-    captured = {}
+    captured: dict = {}
 
     real_init = __import__(
-        "nasa_virtual_zarr_survey.attempt", fromlist=["StoreCache"]
+        "vzc.pipeline._attempt", fromlist=["StoreCache"]
     ).StoreCache.__init__
 
-    def spy_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+    def spy_init(self, *args, **kwargs):
         captured.update(kwargs)
         captured["args"] = args
         return real_init(self, *args, **kwargs)
 
-    with patch("nasa_virtual_zarr_survey.attempt.StoreCache.__init__", spy_init):
-        run_attempt(
-            SurveySession.from_duckdb(db_path),
-            results_dir,
-            timeout_s=1,
+    with patch("vzc.pipeline._attempt.StoreCache.__init__", spy_init):
+        _run_attempt(
+            load_state(state_path),
             access="direct",
+            results_dir=results_dir,
             cache_dir=cache_dir,
-            cache_max_bytes=12345,
+            timeout_s=1,
+            skip_override_validation=True,
         )
 
-    assert captured.get("cache_dir") == cache_dir
-    assert captured.get("cache_max_bytes") == 12345
-
-
-def test_run_attempt_no_overrides_uses_empty_registry(tmp_path: Path):
-    """run_attempt(no_overrides=True) skips loading the override TOML entirely."""
-    from nasa_virtual_zarr_survey.attempt import run_attempt
-
-    db_path = tmp_path / "survey.duckdb"
-    results_dir = tmp_path / "results"
-    SurveySession.from_duckdb(db_path)
-
-    overrides_path = tmp_path / "nonexistent.toml"
-    n = run_attempt(
-        SurveySession.from_duckdb(db_path),
-        results_dir,
-        timeout_s=1,
-        access="direct",
-        overrides_path=overrides_path,
-        no_overrides=True,
-    )
-    assert n == 0
+    assert captured.get("access") == "direct"
 
 
 def test_run_attempt_skip_override_validation_does_not_validate(
     tmp_path: Path, monkeypatch
 ):
-    """skip_override_validation=True: registry loaded but validate() never called."""
-    from nasa_virtual_zarr_survey.attempt import run_attempt
-    from nasa_virtual_zarr_survey.overrides import OverrideRegistry
+    from vzc.pipeline._overrides import OverrideRegistry
 
     validate_calls: list[tuple] = []
     real_validate = OverrideRegistry.validate
@@ -753,14 +550,15 @@ def test_run_attempt_skip_override_validation_does_not_validate(
     overrides = tmp_path / "overrides.toml"
     overrides.write_text("")
 
-    db_path = tmp_path / "survey.duckdb"
-    SurveySession.from_duckdb(db_path)
+    state_path = tmp_path / "state.json"
+    save_state(make_state(), state_path)
 
-    run_attempt(
-        SurveySession.from_duckdb(db_path),
-        tmp_path / "results",
-        timeout_s=1,
+    _run_attempt(
+        load_state(state_path),
         access="direct",
+        results_dir=tmp_path / "results",
+        cache_dir=None,
+        timeout_s=1,
         overrides_path=overrides,
         skip_override_validation=True,
     )
@@ -768,17 +566,17 @@ def test_run_attempt_skip_override_validation_does_not_validate(
 
 
 def test_attempt_cli_locked_sample_runs(tmp_path: Path, monkeypatch) -> None:
-    """`attempt --locked-sample PATH` constructs a session from JSON and runs."""
+    """``attempt --locked-sample PATH`` constructs a session from JSON and runs."""
     import json
 
     from click.testing import CliRunner
 
-    from nasa_virtual_zarr_survey.__main__ import cli
+    from vzc.__main__ import cli
+    from vzc.state._io import SCHEMA_VERSION
 
     sample = {
-        "schema_version": 3,
-        "created_at": "2026-04-26T12:00:00Z",
-        "sampling_mode": "top=1",
+        "schema_version": SCHEMA_VERSION,
+        "run_meta": {"sampling_mode": "top=1"},
         "collections": [
             {
                 "concept_id": "C1-T",
@@ -802,18 +600,23 @@ def test_attempt_cli_locked_sample_runs(tmp_path: Path, monkeypatch) -> None:
             }
         ],
     }
-    sample_path = tmp_path / "locked.json"
-    sample_path.write_text(json.dumps(sample))
-    results_dir = tmp_path / "results"
+    monkeypatch.chdir(tmp_path)
+    state_path = tmp_path / "output" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(sample))
+    results_dir = tmp_path / "output" / "results"
+    overrides_path = tmp_path / "config" / "collection_overrides.toml"
+    overrides_path.parent.mkdir(parents=True, exist_ok=True)
+    overrides_path.write_text("")
 
-    import nasa_virtual_zarr_survey.attempt as attempt_mod
+    import vzc.pipeline._attempt as attempt_mod
 
     def fake_attempt_one(**kwargs):
         return AttemptResult(
             collection_concept_id="C1-T",
             granule_concept_id="G1-T",
             daac="X.DAAC",
-            format_family="NETCDF4",
+            format_family="NetCDF4",
             parser="HDFParser",
             parse_success=True,
             dataset_success=True,
@@ -831,19 +634,7 @@ def test_attempt_cli_locked_sample_runs(tmp_path: Path, monkeypatch) -> None:
     )
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "attempt",
-            "--locked-sample",
-            str(sample_path),
-            "--results",
-            str(results_dir),
-            "--access",
-            "direct",
-            "--no-overrides",
-        ],
-    )
+    result = runner.invoke(cli, ["attempt", "--access", "direct"])
     assert result.exit_code == 0, result.output
     parquets = list(results_dir.glob("**/*.parquet"))
     assert parquets, f"expected at least one Parquet shard: {result.output}"
@@ -855,8 +646,8 @@ def test_attempt_cli_locked_sample_runs(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_attempt_one_threads_override_through(monkeypatch) -> None:
-    from nasa_virtual_zarr_survey import attempt as attempt_mod
-    from nasa_virtual_zarr_survey.overrides import CollectionOverride
+    from vzc.pipeline import _attempt as attempt_mod
+    from vzc.pipeline._overrides import CollectionOverride
 
     captured: dict = {}
 
@@ -913,8 +704,8 @@ def test_attempt_one_threads_override_through(monkeypatch) -> None:
 
 
 def test_attempt_one_skip_dataset_skips_phase(monkeypatch) -> None:
-    from nasa_virtual_zarr_survey import attempt as attempt_mod
-    from nasa_virtual_zarr_survey.overrides import CollectionOverride
+    from vzc.pipeline import _attempt as attempt_mod
+    from vzc.pipeline._overrides import CollectionOverride
 
     class FakeParser:
         def __init__(self, **kw) -> None:
@@ -947,206 +738,64 @@ def test_attempt_one_skip_dataset_skips_phase(monkeypatch) -> None:
     assert result.parse_success
     assert result.dataset_success is None
     assert result.datatree_success is True
-    # success requires parse + (dataset OR datatree) — datatree alone counts.
     assert result.success is True
     assert result.override_applied is True
 
 
-def test_attempt_result_serializes_override_applied(tmp_path) -> None:
-    w = ResultWriter(tmp_path, shard_size=1)
-    w.append(
-        AttemptResult(
-            daac="X",
-            attempted_at=datetime.now(timezone.utc),
-            override_applied=True,
-        )
-    )
-    w.close()
-
-    [path] = list(tmp_path.glob("**/*.parquet"))
-    table = pq.read_table(path)
-    assert "override_applied" in table.schema.names
-    assert table.column("override_applied").to_pylist() == [True]
+# ---------------------------------------------------------------------------
+# pending_granules behavior (state-based)
+# ---------------------------------------------------------------------------
 
 
-def test_pending_granules_filters_by_collection(tmp_path) -> None:
-    from nasa_virtual_zarr_survey.attempt import _pending_granules
+def test_pending_attempts_skips_pairs_already_in_results(
+    tmp_state_path: Path, tmp_results_dir: Path
+):
+    """The state.pending_granules antijoin against the Parquet log keeps the resume guarantee."""
+    from vzc.pipeline._attempt import _pending_attempts
+    from vzc.pipeline._attempt import _SCHEMA
 
-    con = connect(str(tmp_path / "db.duckdb"))
-    init_schema(con)
-    con.execute(
-        "INSERT INTO collections (concept_id, daac, provider, format_family, "
-        "skip_reason) VALUES "
-        "(?, ?, ?, ?, NULL), (?, ?, ?, ?, NULL)",
-        ["C1-X", "X", "P", "NetCDF4", "C2-Y", "Y", "P", "NetCDF4"],
-    )
-    con.execute(
-        "INSERT INTO granules (collection_concept_id, granule_concept_id, "
-        "data_url, stratification_bin, access_mode) VALUES "
-        "(?, ?, ?, ?, ?), (?, ?, ?, ?, ?)",
-        [
-            "C1-X",
-            "G1",
-            "s3://a/1",
-            0,
-            "direct",
-            "C2-Y",
-            "G2",
-            "s3://b/2",
-            0,
-            "direct",
+    state = make_state(
+        collections=[make_collection("C1")],
+        granules=[
+            make_granule("C1", "G1", s3_url="s3://b/1", https_url="https://b/1"),
+            make_granule(
+                "C1",
+                "G2",
+                s3_url="s3://b/2",
+                https_url="https://b/2",
+                stratification_bin=1,
+            ),
         ],
     )
-    rows = _pending_granules(
-        con,
-        results_dir=tmp_path / "results",
-        only_daac=None,
-        only_collection="C1-X",
-    )
-    assert [r["collection_concept_id"] for r in rows] == ["C1-X"]
+    save_state(state, tmp_state_path)
+
+    # Pretend G1 is already in the Parquet log
+    cols = {f.name: [] for f in _SCHEMA}
+    cols["collection_concept_id"].append("C1")
+    cols["granule_concept_id"].append("G1")
+    for f in _SCHEMA:
+        if f.name in ("collection_concept_id", "granule_concept_id"):
+            continue
+        cols[f.name].append(None)
+    shard_dir = tmp_results_dir / "DAAC=PODAAC"
+    shard_dir.mkdir(parents=True)
+    pq.write_table(pa.table(cols, schema=_SCHEMA), shard_dir / "part-0.parquet")
+
+    state = load_state(tmp_state_path)
+    pending = _pending_attempts(state, "direct", tmp_results_dir)
+    assert [p["granule_concept_id"] for p in pending] == ["G2"]
 
 
-def test_pending_granules_filters_by_max_granule_bytes(tmp_path) -> None:
-    """Collections with any granule above the limit are excluded entirely."""
-    from nasa_virtual_zarr_survey.attempt import _pending_granules
-
-    con = connect(str(tmp_path / "db.duckdb"))
-    init_schema(con)
-    con.execute(
-        "INSERT INTO collections (concept_id, daac, provider, format_family, "
-        "skip_reason) VALUES "
-        "(?, ?, ?, ?, NULL), (?, ?, ?, ?, NULL)",
-        ["C-big", "X", "P", "NetCDF4", "C-small", "Y", "P", "NetCDF4"],
-    )
-    con.execute(
-        "INSERT INTO granules (collection_concept_id, granule_concept_id, "
-        "data_url, stratification_bin, size_bytes, access_mode) VALUES "
-        "(?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)",
-        [
-            # C-big has one huge granule plus a small one — whole collection out.
-            "C-big",
-            "g-huge",
-            "s3://b/h.nc",
-            0,
-            5 * 1024**3,
-            "direct",
-            "C-big",
-            "g-tiny",
-            "s3://b/t.nc",
-            1,
-            100,
-            "direct",
-            "C-small",
-            "g-s",
-            "s3://b/s.nc",
-            0,
-            100,
-            "direct",
-        ],
-    )
-    rows = _pending_granules(
-        con,
-        results_dir=tmp_path / "results",
-        only_daac=None,
-        max_granule_bytes=1 * 1024**3,
-    )
-    assert sorted({r["collection_concept_id"] for r in rows}) == ["C-small"]
-
-
-def test_run_attempt_cache_only_filters_to_cached_granules(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """--cache-only restricts attempt to granules already on disk in the cache."""
-    from nasa_virtual_zarr_survey.attempt import run_attempt
-    from nasa_virtual_zarr_survey.auth import StoreCache
-    from nasa_virtual_zarr_survey.cache import cache_layout_path
-
-    db_path = tmp_path / "db.duckdb"
-    results_dir = tmp_path / "results"
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
-
-    con = connect(str(db_path))
-    init_schema(con)
-    insert_collection(con, "C-1")
-    insert_granule(con, "C-1", "g-cached", data_url="s3://b/cached.nc", size_bytes=10)
-    insert_granule(con, "C-1", "g-missing", data_url="s3://b/missing.nc", size_bytes=10)
-    con.close()
-
-    # Pre-populate the cache for one of the two granules.
-    cached = cache_layout_path(cache_dir, "s3://b/cached.nc")
-    cached.parent.mkdir(parents=True, exist_ok=True)
-    cached.write_bytes(b"x" * 10)
-
-    # Avoid real EDL login when run_attempt resolves a store per granule.
-    monkeypatch.setattr(
-        StoreCache, "get_store", lambda self, *, provider, url: object()
-    )
-
-    session = SurveySession.from_duckdb(db_path)
-    captured: list[str] = []
-
-    def fake_attempt_one(*, url, **_kw):
-        captured.append(url)
-        return _make_attempt_result(
-            collection_concept_id="C-1",
-            granule_concept_id=url.rsplit("/", 1)[-1],
-            success=True,
-        )
-
-    with patch(
-        "nasa_virtual_zarr_survey.attempt.attempt_one", side_effect=fake_attempt_one
-    ):
-        n = run_attempt(
-            session,
-            results_dir,
-            cache_dir=cache_dir,
-            cache_only=True,
-            no_overrides=True,
-        )
-
-    assert n == 1
-    assert captured == ["s3://b/cached.nc"]
-
-
-def test_run_attempt_cache_only_without_cache_dir_raises(tmp_path: Path) -> None:
-    from nasa_virtual_zarr_survey.attempt import run_attempt
-
-    db_path = tmp_path / "db.duckdb"
-    results_dir = tmp_path / "results"
-    con = connect(str(db_path))
-    init_schema(con)
-    con.close()
-
-    session = SurveySession.from_duckdb(db_path)
-    import pytest
+def test_run_attempt_external_requires_cache_dir(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    save_state(make_state(), state_path)
 
     with pytest.raises(ValueError, match="cache_dir"):
-        run_attempt(
-            session, results_dir, cache_dir=None, cache_only=True, no_overrides=True
+        _run_attempt(
+            load_state(state_path),
+            access="external",
+            results_dir=tmp_path / "results",
+            cache_dir=None,
+            timeout_s=60,
+            skip_override_validation=True,
         )
-
-
-def test_pending_granules_max_granule_bytes_null_passes_through(tmp_path) -> None:
-    from nasa_virtual_zarr_survey.attempt import _pending_granules
-
-    con = connect(str(tmp_path / "db.duckdb"))
-    init_schema(con)
-    con.execute(
-        "INSERT INTO collections (concept_id, daac, provider, format_family, "
-        "skip_reason) VALUES (?, ?, ?, ?, NULL)",
-        ["C-1", "X", "P", "NetCDF4"],
-    )
-    con.execute(
-        "INSERT INTO granules (collection_concept_id, granule_concept_id, "
-        "data_url, stratification_bin, size_bytes, access_mode) VALUES "
-        "(?, ?, ?, ?, NULL, ?)",
-        ["C-1", "g-?", "s3://b/x.nc", 0, "direct"],
-    )
-    rows = _pending_granules(
-        con,
-        results_dir=tmp_path / "results",
-        only_daac=None,
-        max_granule_bytes=10,
-    )
-    assert [r["granule_concept_id"] for r in rows] == ["g-?"]

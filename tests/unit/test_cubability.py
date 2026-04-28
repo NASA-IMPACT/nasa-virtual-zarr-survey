@@ -1,4 +1,4 @@
-from nasa_virtual_zarr_survey.cubability import (
+from vzc.pipeline._cubability import (
     CubabilityVerdict,
     check_cubability,
     fingerprint_from_json,

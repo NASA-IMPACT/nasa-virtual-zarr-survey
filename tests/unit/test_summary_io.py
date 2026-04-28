@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from nasa_virtual_zarr_survey.cubability import CubabilityResult, CubabilityVerdict
-from nasa_virtual_zarr_survey.summary_io import dump_summary, load_summary
-from nasa_virtual_zarr_survey.types import VerdictRow
+from vzc.pipeline._cubability import CubabilityResult, CubabilityVerdict
+from vzc.state._digest import dump_summary, load_summary
+from vzc.core.types import VerdictRow
 
 
 def _make_verdict(concept_id: str = "C1") -> VerdictRow:

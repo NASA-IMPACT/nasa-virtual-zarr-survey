@@ -1,4 +1,4 @@
-"""Unit tests for nasa_virtual_zarr_survey.script_template."""
+"""Unit tests for vzc.pipeline._scripts."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from nasa_virtual_zarr_survey.formats import FormatFamily
-from nasa_virtual_zarr_survey.script_template import (
+from vzc.core.formats import FormatFamily
+from vzc.pipeline._scripts import (
     render_cache_argparse,
     render_cache_wiring,
     render_inspect_block,

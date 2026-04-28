@@ -1,4 +1,4 @@
-"""Tests for nasa_virtual_zarr_survey.feature_introductions."""
+"""Tests for vzc.render._intros."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from nasa_virtual_zarr_survey.feature_introductions import (
+from vzc.render._intros import (
     FeatureIntroduction,
     FeatureIntroductionsError,
     load_introductions,

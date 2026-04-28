@@ -1,6 +1,6 @@
-# nasa-virtual-zarr-survey
+# virtual-zarr-coverage
 
-Surveys cloud-hosted NASA CMR collections for VirtualiZarr compatibility, so VirtualiZarr maintainers and NASA DAAC operators can see at a glance which collections are usable as virtual Zarr stores today and which need work.
+Tracks VirtualiZarr coverage of cloud-hosted NASA CMR collections, so VirtualiZarr maintainers and NASA DAAC operators can see at a glance which collections are usable as virtual Zarr stores today and which need work.
 
 The pipeline runs in five phases:
 
@@ -12,26 +12,30 @@ The pipeline runs in five phases:
 
 Each failure is bucketed into an empirical taxonomy so the long tail can be triaged.
 
-> **What this measures.** Phases 3, 4a, and 4b verify that VirtualiZarr can *construct* a virtual reference and wrap it in xarray — they do not read chunk bytes through the manifest or compare them against the source file. A "successful" granule is constructable, not necessarily readable. See [What's not exercised](https://nasa-impact.github.io/nasa-virtual-zarr-survey/design/architecture/#whats-not-exercised) for the gap and proposed avenues to close it.
+> **What this measures.** Phases 3, 4a, and 4b verify that VirtualiZarr can *construct* a virtual reference and wrap it in xarray — they do not read chunk bytes through the manifest or compare them against the source file. A "successful" granule is constructable, not necessarily readable. See [What's not exercised](https://nasa-impact.github.io/virtual-zarr-coverage/design/architecture/#whats-not-exercised) for the gap and proposed avenues to close it.
 
 ## Quick start
 
 ```bash
 uv sync
-uv run nasa-virtual-zarr-survey pilot --top 20 --n-bins 2 --access external
+uv run vzc discover --top 20
+uv run vzc sample --n-bins 2
+uv run vzc prefetch
+uv run vzc attempt --access external
+uv run vzc render
 ```
 
-Requires Earthdata Login credentials in `~/.netrc`. Use `--access direct` instead when running on AWS us-west-2 compute.
+Requires Earthdata Login credentials in `~/.netrc`. Drop `prefetch` and use `--access direct` instead when running on AWS us-west-2 compute.
 
 ## Documentation
 
-The full documentation site is at <https://nasa-impact.github.io/nasa-virtual-zarr-survey/>:
+The full documentation site is at <https://nasa-impact.github.io/virtual-zarr-coverage/>:
 
-- [Latest survey results](https://nasa-impact.github.io/nasa-virtual-zarr-survey/results/): figures, taxonomy breakdown, per-DAAC and per-collection rollups.
-- [Usage and run modes](https://nasa-impact.github.io/nasa-virtual-zarr-survey/): pilot, per-phase commands, `--access` modes, overrides, reproducing a single failure, granule cache.
-- [Glossary](https://nasa-impact.github.io/nasa-virtual-zarr-survey/glossary/) and [failure taxonomy](https://nasa-impact.github.io/nasa-virtual-zarr-survey/design/taxonomy/) for terms and bucket meanings.
-- [Architecture](https://nasa-impact.github.io/nasa-virtual-zarr-survey/design/architecture/) for the full design walk-through.
-- [Contributing](https://nasa-impact.github.io/nasa-virtual-zarr-survey/contributing/): dev setup, tests, regenerating committed figures, extending the taxonomy.
+- [Latest survey results](https://nasa-impact.github.io/virtual-zarr-coverage/results/): figures, taxonomy breakdown, per-DAAC and per-collection rollups.
+- [Usage and run modes](https://nasa-impact.github.io/virtual-zarr-coverage/): pilot, per-phase commands, `--access` modes, overrides, reproducing a single failure, granule cache.
+- [Glossary](https://nasa-impact.github.io/virtual-zarr-coverage/glossary/) and [failure taxonomy](https://nasa-impact.github.io/virtual-zarr-coverage/design/taxonomy/) for terms and bucket meanings.
+- [Architecture](https://nasa-impact.github.io/virtual-zarr-coverage/design/architecture/) for the full design walk-through.
+- [Contributing](https://nasa-impact.github.io/virtual-zarr-coverage/contributing/): dev setup, tests, regenerating committed figures, extending the taxonomy.
 
 ## License
 

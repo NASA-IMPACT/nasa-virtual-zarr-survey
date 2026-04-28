@@ -1,4 +1,4 @@
-"""Unit tests for nasa_virtual_zarr_survey.__main__ Click commands."""
+"""Unit tests for vzc.__main__ Click commands."""
 
 from __future__ import annotations
 
@@ -12,17 +12,16 @@ import pyarrow.parquet as pq
 import pytest
 from click.testing import CliRunner
 
-from nasa_virtual_zarr_survey import opendap
-from nasa_virtual_zarr_survey.db import connect, init_schema
-from tests.conftest import insert_collection, insert_granule
+from vzc.cmr import _opendap as opendap
+from vzc.state._io import load_state, save_state
+from tests.conftest import make_collection, make_granule, make_state
 
 
 @pytest.fixture(autouse=True)
 def _stub_opendap_service_ids(monkeypatch):
-    """Default to an empty cloud-OPeNDAP set; individual tests can override."""
     opendap.cloud_opendap_service_ids.cache_clear()
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.discover.cloud_opendap_service_ids",
+        "vzc.cmr._discover.cloud_opendap_service_ids",
         lambda: frozenset(),
     )
     yield
@@ -57,34 +56,39 @@ class _FakeColl:
         self.render_dict = d
 
 
-def _setup_db_with_skipped_collection(db_path: Path) -> None:
-    con = connect(db_path)
-    init_schema(con)
-    insert_collection(
-        con,
-        "C-SKIPPED",
-        short_name="n",
-        daac="ASF",
-        format_family=None,
-        format_declared="mystery",
-        processing_level="L1",
-        skip_reason="format_unknown",
+def _seed_state(state_path: Path, **kwargs: Any) -> None:
+    state = make_state(**kwargs)
+    save_state(state, state_path)
+
+
+def _seed_skipped_collection(state_path: Path) -> None:
+    _seed_state(
+        state_path,
+        collections=[
+            make_collection(
+                "C-SKIPPED",
+                short_name="n",
+                daac="ASF",
+                format_family=None,
+                format_declared="mystery",
+                processing_level="L1",
+                skip_reason="format_unknown",
+            )
+        ],
     )
-    con.close()
 
 
-def _setup_db_with_unattempted_collection(db_path: Path) -> None:
-    con = connect(db_path)
-    init_schema(con)
-    # Array-like collection but no granules sampled.
-    insert_collection(con, "C-LIVE", short_name="n")
-    con.close()
+def _seed_unattempted_collection(state_path: Path) -> None:
+    _seed_state(
+        state_path,
+        collections=[make_collection("C-LIVE", short_name="n")],
+    )
 
 
 def _write_attempt_shard_for_collection(
     results_dir: Path, *, collection_concept_id: str, success: bool
 ) -> None:
-    from nasa_virtual_zarr_survey.attempt import _SCHEMA
+    from vzc.pipeline._attempt import _SCHEMA
 
     shard_dir = results_dir / "DAAC=PODAAC"
     shard_dir.mkdir(parents=True, exist_ok=True)
@@ -119,154 +123,77 @@ def _write_attempt_shard_for_collection(
     pq.write_table(pa.table(cols, schema=_SCHEMA), shard_dir / "part-0000.parquet")
 
 
-def test_repro_no_failures_skipped_collection_shows_probe_hint(
-    tmp_path: Path,
+# ---------------------------------------------------------------------------
+# investigate (replaces probe + repro)
+# ---------------------------------------------------------------------------
+
+
+def _seed_full_collection(state_path: Path) -> None:
+    _seed_state(
+        state_path,
+        collections=[make_collection("C-FULL", short_name="n")],
+        granules=[
+            make_granule(
+                "C-FULL",
+                "G-FULL-0",
+                s3_url="s3://b/file0.h5",
+                https_url="https://b/file0.h5",
+                sampled_at=datetime.now(timezone.utc),
+            )
+        ],
+    )
+
+
+def test_investigate_native_writes_script_to_out_path(
+    tmp_path: Path, monkeypatch
 ) -> None:
-    from nasa_virtual_zarr_survey.__main__ import cli
+    from vzc.__main__ import cli
 
-    db_path = tmp_path / "survey.duckdb"
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    _setup_db_with_skipped_collection(db_path)
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "repro",
-            "C-SKIPPED",
-            "--db",
-            str(db_path),
-            "--results",
-            str(results_dir),
-        ],
-    )
-    assert result.exit_code != 0
-    assert "No matching failures found." in result.output
-    assert "skip_reason='format_unknown'" in result.output
-    assert "nasa-virtual-zarr-survey probe C-SKIPPED" in result.output
-
-
-def test_repro_no_failures_unattempted_collection_shows_probe_hint(
-    tmp_path: Path,
-) -> None:
-    from nasa_virtual_zarr_survey.__main__ import cli
-
-    db_path = tmp_path / "survey.duckdb"
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    _setup_db_with_unattempted_collection(db_path)
+    monkeypatch.chdir(tmp_path)
+    state_path = tmp_path / "output" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path = tmp_path / "probes" / "investigate.py"
+    _seed_full_collection(state_path)
 
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        [
-            "repro",
-            "C-LIVE",
-            "--db",
-            str(db_path),
-            "--results",
-            str(results_dir),
-        ],
-    )
-    assert result.exit_code != 0
-    assert "No matching failures found." in result.output
-    assert "nasa-virtual-zarr-survey probe C-LIVE" in result.output
-
-
-def test_repro_no_failures_all_succeeded_no_probe_hint(tmp_path: Path) -> None:
-    """Concept ID has Parquet rows that simply don't match the failure filter →
-    original 'No matching failures found' message, no hint."""
-    from nasa_virtual_zarr_survey.__main__ import cli
-
-    db_path = tmp_path / "survey.duckdb"
-    results_dir = tmp_path / "results"
-    results_dir.mkdir()
-    con = connect(db_path)
-    init_schema(con)
-    insert_collection(con, "C-OK", short_name="n")
-    insert_granule(
-        con,
-        "C-OK",
-        "G-OK",
-        data_url="https://x/y.nc",
-        sampled_at=datetime.now(timezone.utc),
-        access_mode="external",
-    )
-    con.close()
-    _write_attempt_shard_for_collection(
-        results_dir, collection_concept_id="C-OK", success=True
-    )
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "repro",
-            "C-OK",
-            "--db",
-            str(db_path),
-            "--results",
-            str(results_dir),
-        ],
-    )
-    assert result.exit_code != 0
-    assert "No matching failures found." in result.output
-    # Granule + parquet row exist → no hint.
-    assert "probe" not in result.output
-
-
-def test_probe_command_writes_script_to_out_dir(tmp_path: Path) -> None:
-    from nasa_virtual_zarr_survey.__main__ import cli
-
-    db_path = tmp_path / "survey.duckdb"
-    out_dir = tmp_path / "probes"
-
-    con = connect(db_path)
-    init_schema(con)
-    insert_collection(con, "C-FULL", short_name="n")
-    insert_granule(
-        con,
-        "C-FULL",
-        "G-FULL-0",
-        data_url="s3://b/file0.h5",
-        sampled_at=datetime.now(timezone.utc),
-    )
-    con.close()
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        ["probe", "C-FULL", "--db", str(db_path), "--out", str(out_dir)],
+        ["investigate", "C-FULL", "--mode", "native", "--out", str(out_path)],
     )
     assert result.exit_code == 0, result.output
-    [script] = list(out_dir.glob("*.py"))
-    assert script.name == "probe_C-FULL.py"
-    text = script.read_text()
+    text = out_path.read_text()
     assert "# --- imports ---" in text
     assert "C-FULL" in text
 
 
-def test_probe_command_to_stdout(tmp_path: Path) -> None:
-    from nasa_virtual_zarr_survey.__main__ import cli
+def test_investigate_native_to_stdout(tmp_path: Path, monkeypatch) -> None:
+    from vzc.__main__ import cli
 
-    db_path = tmp_path / "survey.duckdb"
-    con = connect(db_path)
-    init_schema(con)
-    insert_collection(con, "C-FULL", short_name="n")
-    insert_granule(
-        con,
-        "C-FULL",
-        "G-FULL-0",
-        data_url="s3://b/file0.h5",
-        sampled_at=datetime.now(timezone.utc),
-    )
-    con.close()
+    monkeypatch.chdir(tmp_path)
+    state_path = tmp_path / "output" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    _seed_full_collection(state_path)
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["probe", "C-FULL", "--db", str(db_path)])
+    result = runner.invoke(cli, ["investigate", "C-FULL", "--mode", "native"])
     assert result.exit_code == 0, result.output
     assert "# --- imports ---" in result.output
+    assert "C-FULL" in result.output
+
+
+def test_investigate_virtual_to_stdout(tmp_path: Path, monkeypatch) -> None:
+    """Default mode (virtual) emits a script that imports attempt_one."""
+    from vzc.__main__ import cli
+
+    monkeypatch.chdir(tmp_path)
+    state_path = tmp_path / "output" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    _seed_full_collection(state_path)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["investigate", "C-FULL", "--access", "direct"])
+    assert result.exit_code == 0, result.output
+    assert "from vzc.pipeline._attempt import attempt_one" in result.output
     assert "C-FULL" in result.output
 
 
@@ -277,13 +204,11 @@ def test_probe_command_to_stdout(tmp_path: Path) -> None:
 
 def _patch_search(monkeypatch, dicts: list[dict[str, Any]]) -> None:
     fake = MagicMock(return_value=[_FakeColl(d) for d in dicts])
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.discover.earthaccess.search_datasets", fake
-    )
+    monkeypatch.setattr("vzc.cmr._discover.earthaccess.search_datasets", fake)
 
 
 def test_discover_list_none_emits_only_aggregate(tmp_path: Path, monkeypatch) -> None:
-    from nasa_virtual_zarr_survey.__main__ import cli
+    from vzc.__main__ import cli
 
     _patch_search(monkeypatch, [_umm("C1-PODAAC"), _umm("C2-PODAAC", fmt="PDF")])
 
@@ -299,7 +224,7 @@ def test_discover_list_none_emits_only_aggregate(tmp_path: Path, monkeypatch) ->
 
 
 def test_discover_list_array_excludes_skipped(tmp_path: Path, monkeypatch) -> None:
-    from nasa_virtual_zarr_survey.__main__ import cli
+    from vzc.__main__ import cli
 
     _patch_search(
         monkeypatch,
@@ -316,17 +241,15 @@ def test_discover_list_array_excludes_skipped(tmp_path: Path, monkeypatch) -> No
     assert result.exit_code == 0, result.output
     assert "C-OK-PODAAC" in result.output
     assert "C-SKIP-PODAAC" not in result.output
-    # In non-top mode rank/usage_score columns exist as headers but values are blank.
     assert "rank" in result.output
     assert "usage_score" in result.output
-    # No skip_reason column populated for array-like rows.
     assert "non_array_format" not in result.output
 
 
 def test_discover_list_all_includes_skip_reason_column(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from nasa_virtual_zarr_survey.__main__ import cli
+    from vzc.__main__ import cli
 
     _patch_search(
         monkeypatch,
@@ -348,11 +271,10 @@ def test_discover_list_all_includes_skip_reason_column(
 
 
 def test_discover_list_includes_opendap_column(tmp_path: Path, monkeypatch) -> None:
-    """The --list table renders 'Y' for collections with cloud OPeNDAP."""
-    from nasa_virtual_zarr_survey.__main__ import cli
+    from vzc.__main__ import cli
 
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.discover.cloud_opendap_service_ids",
+        "vzc.cmr._discover.cloud_opendap_service_ids",
         lambda: frozenset({"S-OPENDAP"}),
     )
     od_umm = _umm("C-OD-PODAAC", sn="WITHDMRPP")
@@ -366,12 +288,10 @@ def test_discover_list_includes_opendap_column(tmp_path: Path, monkeypatch) -> N
         cli, ["discover", "--limit", "2", "--list", "array", "--dry-run"]
     )
     assert result.exit_code == 0, result.output
-    assert "opendap" in result.output  # header
+    assert "opendap" in result.output
     out = result.output
-    # The opendap-having row gets 'Y'; the non-opendap row's column is empty.
     od_line = next(line for line in out.splitlines() if "C-OD-PODAAC" in line)
     no_line = next(line for line in out.splitlines() if "C-NO-PODAAC" in line)
-    # 'Y' marker present on the opendap line, absent on the other.
     assert " Y " in f" {od_line} "
     assert " Y " not in f" {no_line} "
 
@@ -379,7 +299,7 @@ def test_discover_list_includes_opendap_column(tmp_path: Path, monkeypatch) -> N
 def test_discover_list_skipped_shows_breakdown_and_table(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from nasa_virtual_zarr_survey.__main__ import cli
+    from vzc.__main__ import cli
 
     _patch_search(
         monkeypatch,
@@ -396,7 +316,6 @@ def test_discover_list_skipped_shows_breakdown_and_table(
     )
     assert result.exit_code == 0, result.output
     assert "Skipped collections by format:" in result.output
-    # Table excludes the array-like row
     assert "C-OK-PODAAC" not in result.output
     assert "C-PDF-PODAAC" in result.output
     assert "C-NULL-PODAAC" in result.output
@@ -405,10 +324,10 @@ def test_discover_list_skipped_shows_breakdown_and_table(
 
 
 def test_discover_list_top_mode_sorts_by_rank(tmp_path: Path, monkeypatch) -> None:
-    from nasa_virtual_zarr_survey.__main__ import cli
+    from vzc.__main__ import cli
 
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.popularity.all_top_collection_ids",
+        "vzc.cmr._popularity.all_top_collection_ids",
         lambda providers, num_per_provider=100: [
             ("C-HIGH-POCLOUD", 18000),
             ("C-MID-POCLOUD", 9000),
@@ -429,22 +348,21 @@ def test_discover_list_top_mode_sorts_by_rank(tmp_path: Path, monkeypatch) -> No
         cli, ["discover", "--top-per-provider", "3", "--list", "array", "--dry-run"]
     )
     assert result.exit_code == 0, result.output
-    # Each rank/score appears.
     assert "18000" in result.output
     assert "9000" in result.output
     assert "100" in result.output
-    # Order in output: HIGH before MID before LOW.
     out = result.output
     assert out.index("C-HIGH-POCLOUD") < out.index("C-MID-POCLOUD")
     assert out.index("C-MID-POCLOUD") < out.index("C-LOW-POCLOUD")
 
 
-def test_discover_list_persists_db_when_not_dry_run(
+def test_discover_list_persists_state_when_not_dry_run(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from nasa_virtual_zarr_survey.__main__ import cli
+    from vzc.__main__ import cli
 
-    db_path = tmp_path / "survey.duckdb"
+    monkeypatch.chdir(tmp_path)
+    state_path = tmp_path / "output" / "state.json"
     _patch_search(monkeypatch, [_umm("C1-PODAAC")])
 
     runner = CliRunner()
@@ -454,8 +372,6 @@ def test_discover_list_persists_db_when_not_dry_run(
             "discover",
             "--limit",
             "1",
-            "--db",
-            str(db_path),
             "--list",
             "array",
         ],
@@ -463,18 +379,13 @@ def test_discover_list_persists_db_when_not_dry_run(
     assert result.exit_code == 0, result.output
     assert "C1-PODAAC" in result.output
 
-    con = connect(db_path)
-    init_schema(con)
-    n = con.execute("SELECT count(*) FROM collections").fetchone()[0]
-    assert n == 1
-    sm = con.execute(
-        "SELECT value FROM run_meta WHERE key = 'sampling_mode'"
-    ).fetchone()
-    assert sm == ("limit=1",)
+    state = load_state(state_path)
+    assert len(state.collections) == 1
+    assert state.run_meta.get("sampling_mode") == "limit=1"
 
 
 def test_discover_skipped_flag_no_longer_accepted(tmp_path: Path, monkeypatch) -> None:
-    from nasa_virtual_zarr_survey.__main__ import cli
+    from vzc.__main__ import cli
 
     _patch_search(monkeypatch, [_umm("C1-PODAAC")])
 
@@ -484,15 +395,10 @@ def test_discover_skipped_flag_no_longer_accepted(tmp_path: Path, monkeypatch) -
     assert "no such option" in result.output.lower() or "--skipped" in result.output
 
 
-@pytest.mark.parametrize("subcommand", ["attempt", "snapshot"])
-def test_cache_only_without_cache_is_rejected(subcommand: str) -> None:
-    """``--cache-only --no-cache`` must fail with a usage error in every
-    subcommand that takes ``--cache-only``. Centralized in
-    ``_cache_options_with_only`` — guards against regressions if a
-    subcommand stops applying that decorator."""
-    from nasa_virtual_zarr_survey.__main__ import cli
+def test_attempt_no_cache_only_flag_anymore() -> None:
+    """``--cache-only`` was removed; --access external is cache-only by definition."""
+    from vzc.__main__ import cli
 
     runner = CliRunner()
-    result = runner.invoke(cli, [subcommand, "--no-cache", "--cache-only"])
+    result = runner.invoke(cli, ["attempt", "--cache-only"])
     assert result.exit_code != 0
-    assert "--cache-only requires --cache" in result.output

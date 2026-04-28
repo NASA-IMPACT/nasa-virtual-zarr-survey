@@ -1,8 +1,8 @@
-# nasa-virtual-zarr-survey
+# virtual-zarr-coverage
 
-Surveys cloud-hosted NASA CMR collections for VirtualiZarr compatibility. The pipeline runs as five phases:
+Tracks VirtualiZarr coverage of cloud-hosted NASA CMR collections. The pipeline runs as five phases:
 
-1. **Discover** (Phase 1): enumerate CMR collections into DuckDB.
+1. **Discover** (Phase 1): enumerate CMR collections into `output/state.json`.
 2. **Sample** (Phase 2): pick N granules per collection, stratified across positional offsets in CMR's `revision_date` ordering.
 3. **Parsability** (Phase 3): the VirtualiZarr parser can produce a `ManifestStore` from a granule URL.
 4. **Datasetability / Datatreeability** (Phase 4a / 4b): the `ManifestStore` can be converted to an `xarray.Dataset` (4a) or `xarray.DataTree` (4b). 4b runs in parallel with 4a; it captures hierarchical files that fail 4a with `CONFLICTING_DIM_SIZES`.
@@ -18,26 +18,19 @@ uv sync
 
 Requires Earthdata Login credentials in `~/.netrc`. See NASA's [Earthdata Login setup guide](https://urs.earthdata.nasa.gov/) if you don't already have an account; the same `.netrc` entry powers both `--access external` (HTTPS + bearer token) and `--access direct` (S3 credentials minted via EDL).
 
-### Pilot run
+### Run the pipeline
 
-Start small. The pilot runs discover, sample, attempt, report on a bounded set of collections so you can review raw errors and refine the failure taxonomy before committing to a full survey:
-
-```bash
-uv run nasa-virtual-zarr-survey pilot --top 20 --n-bins 2 --access external
-```
-
-### Per-phase commands
-
-The pilot is a convenience wrapper; the full pipeline is also available one phase at a time:
+Start small. Run discover, sample, prefetch (for `--access external`), attempt, render on a bounded set of collections so you can review raw errors and refine the failure taxonomy before committing to a full survey:
 
 ```bash
-uv run nasa-virtual-zarr-survey discover --top 200
-uv run nasa-virtual-zarr-survey sample --n-bins 5
-uv run nasa-virtual-zarr-survey attempt --access external
-uv run nasa-virtual-zarr-survey report
+uv run vzc discover --top 20
+uv run vzc sample --n-bins 2
+uv run vzc prefetch         # only needed for --access external
+uv run vzc attempt --access external
+uv run vzc render
 ```
 
-`discover` and `sample` are idempotent; `attempt` is resumable (it skips `(collection, granule)` pairs already present in the Parquet log); `report` is cheap and side-effect-free, so you can re-run it after refining the taxonomy without re-fetching anything.
+`discover` and `sample` are idempotent; `attempt` is resumable (it skips `(collection, granule)` pairs already present in the Parquet log); `render` is cheap and side-effect-free, so you can re-run it after refining the taxonomy without re-fetching anything.
 
 ## Run modes in detail
 
@@ -58,14 +51,14 @@ Pick one or the other; the default (no scope flag) is reserved for a full survey
 
 NASA's EOSDIS S3 buckets live in `us-west-2` and don't allow public direct-S3 reads from outside that region.
 
-- `--access external` (default for outside AWS): HTTPS URLs signed with an Earthdata Login bearer token. Works from anywhere with an `~/.netrc` EDL entry, but every byte goes through HTTPS rather than the cheaper S3 path.
-- `--access direct`: temporary S3 credentials minted via EDL's cloud-auth endpoint. Requires that you're running on `us-west-2` compute. Faster and avoids HTTPS gateway costs, but a `403 Forbidden` (taxonomy bucket `FORBIDDEN`) is the typical failure if you try this from outside the region.
+- `--access external` (default for outside AWS): HTTPS URLs signed with an Earthdata Login bearer token. Works from anywhere with an `~/.netrc` EDL entry, but every byte goes through HTTPS rather than the cheaper S3 path. Reads come from the local cache only — `prefetch` is the single writer; missing granules in attempt fail fast.
+- `--access direct`: temporary S3 credentials minted via EDL's cloud-auth endpoint. Requires that you're running on `us-west-2` compute. Faster and avoids HTTPS gateway costs, but a `403 Forbidden` (taxonomy bucket `FORBIDDEN`) is the typical failure if you try this from outside the region. Skips the cache entirely.
 
-If you change access mode between runs, `sample` re-extracts the granule URLs (the URL format differs between the two), so a `discover` re-run is not needed.
+`sample` records both `s3_url` and `https_url` for every granule, so flipping `--access` between runs is free — no re-sampling needed.
 
 ### Cloud OPeNDAP / DMR++ sidecars
 
-`discover` records `collections.has_cloud_opendap` (true when the collection is associated with the cloud-Hyrax UMM-S record); `sample` then writes `granules.dmrpp_granule_url = https_url + ".dmrpp"` for each sampled granule of those collections. The constructed URL is the input `DMRPPParser` reads — useful as a fallback when the underlying HDF5 parse fails. Use `--verify-dmrpp` on `sample` (off by default; one HEAD per granule) to confirm each sidecar actually exists rather than trusting the UMM-S association alone.
+`discover` records `collections.has_cloud_opendap` (true when the collection is associated with the cloud-Hyrax UMM-S record); `sample` then writes `granules.dmrpp_granule_url = https_url + ".dmrpp"` for each sampled granule of those collections. The constructed URL is the input `DMRPPParser` reads — useful as a fallback when the underlying HDF5 parse fails.
 
 ### Previewing the selection: `--list`
 
@@ -82,78 +75,56 @@ In `--top` and `--top-per-provider` modes the table is sorted by popularity rank
 
 ```bash
 # preview the top-50 selection before locking it in
-uv run nasa-virtual-zarr-survey discover --top 50 --list array --dry-run
+uv run vzc discover --top 50 --list array --dry-run
 
 # audit which collections were filtered out and why
-uv run nasa-virtual-zarr-survey discover --top 50 --list skipped --dry-run
+uv run vzc discover --top 50 --list skipped --dry-run
 
 # full picture, with skip_reason populated for the filtered rows
-uv run nasa-virtual-zarr-survey discover --top 50 --list all --dry-run
+uv run vzc discover --top 50 --list all --dry-run
 ```
 
-The table includes a plain Earthdata Search URL per row (`https://search.earthdata.nasa.gov/search?q=<concept_id>`); modern terminals auto-linkify it for Cmd/Ctrl-click. For a UMM-JSON dump, use `probe <concept_id>` — it prints both the search and CMR concept URLs.
+The table includes a plain Earthdata Search URL per row (`https://search.earthdata.nasa.gov/search?q=<concept_id>`); modern terminals auto-linkify it for Cmd/Ctrl-click. For a UMM-JSON dump, use `investigate <concept_id> --mode native` — the generated script prints both the search and CMR concept URLs.
 
-`--list` works with or without `--dry-run`; in persisted mode the DB is populated as a side effect, useful when the listing confirms the selection.
+`--list` works with or without `--dry-run`; in persisted mode `output/state.json` is populated as a side effect, useful when the listing confirms the selection.
 
 ### Dry run
 
-To see what would be fetched without writing to the DB:
+To see what would be fetched without writing state:
 
 ```bash
-uv run nasa-virtual-zarr-survey discover --top 20 --dry-run
+uv run vzc discover --top 20 --dry-run
 ```
 
 ### Caching granule bytes
 
-Iterating on the taxonomy or report code without re-downloading granules is much faster with a local cache. Add `--cache` to any command that fetches granules to persist fetched bytes under `~/.cache/nasa-virtual-zarr-survey/`:
+For `--access external`, the survey reads from a local cache at `~/.cache/nasa-virtual-zarr-survey/` and never fetches over HTTPS at attempt time. Populate the cache with `prefetch` first:
 
 ```bash
-uv run nasa-virtual-zarr-survey pilot --cache --top 5 --n-bins 3 --access external
+uv run vzc prefetch --cache-max-size 50GB
 ```
 
-Override the location with `--cache-dir` or `NASA_VZ_SURVEY_CACHE_DIR`, and bound total size with `--cache-max-size`. See the contributing guide for cache layout and inspection tips.
+`prefetch` walks collections in `popularity_rank` order and downloads each sampled granule's `https_url`. Override the cache location with the `NASA_VZ_SURVEY_CACHE_DIR` environment variable. The cap is checked at collection boundaries, so the collection that crosses it finishes writing all its granules before the run stops. See the contributing guide for cache layout and inspection tips.
 
-## Reproducing a single failure
+## Investigating a failure
 
-After a `report` run, the most common next step is investigating one specific failure. The `repro` subcommand emits a self-contained Python script that reproduces the failing operation against the same URL, parser, and kwargs the survey used:
+After a survey run, the most common next step is investigating one specific failure. The `investigate` subcommand emits a self-contained Python script for any concept ID:
 
 ```bash
-# emit one repro for a specific collection
-uv run nasa-virtual-zarr-survey repro C1996881146-POCLOUD --out reproductions/
+# script that reproduces the survey's VirtualiZarr code path for a collection
+uv run vzc investigate C1996881146-POCLOUD > vz_C1996881146.py
 
-# emit up to 3 repros for a failure bucket (great for triage)
-uv run nasa-virtual-zarr-survey repro --bucket UNDEFINED_FILL_VALUE --limit 3 --out reproductions/
+# native-library exploration (h5py, netCDF4, astropy, zarr, tifffile) — useful for
+# collections skipped at discover time with no Parquet failure to reproduce
+uv run vzc investigate C1214470488-ASF --mode native > native_C1214470488.py
 
-# emit only failures from a specific phase
-uv run nasa-virtual-zarr-survey repro --bucket CONFLICTING_DIM_SIZES --phase dataset --out reproductions/
+# write directly to a file
+uv run vzc investigate G1245678901-ASF --mode native --out probes/G1245678901.py
 ```
 
-Each generated script attempts the failing parser / dataset call against the same URL the survey used:
+The script reads `output/state.json` if it exists and falls back to one or two CMR calls when the concept ID is absent, so it works against a fresh checkout as well as a populated state. `--mode virtual` (the default) reproduces the parser, dataset, and datatree calls the survey ran; `--mode native` dumps UMM-JSON, both `direct` and `external` data links, and (when format can be sniffed) a structural dump via the format-appropriate library.
 
-```bash
-uv run python reproductions/repro_G123456789-POCLOUD.py
-uv run python reproductions/repro_G123456789-POCLOUD.py --cache   # reuse fetched bytes locally
-```
-
-By default the renderer bakes any matching collection override into the script; pass `--no-overrides` to render an unconfigured run (useful when investigating a regression). The script also doubles as a working starting point for non-debugging virtualization workflows — edit the parser/dataset kwargs (or strip the failure-context docstring) and treat it as a runnable seed.
-
-For a structural dump (group tree, dtypes, chunks, codecs, fill values) — or to investigate a collection that `repro` cannot help with, e.g. one skipped at discover time with `format_unknown` — use `probe`.
-
-## Probing a collection or granule
-
-`probe` is the diagnostic counterpart to `repro`. Where `repro` reproduces a failure the survey already observed, `probe` investigates any concept ID — most importantly collections that were skipped at discover time (no Parquet failures to reproduce):
-
-```bash
-# write a probe script for a collection
-uv run nasa-virtual-zarr-survey probe C1214470488-ASF --out probes/
-
-# write a probe for a specific granule
-uv run nasa-virtual-zarr-survey probe G1245678901-ASF --out probes/
-```
-
-The generated script logs in via `earthaccess`, dumps the collection / granule UMM-JSON and both `direct` and `external` data links, and (when format can be sniffed from the URL extension) calls `inspect_url` for a structural dump. `probe` prefers the local survey DB and falls back to one or two CMR calls when the concept ID is absent — so it works against a fresh checkout as well as against a populated `output/survey.duckdb`.
-
-If `repro CONCEPT_ID` cannot find any failures because the collection was skipped or never sampled, the error message points you at the right `probe` invocation.
+Run the script with `uv run python vz_C1996881146.py`; it doubles as a working starting point for non-debugging virtualization workflows — edit the kwargs and treat it as a runnable seed.
 
 ## Per-collection overrides
 
@@ -172,21 +143,15 @@ notes = "to_virtual_dataset raises ConflictingDimSizes; datatree path works."
 
 The `notes` field is required on every non-empty entry, so the file doubles as a "lessons learned" register that's diff-able and PR-reviewable.
 
-After editing the file, validate it before running anything that reads it:
+After editing the file, the next `attempt` validates it on startup (concept-ID format, allowed sub-keys, kwarg names against each parser's signature, contradictory combinations like `skip_dataset = true` plus `dataset = {...}`) and fails fast on a malformed entry. Pass `--skip-override-validation` if you'd rather catch validation errors per-attempt at runtime.
 
-```bash
-uv run nasa-virtual-zarr-survey validate-overrides
-```
-
-The check enforces concept-ID format, allowed sub-keys, kwarg names against each parser's signature, and contradictory combinations (e.g. `skip_dataset = true` plus `dataset = {...}`).
-
-The full debug loop is: naive `attempt` records a failure, `repro` to investigate, edit `collection_overrides.toml`, `validate-overrides` to confirm, then re-run `attempt` for that collection. The next `report` will mark the collection as `override_applied = true`. See [the design doc](design/architecture.md#per-collection-overrides) for the full schema and validation rules.
+The full debug loop is: naive `attempt` records a failure, `investigate` to dig in, edit `collection_overrides.toml`, then re-run `attempt`. The next `render` will mark the collection as `override_applied = true`. See [the design doc](design/architecture.md#per-collection-overrides) for the full schema and validation rules.
 
 ## Tracking compatibility over time
 
 The pipeline above is one point in time. To track how VirtualiZarr's compatibility against NASA data evolves across releases — and to evaluate unreleased branches against the same fixed sample — the survey supports *snapshots*.
 
-A snapshot is one re-run of `attempt` + `report` against `config/locked_sample.json` (a committed JSON enumeration of (collection, granule) pairs) under a date-pinned dependency stack. Each snapshot writes a `*.summary.json` digest to `docs/results/history/`; the `history` subcommand renders all of them as a [Coverage over time](results/history.md) page with funnel-over-time and bucket-trend charts.
+A snapshot is one re-run of `attempt` + `render` against `config/locked_sample.json` (a committed JSON enumeration of (collection, granule) pairs) under a date-pinned dependency stack. Each snapshot writes a `*.summary.json` digest to `docs/results/history/`; `render --history` renders all of them as a [Coverage over time](results/history.md) page with funnel-over-time and bucket-trend charts.
 
 Two flavors:
 
@@ -196,42 +161,47 @@ Two flavors:
 Typical workflow once the locked sample is set up (see the contributing guide):
 
 ```bash
-# release: pin pyproject's exclude-newer date, lock, snapshot.
+# release: pin pyproject's exclude-newer date, lock, run.
 uv lock
-uv run nasa-virtual-zarr-survey snapshot
+uv run vzc run
 
-# preview: add a git override to [tool.uv.sources], lock, snapshot with a label.
+# preview: add a git override to [tool.uv.sources], lock, run with a label.
 uv lock
-uv run nasa-virtual-zarr-survey snapshot --label variable-chunking
+uv run vzc run --label variable-chunking
 
-# render the page after committing new digests.
-uv run nasa-virtual-zarr-survey history
+# render the history page after committing new digests.
+uv run vzc render --history
 ```
 
 See [Publishing a snapshot](contributing.md#publishing-a-snapshot) in the contributing guide for the end-to-end walk-through, including how to build the locked sample.
 
 ## Querying the raw data
 
-The Parquet log at `output/results/` is the canonical per-attempt record (one row per granule per phase). DuckDB can read it directly and is the fastest way to answer questions like "which DAACs hit `UNSUPPORTED_CODEC` most?":
+The Parquet log at `output/results/` is the canonical per-attempt record (one row per granule per phase). The fastest way to ask questions like "which DAACs hit `UNSUPPORTED_CODEC` most?" is pyarrow plus a Counter:
 
 ```bash
 uv run python -c "
-import duckdb
-print(duckdb.sql('''
-    SELECT daac, parse_error_type, count(*) AS n
-    FROM read_parquet(\"output/results/**/*.parquet\", union_by_name=true, hive_partitioning=true)
-    WHERE parse_success = false
-    GROUP BY 1, 2
-    ORDER BY n DESC
-    LIMIT 20
-'''))
+from collections import Counter
+import pyarrow.parquet as pq
+from pathlib import Path
+
+counts: Counter = Counter()
+for shard in Path('output/results').rglob('*.parquet'):
+    t = pq.read_table(shard, columns=['daac', 'parse_success', 'parse_error_type'])
+    for daac, ok, et in zip(*(t[c].to_pylist() for c in t.column_names)):
+        if not ok and et:
+            counts[(daac, et)] += 1
+for (daac, et), n in counts.most_common(20):
+    print(f'{n:5d}  {daac}  {et}')
 "
 ```
 
-`output/survey.duckdb` carries the discover/sample state (collections, granules, run metadata). The Parquet log carries every per-attempt result. Together they're enough to recompute the report from scratch with `report --from-data` skipped.
+If you'd rather use a SQL engine, install `duckdb` separately and point it at the Parquet glob — the survey itself doesn't ship it.
+
+`output/state.json` carries the discover/sample state (collections, granules, run metadata). The Parquet log carries every per-attempt result. Together they're enough to recompute the report from scratch.
 
 ## Architecture
 
-State is persisted in a DuckDB database (`output/survey.duckdb`) for checkpoint data, and in DAAC-partitioned Parquet shards (`output/results/`) for the append-only per-attempt log. Both stages are resumable: `discover` and `sample` are idempotent, `attempt` skips already-recorded `(collection, granule)` pairs.
+State is persisted in `output/state.json` for the discover/sample checkpoint, and in DAAC-partitioned Parquet shards (`output/results/`) for the append-only per-attempt log. Both stages are resumable: `discover` and `sample` are idempotent, `attempt` skips already-recorded `(collection, granule)` pairs.
 
 For the full design, including the override mechanism, the repro renderer, and per-format inspectors, see the [design document](design/architecture.md).

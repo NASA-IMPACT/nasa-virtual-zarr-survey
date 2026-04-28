@@ -1,4 +1,4 @@
-"""Unit tests for nasa_virtual_zarr_survey.overrides."""
+"""Unit tests for vzc.pipeline._overrides."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from nasa_virtual_zarr_survey.formats import FormatFamily
-from nasa_virtual_zarr_survey.overrides import (
+from vzc.core.formats import FormatFamily
+from vzc.pipeline._overrides import (
     CollectionOverride,
     OverrideError,
     OverrideRegistry,

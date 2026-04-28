@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nasa_virtual_zarr_survey.cubability import CubabilityResult, CubabilityVerdict
-from nasa_virtual_zarr_survey.figures import (
+from vzc.pipeline._cubability import CubabilityResult, CubabilityVerdict
+from vzc.render._figures import (
     generate_all,
     generate_funnel,
     generate_group_bars,
@@ -130,7 +130,7 @@ def test_sankey_edges_balance_internal_nodes():
     """
     from collections import defaultdict
 
-    from nasa_virtual_zarr_survey.figures import _sankey_edges
+    from vzc.render._figures import _sankey_edges
 
     verdicts = [
         # 2 parsable & dataset-pass; datatree is overrideskipped on one row

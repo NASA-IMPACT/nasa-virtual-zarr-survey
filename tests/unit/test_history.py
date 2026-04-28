@@ -1,18 +1,24 @@
-"""Tests for the `history` subcommand and run_history rendering pipeline."""
+"""Tests for the run_history rendering pipeline.
+
+The standalone `history` subcommand has been removed; rendering is now
+exercised end-to-end through `report --history`. These tests call
+``run_history()`` directly, which keeps them fast and isolates the
+rendering surface from the broader report flow.
+"""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from click.testing import CliRunner
+import pytest
 
-from nasa_virtual_zarr_survey.__main__ import cli
+from vzc.render._history import run_history
 
 
 def _summary(date_: str, kind: str = "release", label: str | None = None) -> dict:
     return {
-        "schema_version": 7,
+        "schema_version": 8,
         "generated_at": "2026-04-26T00:00:00+00:00",
         "survey_tool_version": "0.1.0",
         "virtualizarr_version": "1.3.0",
@@ -23,9 +29,7 @@ def _summary(date_: str, kind: str = "release", label: str | None = None) -> dic
         "snapshot_kind": kind,
         "label": label,
         "description": None,
-        "git_overrides": None,
         "locked_sample_sha256": "abc",
-        "uv_lock_sha256": "def" if kind == "release" else None,
         "verdicts": [],
         "parse_taxonomy": {},
         "dataset_taxonomy": {},
@@ -36,6 +40,13 @@ def _summary(date_: str, kind: str = "release", label: str | None = None) -> dic
         "other_datatree_errors": [],
         "skipped_by_format": [],
     }
+
+
+def _empty_intros(tmp_path: Path) -> Path:
+    """An empty feature-introductions TOML; some tests don't care about intros."""
+    p = tmp_path / "intros.toml"
+    p.write_text("")
+    return p
 
 
 def test_history_renders_minimal_page(tmp_path: Path) -> None:
@@ -49,12 +60,7 @@ def test_history_renders_minimal_page(tmp_path: Path) -> None:
     )
 
     out = tmp_path / "history.md"
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        ["history", "--history-dir", str(history_dir), "--out", str(out)],
-    )
-    assert result.exit_code == 0, result.output
+    run_history(history_dir, out, intros_path=_empty_intros(tmp_path))
     text = out.read_text()
     assert "# Coverage over time" in text
     assert "2026-02-15" in text
@@ -65,7 +71,7 @@ def test_load_all_sorts_null_dates_last(tmp_path: Path) -> None:
     """Summaries with snapshot_date=None must sort *after* dated ones,
     so a hand-edited or in-progress digest doesn't render as the
     leftmost (earliest) point on trend charts."""
-    from nasa_virtual_zarr_survey.history import _load_all
+    from vzc.render._history import _load_all
 
     history_dir = tmp_path / "history"
     history_dir.mkdir()
@@ -87,13 +93,10 @@ def test_history_rejects_v5_summary(tmp_path: Path) -> None:
     history_dir.mkdir()
     (history_dir / "old.summary.json").write_text(json.dumps({"schema_version": 5}))
 
-    out = tmp_path / "history.md"
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        ["history", "--history-dir", str(history_dir), "--out", str(out)],
-    )
-    assert result.exit_code != 0
+    with pytest.raises(Exception):
+        run_history(
+            history_dir, tmp_path / "history.md", intros_path=_empty_intros(tmp_path)
+        )
 
 
 def test_history_warns_on_locked_sample_drift(tmp_path: Path) -> None:
@@ -105,17 +108,11 @@ def test_history_warns_on_locked_sample_drift(tmp_path: Path) -> None:
     (history_dir / "2026-02-15.summary.json").write_text(json.dumps(s1))
     (history_dir / "2026-04-01.summary.json").write_text(json.dumps(s2))
 
-    out = tmp_path / "history.md"
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        ["history", "--history-dir", str(history_dir), "--out", str(out)],
+    warning = run_history(
+        history_dir, tmp_path / "history.md", intros_path=_empty_intros(tmp_path)
     )
-    assert result.exit_code == 0, result.output
-    combined = (
-        result.output + result.stderr if hasattr(result, "stderr") else result.output
-    )
-    assert "locked_sample_sha256" in combined or "drift" in combined.lower()
+    assert warning is not None
+    assert "locked_sample_sha256" in warning or "drift" in warning.lower()
 
 
 def test_history_funnel_html_emitted(tmp_path: Path) -> None:
@@ -151,12 +148,7 @@ def test_history_funnel_html_emitted(tmp_path: Path) -> None:
     (history_dir / "2026-04-01.summary.json").write_text(json.dumps(s2))
 
     out = tmp_path / "history.md"
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        ["history", "--history-dir", str(history_dir), "--out", str(out)],
-    )
-    assert result.exit_code == 0, result.output
+    run_history(history_dir, out, intros_path=_empty_intros(tmp_path))
     funnel_html = out.parent / "history" / "figures" / "funnel_over_time.html"
     assert funnel_html.exists(), (
         f"expected {funnel_html}; got: {list(out.parent.rglob('*'))}"
@@ -175,11 +167,7 @@ def test_history_bucket_trend_emitted(tmp_path: Path) -> None:
     (history_dir / "2026-04-01.summary.json").write_text(json.dumps(s2))
 
     out = tmp_path / "history.md"
-    runner = CliRunner()
-    result = runner.invoke(
-        cli, ["history", "--history-dir", str(history_dir), "--out", str(out)]
-    )
-    assert result.exit_code == 0
+    run_history(history_dir, out, intros_path=_empty_intros(tmp_path))
     bucket_html = out.parent / "history" / "figures" / "bucket_trend.html"
     assert bucket_html.exists()
 
@@ -208,11 +196,7 @@ def test_history_state_transitions(tmp_path: Path) -> None:
     (history_dir / "2026-04-01.summary.json").write_text(json.dumps(s2))
 
     out = tmp_path / "history.md"
-    runner = CliRunner()
-    result = runner.invoke(
-        cli, ["history", "--history-dir", str(history_dir), "--out", str(out)]
-    )
-    assert result.exit_code == 0
+    run_history(history_dir, out, intros_path=_empty_intros(tmp_path))
     text = out.read_text()
     assert "C1-T" in text
     assert "Newly passing" in text
@@ -224,27 +208,17 @@ def test_history_preview_section(tmp_path: Path) -> None:
     s_release = _summary("2026-02-15")
     s_preview = _summary("2026-04-26", kind="preview", label="variable-chunking")
     s_preview["description"] = "Coordinated branches"
-    s_preview["git_overrides"] = {
-        "virtualizarr": {
-            "url": "https://github.com/zarr-developers/VirtualiZarr",
-            "rev": "abc123de",
-        }
-    }
     (history_dir / "2026-02-15.summary.json").write_text(json.dumps(s_release))
     (history_dir / "2026-04-26-variable-chunking.summary.json").write_text(
         json.dumps(s_preview)
     )
 
     out = tmp_path / "history.md"
-    runner = CliRunner()
-    result = runner.invoke(
-        cli, ["history", "--history-dir", str(history_dir), "--out", str(out)]
-    )
-    assert result.exit_code == 0
+    run_history(history_dir, out, intros_path=_empty_intros(tmp_path))
     text = out.read_text()
     assert "## Preview snapshots" in text
     assert "variable-chunking" in text
-    assert "github.com/zarr-developers/VirtualiZarr/commit/abc123de" in text
+    assert "Coordinated branches" in text
 
 
 def test_history_feature_introductions_list(tmp_path: Path) -> None:
@@ -264,20 +238,7 @@ def test_history_feature_introductions_list(tmp_path: Path) -> None:
     )
 
     out = tmp_path / "history.md"
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "history",
-            "--history-dir",
-            str(history_dir),
-            "--out",
-            str(out),
-            "--intros",
-            str(intros_path),
-        ],
-    )
-    assert result.exit_code == 0
+    run_history(history_dir, out, intros_path=intros_path)
     text = out.read_text()
     assert "## Feature introductions" in text
     assert "has_datatree" in text
@@ -292,11 +253,7 @@ def test_history_methodology_footnote(tmp_path: Path) -> None:
         json.dumps(_summary("2026-02-15"))
     )
     out = tmp_path / "history.md"
-    runner = CliRunner()
-    result = runner.invoke(
-        cli, ["history", "--history-dir", str(history_dir), "--out", str(out)]
-    )
-    assert result.exit_code == 0, result.output
+    run_history(history_dir, out, intros_path=_empty_intros(tmp_path))
     text = out.read_text()
     assert "## Methodology" in text
     assert "abc" in text  # the locked_sample_sha256 prefix from _summary()

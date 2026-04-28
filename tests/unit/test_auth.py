@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from nasa_virtual_zarr_survey.auth import DAACStoreCache
+from vzc.pipeline._stores import DAACStoreCache
 
 
 def test_cache_fetches_creds_once_per_provider(monkeypatch):
@@ -15,11 +15,9 @@ def test_cache_fetches_creds_once_per_provider(monkeypatch):
         return {"accessKeyId": "AK", "secretAccessKey": "SK", "sessionToken": "TK"}
 
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials", fake_get_creds
+        "vzc.pipeline._stores.earthaccess.get_s3_credentials", fake_get_creds
     )
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
-    )
+    monkeypatch.setattr("vzc.pipeline._stores.earthaccess.login", lambda **_: None)
 
     built: list = []
 
@@ -27,9 +25,7 @@ def test_cache_fetches_creds_once_per_provider(monkeypatch):
         built.append((creds, bucket))
         return f"S3({bucket})"
 
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth._build_s3_store", fake_build_s3_store
-    )
+    monkeypatch.setattr("vzc.pipeline._stores._build_s3_store", fake_build_s3_store)
 
     cache = DAACStoreCache()
     s1 = cache.get_store(provider="PODAAC", bucket="podaac-ops")
@@ -52,13 +48,11 @@ def test_cache_refreshes_creds_after_ttl(monkeypatch):
         return {"accessKeyId": "AK", "secretAccessKey": "SK", "sessionToken": "TK"}
 
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials", fake_get_creds
+        "vzc.pipeline._stores.earthaccess.get_s3_credentials", fake_get_creds
     )
+    monkeypatch.setattr("vzc.pipeline._stores.earthaccess.login", lambda **_: None)
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
-    )
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth._build_s3_store",
+        "vzc.pipeline._stores._build_s3_store",
         lambda creds, bucket: f"S3({bucket})",
     )
 
@@ -76,11 +70,11 @@ def test_cache_refreshes_creds_after_ttl(monkeypatch):
 def test_login_called_once_across_multiple_providers(monkeypatch):
     login_calls = {"n": 0}
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.login",
+        "vzc.pipeline._stores.earthaccess.login",
         lambda **_: login_calls.__setitem__("n", login_calls["n"] + 1),
     )
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials",
+        "vzc.pipeline._stores.earthaccess.get_s3_credentials",
         lambda provider: {
             "accessKeyId": "AK",
             "secretAccessKey": "SK",
@@ -88,7 +82,7 @@ def test_login_called_once_across_multiple_providers(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth._build_s3_store",
+        "vzc.pipeline._stores._build_s3_store",
         lambda creds, bucket: f"S3({bucket})",
     )
 
@@ -99,15 +93,13 @@ def test_login_called_once_across_multiple_providers(monkeypatch):
 
 
 def test_cache_raises_on_empty_creds(monkeypatch):
+    monkeypatch.setattr("vzc.pipeline._stores.earthaccess.login", lambda **_: None)
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
-    )
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials",
+        "vzc.pipeline._stores.earthaccess.get_s3_credentials",
         lambda provider: {},
     )
 
-    from nasa_virtual_zarr_survey.auth import AuthUnavailable
+    from vzc.pipeline._stores import AuthUnavailable
 
     cache = DAACStoreCache()
     with pytest.raises(AuthUnavailable):
@@ -115,7 +107,7 @@ def test_cache_raises_on_empty_creds(monkeypatch):
 
 
 def test_store_cache_direct_extracts_bucket_from_url(monkeypatch):
-    from nasa_virtual_zarr_survey.auth import StoreCache
+    from vzc.pipeline._stores import StoreCache
 
     calls = []
 
@@ -126,15 +118,11 @@ def test_store_cache_direct_extracts_bucket_from_url(monkeypatch):
         calls.append(("build", bucket))
         return f"S3({bucket})"
 
+    monkeypatch.setattr("vzc.pipeline._stores.earthaccess.login", lambda **_: None)
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
+        "vzc.pipeline._stores.earthaccess.get_s3_credentials", fake_get_creds
     )
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials", fake_get_creds
-    )
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth._build_s3_store", fake_build_s3_store
-    )
+    monkeypatch.setattr("vzc.pipeline._stores._build_s3_store", fake_build_s3_store)
 
     cache = StoreCache(access="direct")
     s1 = cache.get_store(provider="PODAAC", url="s3://prod-lads/VNP02DNB/file.nc")
@@ -144,59 +132,22 @@ def test_store_cache_direct_extracts_bucket_from_url(monkeypatch):
     assert calls == [("build", "prod-lads"), ("build", "other-bucket")]
 
 
-def test_store_cache_external_mode(monkeypatch):
-    from nasa_virtual_zarr_survey.auth import StoreCache
-
-    class FakeAuth:
-        token = {"access_token": "BEARER_XYZ"}
-
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
-    )
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.__auth__", FakeAuth, raising=False
-    )
-
-    created: list[dict] = []
-
-    class FakeHTTPStore:
-        def __init__(self, url: str, client_options: dict | None = None) -> None:
-            created.append({"url": url, "client_options": client_options})
-            self.url = url
-            self.client_options = client_options
-
-        @classmethod
-        def from_url(
-            cls, url: str, *, client_options: dict | None = None, **_
-        ) -> "FakeHTTPStore":
-            return cls(url, client_options=client_options)
-
-    monkeypatch.setattr("obstore.store.HTTPStore", FakeHTTPStore)
+def test_store_cache_external_without_cache_dir_raises(monkeypatch):
+    """access='external' is cache-only and requires cache_dir."""
+    from vzc.pipeline._stores import AuthUnavailable, StoreCache
 
     cache = StoreCache(access="external")
-    s1 = cache.get_store(provider="PODAAC", url="https://host-a.example/path/one.nc")
-    s2 = cache.get_store(provider="PODAAC", url="https://host-a.example/path/two.nc")
-    s3 = cache.get_store(provider="PODAAC", url="https://host-b.example/path/x.nc")
-
-    assert s1 is s2
-    assert s3 is not s1
-    assert len(created) == 2
-    assert created[0]["url"] == "https://host-a.example"
-    assert created[0]["client_options"] == {
-        "default_headers": {"Authorization": "Bearer BEARER_XYZ"}
-    }
-    assert created[1]["url"] == "https://host-b.example"
+    with pytest.raises(AuthUnavailable, match="cache-only"):
+        cache.get_store(provider="PODAAC", url="https://h.example/path.nc")
 
 
-def test_store_cache_no_cache_returns_underlying_store(monkeypatch, tmp_path):
-    from nasa_virtual_zarr_survey.auth import StoreCache
-    from nasa_virtual_zarr_survey.cache import DiskCachingReadableStore
+def test_store_cache_direct_returns_s3_store(monkeypatch):
+    """access='direct' returns a live S3Store (no cache wrapping)."""
+    from vzc.pipeline._stores import StoreCache
 
+    monkeypatch.setattr("vzc.pipeline._stores.earthaccess.login", lambda **_: None)
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
-    )
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials",
+        "vzc.pipeline._stores.earthaccess.get_s3_credentials",
         lambda provider: {
             "accessKeyId": "AK",
             "secretAccessKey": "SK",
@@ -204,81 +155,53 @@ def test_store_cache_no_cache_returns_underlying_store(monkeypatch, tmp_path):
         },
     )
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth._build_s3_store",
+        "vzc.pipeline._stores._build_s3_store",
         lambda creds, bucket: f"S3({bucket})",
     )
 
-    cache = StoreCache(access="direct")  # cache_dir=None
+    cache = StoreCache(access="direct")
     s = cache.get_store(provider="PODAAC", url="s3://b/key.nc")
     assert s == "S3(b)"
-    assert not isinstance(s, DiskCachingReadableStore)
 
 
-def test_store_cache_with_cache_dir_wraps_s3_store(monkeypatch, tmp_path):
-    from pathlib import Path
+def test_store_cache_external_returns_read_only_cache_store(monkeypatch, tmp_path):
+    """access='external' + cache_dir returns a ReadOnlyCacheStore (no live HTTPS)."""
+    from vzc.pipeline._stores import StoreCache
+    from vzc.pipeline._stores import ReadOnlyCacheStore
 
-    from nasa_virtual_zarr_survey.auth import StoreCache
-    from nasa_virtual_zarr_survey.cache import DiskCachingReadableStore
-
-    assert isinstance(tmp_path, Path)
-
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
-    )
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.get_s3_credentials",
-        lambda provider: {
-            "accessKeyId": "AK",
-            "secretAccessKey": "SK",
-            "sessionToken": "TK",
-        },
-    )
-    # _build_s3_store must return something the wrapper treats as a real store.
-    # We don't exercise reads here, so any object is fine — the wrapper only
-    # touches it on get/get_range/head, which we don't call.
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth._build_s3_store",
-        lambda creds, bucket: object(),
-    )
-
-    cache = StoreCache(access="direct", cache_dir=tmp_path, cache_max_bytes=1_000_000)
-    s = cache.get_store(provider="PODAAC", url="s3://my-bucket/key.nc")
-    assert isinstance(s, DiskCachingReadableStore)
-    # Same bucket -> same wrapped instance (cached by bucket).
-    s2 = cache.get_store(provider="PODAAC", url="s3://my-bucket/other.nc")
+    cache = StoreCache(access="external", cache_dir=tmp_path)
+    s = cache.get_store(provider="PODAAC", url="https://h.example/path.nc")
+    assert isinstance(s, ReadOnlyCacheStore)
+    # Same host → same instance (cached per prefix).
+    s2 = cache.get_store(provider="PODAAC", url="https://h.example/other.nc")
     assert s is s2
 
 
-def test_store_cache_with_cache_dir_wraps_https_store(monkeypatch, tmp_path):
-    from pathlib import Path
-
-    from nasa_virtual_zarr_survey.auth import StoreCache
-    from nasa_virtual_zarr_survey.cache import DiskCachingReadableStore
-
-    assert isinstance(tmp_path, Path)
+def test_make_https_store_returns_live_http_store(monkeypatch):
+    """make_https_store builds a live HTTPStore (used by prefetch + investigate)."""
+    from vzc.pipeline._stores import make_https_store
 
     class FakeAuth:
         token = {"access_token": "BEARER_XYZ"}
 
+    monkeypatch.setattr("vzc.pipeline._stores.earthaccess.login", lambda **_: None)
     monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.login", lambda **_: None
+        "vzc.pipeline._stores.earthaccess.__auth__", FakeAuth, raising=False
     )
-    monkeypatch.setattr(
-        "nasa_virtual_zarr_survey.auth.earthaccess.__auth__", FakeAuth, raising=False
-    )
+
+    captured: dict = {}
 
     class FakeHTTPStore:
         @classmethod
         def from_url(cls, url, *, client_options=None, **_):  # type: ignore[no-untyped-def]
-            inst = cls()
-            inst.url = url
-            return inst
+            captured["url"] = url
+            captured["client_options"] = client_options
+            return cls()
 
     monkeypatch.setattr("obstore.store.HTTPStore", FakeHTTPStore)
 
-    cache = StoreCache(access="external", cache_dir=tmp_path, cache_max_bytes=1_000_000)
-    s = cache.get_store(provider="PODAAC", url="https://h.example/path.nc")
-    assert isinstance(s, DiskCachingReadableStore)
-    # Same host -> same wrapped instance.
-    s2 = cache.get_store(provider="PODAAC", url="https://h.example/other.nc")
-    assert s is s2
+    make_https_store("https://host.example/path/file.nc")
+    assert captured["url"] == "https://host.example"
+    assert captured["client_options"] == {
+        "default_headers": {"Authorization": "Bearer BEARER_XYZ"}
+    }

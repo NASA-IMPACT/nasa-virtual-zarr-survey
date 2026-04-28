@@ -1,6 +1,6 @@
 import pytest
 
-from nasa_virtual_zarr_survey.formats import FormatFamily, classify_format
+from vzc.core.formats import FormatFamily, classify_format
 
 
 @pytest.mark.parametrize(

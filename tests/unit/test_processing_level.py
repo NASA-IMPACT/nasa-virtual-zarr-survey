@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from nasa_virtual_zarr_survey.processing_level import parse_rank
+from vzc.core.processing_level import parse_rank
 
 
 @pytest.mark.parametrize(

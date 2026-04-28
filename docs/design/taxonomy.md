@@ -1,8 +1,8 @@
 # Failure Taxonomy
 
-The survey's `report` classifies each failing granule attempt into a `Bucket` (see `nasa_virtual_zarr_survey.taxonomy`). Buckets group failures so a reader can quickly see which classes of problem dominate and which collections to investigate.
+The survey's `report` classifies each failing granule attempt into a `Bucket` (see `vzc.taxonomy`). Buckets group failures so a reader can quickly see which classes of problem dominate and which collections to investigate.
 
-Classification is a first-match-wins regex pipeline against the recorded `error_type` and `error_message`. New buckets and rules are added as real-world errors surface in the `OTHER` bucket of a pilot run.
+Classification is a first-match-wins regex pipeline against the recorded `error_type` and `error_message`. New buckets and rules are added as real-world errors surface in the `OTHER` bucket of a survey run.
 
 ## Buckets
 
@@ -28,13 +28,13 @@ Classification is a first-match-wins regex pipeline against the recorded `error_
 | `STRING_DTYPE` | Variable-length string dtype encountered. | `dtype not supported: string`, `dtype.*string` | Variable-length strings need special handling in the Zarr v3 pipeline. |
 | `NETWORK_ERROR` | Transport-level failure (connection reset, read timeout). | `ConnectionError`, `RemoteDisconnected` | Usually transient. Re-run to confirm. |
 | `SAMPLE_INVALID` | The granule record was missing a URL or format family at attempt time. | `missing format family or data URL` | A sampling bug, not a VirtualiZarr issue. |
-| `OTHER` | Uncategorized. | (varies) | See the "Top 20 Raw Errors in `OTHER`" section of the report, then refine `_RULES` in `src/nasa_virtual_zarr_survey/taxonomy.py`. |
+| `OTHER` | Uncategorized. | (varies) | See the "Top 20 Raw Errors in `OTHER`" section of the report, then refine `_RULES` in `src/vzc/taxonomy.py`. |
 
 ## Adding a new bucket
 
 When the `OTHER` bucket contains a recurring error, promote it to its own bucket:
 
-1. Add a new member to `Bucket` in `src/nasa_virtual_zarr_survey/taxonomy.py`.
+1. Add a new member to `Bucket` in `src/vzc/taxonomy.py`.
 2. Add a `(type_regex, message_regex, bucket)` entry to `_RULES`. Order matters (first match wins). Be careful that the new rule doesn't shadow a more specific one above it.
 3. Add a parametrized test case to `tests/unit/test_taxonomy.py::test_classify`.
 4. Update the table above with the new bucket.

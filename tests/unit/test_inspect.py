@@ -1,4 +1,4 @@
-"""Unit tests for nasa_virtual_zarr_survey.inspect.
+"""Unit tests for vzc.pipeline._inspect.
 
 These tests exercise the per-format inspectors against tiny fixtures generated
 by ``tests/fixtures/inspect/make_fixtures.py``. If the fixtures are missing,
@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from nasa_virtual_zarr_survey.formats import FormatFamily
-from nasa_virtual_zarr_survey.inspect import (
+from vzc.core.formats import FormatFamily
+from vzc.pipeline._inspect import (
     INSPECT_JSON_BEGIN,
     INSPECT_JSON_END,
     inspect_url,
