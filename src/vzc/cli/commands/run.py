@@ -6,7 +6,7 @@ from typing import cast
 
 import click
 
-from vzc.cli import AccessMode
+from vzc.cli import AccessMode, configure_logging
 
 
 def register(group: click.Group) -> None:
@@ -37,11 +37,20 @@ def register(group: click.Group) -> None:
         type=click.Choice(["direct", "external"]),
         default="external",
     )
+    @click.option(
+        "-v",
+        "--verbose",
+        is_flag=True,
+        default=False,
+        help="Forwarded to the underlying attempt loop (per-collection "
+        "progress and per-granule pass/fail to stderr).",
+    )
     def run_cmd(
         snapshot_date: str | None,
         label: str | None,
         description: str | None,
         access: str,
+        verbose: bool,
     ) -> None:
         """Run attempt + render and emit a ``*.summary.json`` digest.
 
@@ -54,6 +63,7 @@ def register(group: click.Group) -> None:
         from ``pyproject.toml``. Writes the digest under
         ``docs/results/history/<slug>.summary.json``.
         """
+        configure_logging(verbose)
         from vzc.snapshot import SnapshotError, run as _run
 
         try:

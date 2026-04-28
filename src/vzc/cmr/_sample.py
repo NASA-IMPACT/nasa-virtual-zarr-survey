@@ -281,6 +281,12 @@ def sample(*, n_bins: int = 5) -> int:
                 continue  # Still unknown or non-array; skip.
 
         rows = sample_one_collection(_sample_collection_view(coll), n_bins=n_bins)
+        _LOGGER.info(
+            "sampled %d granule(s) from %s (%s)",
+            len(rows),
+            coll.concept_id,
+            coll.daac or coll.provider or "?",
+        )
         new_granules.extend(rows)
         total += len(rows)
 

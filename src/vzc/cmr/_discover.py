@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,6 +20,8 @@ from vzc.state._io import (
     save_state,
     upsert_collections,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _parse_iso(s: str | None) -> str | None:
@@ -159,19 +162,28 @@ def fetch_collection_dicts(
         ids = [cid for cid, _ in pairs]
         dicts: list[dict] = []
         BATCH = 100
+        _LOGGER.info(
+            "fetching UMM-JSON for %d top collection(s) in batches of %d",
+            len(ids),
+            BATCH,
+        )
         for i in range(0, len(ids), BATCH):
             batch = ids[i : i + BATCH]
             results = earthaccess.search_datasets(concept_id=batch, count=len(batch))
             dicts.extend(
                 c.render_dict if hasattr(c, "render_dict") else c for c in results
             )
+            _LOGGER.info("fetched %d/%d", min(i + BATCH, len(ids)), len(ids))
         return dicts, score_map
 
     count = -1 if limit is None else limit
+    scope = f"limit={limit}" if limit is not None else "all"
+    _LOGGER.info("searching cloud-hosted EOSDIS collections (%s)", scope)
     results = earthaccess.search_datasets(
         cloud_hosted=True, provider=providers, count=count
     )
     dicts = [c.render_dict if hasattr(c, "render_dict") else c for c in results]
+    _LOGGER.info("fetched %d collection(s)", len(dicts))
     return dicts, None
 
 
@@ -221,7 +233,8 @@ def discover(
     Reads / writes ``output/state.json`` (relative to the current working
     directory). See :func:`fetch_collection_dicts` for the three mutually-
     exclusive scope modes (``limit``, ``top``, ``top_per_provider``).
-    Returns the number of collections written.
+    Returns the number of collections written. Progress is emitted at
+    ``logging.INFO`` on the ``vzc.cmr._discover`` logger.
     """
     from vzc._config import DEFAULT_STATE_PATH
 

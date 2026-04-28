@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 import threading
 import time
 import traceback
@@ -603,11 +602,13 @@ def _run_attempt(
         if current_collection is None:
             return
         total = collection_pass + collection_fail
-        print(
-            f"[{collection_idx}/{total_collections}] {current_collection}: "
-            f"{collection_pass}/{total} passed",
-            file=sys.stderr,
-            flush=True,
+        _LOG.info(
+            "[%d/%d] %s: %d/%d passed",
+            collection_idx,
+            total_collections,
+            current_collection,
+            collection_pass,
+            total,
         )
 
     def _attempt_row(row: PendingGranule) -> AttemptResult:
@@ -670,8 +671,11 @@ def _run_attempt(
             n += 1
             if result.success:
                 collection_pass += 1
+                _LOG.info("  %s: pass", row["granule_concept_id"])
             else:
                 collection_fail += 1
+                err = result.dataset_error_type or result.parse_error_type or "unknown"
+                _LOG.info("  %s: fail (%s)", row["granule_concept_id"], err)
 
             if access == "direct" and not result.success:
                 parse_bucket = classify(

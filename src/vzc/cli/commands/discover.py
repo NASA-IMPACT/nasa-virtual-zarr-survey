@@ -7,6 +7,7 @@ from typing import Literal, cast
 
 import click
 
+from vzc.cli import configure_logging
 from vzc.cli._listings import (
     _render_collection_listing,
     _skipped_format_breakdown,
@@ -48,14 +49,23 @@ def register(group: click.Group) -> None:
         default=False,
         help="Fetch and classify collections without writing to state.json.",
     )
+    @click.option(
+        "-v",
+        "--verbose",
+        is_flag=True,
+        default=False,
+        help="Print per-batch progress to stderr.",
+    )
     def discover(
         limit: int | None,
         top: int | None,
         top_per_provider: int | None,
         list_mode: str,
         dry_run: bool,
+        verbose: bool,
     ) -> None:
         """Phase 1 (discover): enumerate CMR collections and write to ``output/state.json``."""
+        configure_logging(verbose)
         from vzc.cmr._discover import (
             build_collection_rows,
             fetch_collection_dicts,
@@ -78,7 +88,9 @@ def register(group: click.Group) -> None:
 
         if dry_run:
             dicts, score_map = fetch_collection_dicts(
-                limit=limit, top_per_provider=top_per_provider, top_total=top
+                limit=limit,
+                top_per_provider=top_per_provider,
+                top_total=top,
             )
             rows = build_collection_rows(dicts, score_map=score_map)
             total = len(rows)
@@ -89,7 +101,11 @@ def register(group: click.Group) -> None:
                 f"({array_like} array-like, {skipped} skipped as non-array format)"
             )
         else:
-            n = _discover(limit=limit, top=top, top_per_provider=top_per_provider)
+            n = _discover(
+                limit=limit,
+                top=top,
+                top_per_provider=top_per_provider,
+            )
             # Re-load to render the listing if requested.
             from vzc.state._io import load_state
             from vzc._config import DEFAULT_STATE_PATH
