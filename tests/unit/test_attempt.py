@@ -786,6 +786,47 @@ def test_pending_attempts_skips_pairs_already_in_results(
     assert [p["granule_concept_id"] for p in pending] == ["G2"]
 
 
+def test_single_granule_attempt_short_circuits_uncached_external(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """External-mode attempts on uncached granules must NOT invoke the parser.
+
+    Without this preflight, h5py's C-level get_eof callback drives our
+    ReadOnlyCacheStore.head() → FileNotFoundError, which it then mangles
+    across the C/Python boundary into an opaque
+    ``SystemError: <lru_cache_wrapper> returned a result with an exception set``.
+    """
+    from vzc.pipeline import _attempt as attempt_mod
+    from vzc.pipeline._attempt import GranuleInfo, SingleGranuleAttempt
+    from vzc.pipeline._stores import StoreCache
+
+    def _fail(*a, **kw):
+        raise AssertionError("dispatch_parser must not be called for uncached granule")
+
+    monkeypatch.setattr(attempt_mod, "dispatch_parser", _fail)
+
+    cache = StoreCache(access="external", cache_dir=tmp_path)
+    result = SingleGranuleAttempt(
+        granule=GranuleInfo(
+            url="https://x.example/missing.nc",
+            family=FormatFamily.NETCDF4,
+            collection_concept_id="C1",
+            granule_concept_id="G1",
+            daac="PODAAC",
+            provider="POCLOUD",
+        ),
+        cache=cache,
+        timeout_s=10,
+    ).run()
+    assert result.parse_success is False
+    assert result.parse_error_type == "NotPrefetched"
+    assert "prefetch" in (result.parse_error_message or "")
+    assert result.collection_concept_id == "C1"
+    assert result.granule_concept_id == "G1"
+    assert result.daac == "PODAAC"
+    assert result.format_family == "NetCDF4"
+
+
 def test_run_attempt_external_requires_cache_dir(tmp_path: Path) -> None:
     state_path = tmp_path / "state.json"
     save_state(make_state(), state_path)

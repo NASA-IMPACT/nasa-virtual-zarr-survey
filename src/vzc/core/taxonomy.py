@@ -36,6 +36,7 @@ class Bucket(StrEnum):
     NETWORK_ERROR = "NETWORK_ERROR"
     SAMPLE_INVALID = "SAMPLE_INVALID"
     AUTH_UNAVAILABLE = "AUTH_UNAVAILABLE"
+    NOT_PREFETCHED = "NOT_PREFETCHED"
     AMBIGUOUS_ARRAY_TRUTH = "AMBIGUOUS_ARRAY_TRUTH"
     CONFLICTING_DIM_SIZES = "CONFLICTING_DIM_SIZES"
     UNDEFINED_FILL_VALUE = "UNDEFINED_FILL_VALUE"
@@ -48,6 +49,7 @@ _RULES: list[tuple[re.Pattern | None, re.Pattern | None, Bucket]] = [
     (re.compile(r"AuthUnavailable"), None, Bucket.AUTH_UNAVAILABLE),
     (re.compile(r"NoParserAvailable"), None, Bucket.NO_PARSER),
     (re.compile(r"SampleInvalid"), None, Bucket.SAMPLE_INVALID),
+    (re.compile(r"NotPrefetched"), None, Bucket.NOT_PREFETCHED),
     (re.compile(r"TimeoutError"), None, Bucket.TIMEOUT),
     (
         None,

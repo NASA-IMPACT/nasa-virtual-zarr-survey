@@ -31,7 +31,7 @@ from vzc.pipeline._overrides import (
     apply_to_dataset_call,
     apply_to_datatree_call,
 )
-from vzc.pipeline._stores import AuthUnavailable, StoreCache
+from vzc.pipeline._stores import AuthUnavailable, ReadOnlyCacheStore, StoreCache
 from vzc.state._io import SurveyState
 
 _LOG = logging.getLogger(__name__)
@@ -179,6 +179,31 @@ class SingleGranuleAttempt:
             store = self.cache.get_store(
                 provider=self.granule.provider, url=self.granule.url
             )
+
+        # External mode: short-circuit when the granule isn't in the cache.
+        # Without this preflight, the parser feeds a missing file to
+        # h5py/async-tiff and the resulting FileNotFoundError gets mangled
+        # across the C/Python boundary into an opaque SystemError ("returned
+        # a result with an exception set"), masking what is really an
+        # operator precondition: prefetch wasn't run for this URL.
+        if isinstance(store, ReadOnlyCacheStore):
+            from urllib.parse import urlparse
+
+            path = urlparse(self.granule.url).path.lstrip("/")
+            if not store.is_cached(path):
+                return AttemptResult(
+                    collection_concept_id=self.granule.collection_concept_id,
+                    granule_concept_id=self.granule.granule_concept_id,
+                    daac=self.granule.daac,
+                    format_family=self.granule.family.value,
+                    parse_error_type="NotPrefetched",
+                    parse_error_message=(
+                        f"granule not in cache: {self.granule.url} — "
+                        "run `vzc prefetch` first."
+                    ),
+                    attempted_at=datetime.now(timezone.utc),
+                )
+
         return attempt_one(
             url=self.granule.url,
             family=self.granule.family,

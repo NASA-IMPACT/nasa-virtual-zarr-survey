@@ -38,6 +38,11 @@ from vzc.core.taxonomy import Bucket, classify
             "earthaccess returned no S3 credentials",
             Bucket.AUTH_UNAVAILABLE,
         ),
+        (
+            "NotPrefetched",
+            "granule not in cache: https://x.example/foo.nc — run `vzc prefetch` first.",
+            Bucket.NOT_PREFETCHED,
+        ),
         ("Exception", "who knows", Bucket.OTHER),
         (None, None, Bucket.SUCCESS),
         (
