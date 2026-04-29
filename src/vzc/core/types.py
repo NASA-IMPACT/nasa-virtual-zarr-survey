@@ -50,7 +50,7 @@ class VarInfo(TypedDict):
 
     dtype: str
     dims: list[str]
-    chunks: list[int] | None
+    chunks: list[int]
     fill_value: str | None
     codecs: list[str]
 

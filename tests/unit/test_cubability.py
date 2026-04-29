@@ -136,6 +136,20 @@ def test_inconclusive_ambiguous_concat_dim():
     assert "ambiguous concat dim" in r.reason
 
 
+def test_incompatible_contiguous_vs_chunked_non_concat():
+    # Granule A is contiguous on lat (chunks == lat size), granule B is chunked.
+    # Non-concat dim sizes still match, but chunk shapes differ.
+    fps = [
+        _fp(time_hash="a", time_min=0, time_max=9),
+        _fp(time_hash="b", time_min=10, time_max=19),
+    ]
+    fps[0]["data_vars"]["temp"]["chunks"] = [1, 5, 10]  # contiguous on lat (size 5)
+    fps[1]["data_vars"]["temp"]["chunks"] = [1, 2, 10]
+    r = check_cubability(fps)
+    assert r.verdict is CubabilityVerdict.INCOMPATIBLE
+    assert "chunk shape incompatible" in r.reason
+
+
 def test_inconclusive_too_few_fingerprints():
     r = check_cubability([_fp()])
     assert r.verdict is CubabilityVerdict.INCONCLUSIVE

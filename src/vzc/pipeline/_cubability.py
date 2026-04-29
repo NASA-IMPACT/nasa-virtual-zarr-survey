@@ -75,12 +75,18 @@ def extract_fingerprint(ds: xr.Dataset) -> Fingerprint:
                 codecs.append(type(c).__name__ if not isinstance(c, str) else c)
         return codecs
 
-    def _chunks(var: Any) -> list[int] | None:
+    def _chunks(var: Any) -> list[int]:
+        # An "unchunked" backing dataset (contiguous HDF5, eager xarray var) is
+        # one chunk equal to the variable's shape — Zarr has no other way to
+        # represent it. Fall through to shape so cross-granule compatibility
+        # can compare chunk-vs-chunk instead of treating absence as no signal.
         enc = getattr(var, "encoding", {}) or {}
         ch = enc.get("chunks") or enc.get("preferred_chunks")
         if ch is None and hasattr(var, "chunks") and var.chunks is not None:
             ch = tuple(c[0] for c in var.chunks)
-        return list(ch) if ch is not None else None
+        if ch is None:
+            ch = tuple(var.shape)
+        return list(ch)
 
     def _fill_value(var: Any) -> str | None:
         enc = getattr(var, "encoding", {}) or {}
@@ -250,14 +256,10 @@ def _chunks_compatible(fps: list[Fingerprint], concat_dim: str) -> tuple[bool, s
     for name in fps[0]["data_vars"]:
         dims = fps[0]["data_vars"][name]["dims"]
         chunks_lists = [fp["data_vars"][name]["chunks"] for fp in fps]
-        if any(c is None for c in chunks_lists):
-            continue
-        # At this point all entries are non-None; cast to narrow away None.
-        non_null_chunks: list[list[int]] = [c for c in chunks_lists if c is not None]
         for i, d in enumerate(dims):
             if d == concat_dim:
                 continue
-            vals = {c[i] for c in non_null_chunks if i < len(c)}
+            vals = {c[i] for c in chunks_lists if i < len(c)}
             if len(vals) > 1:
                 return (
                     False,
